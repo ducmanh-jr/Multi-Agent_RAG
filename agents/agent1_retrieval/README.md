@@ -77,8 +77,8 @@ Chạy script chuẩn bị `corpus.jsonl` (kho tài liệu ArXiv gồm ~5000 chu
 - Tạo file `bm25_index.pkl` (dùng `rank_bm25.BM25Okapi`).
 - Tạo file `faiss_arxiv.index` kèm `faiss_doc_ids.json` dùng mô hình embedding nhẹ `BAAI/bge-small-en-v1.5` (chạy cực nhanh trên T4).
 
-### Bước 2: Dữ liệu huấn luyện SFT (Format chuẩn)
-File dữ liệu huấn luyện: `training/data/retrieval_sft_train_validated.jsonl`.
+### Bước 2: Dữ liệu tinh chỉnh SFT (Format chuẩn)
+File dữ liệu tinh chỉnh: `finetuning/data/retrieval_sft_train_validated.jsonl`.
 Mỗi dòng là một mẫu quyết định có cấu trúc:
 ```json
 {
@@ -101,8 +101,8 @@ Mỗi dòng là một mẫu quyết định có cấu trúc:
 }
 ```
 
-### Bước 3: Huấn luyện QLoRA trên Kaggle
-Cấu hình trong file `training/train_qlora.py`:
+### Bước 3: Tinh chỉnh QLoRA trên Kaggle
+Cấu hình trong file `finetuning/train_qlora.py`:
 - **Base Model:** `Qwen/Qwen2.5-7B-Instruct`
 - **Quantization:** BitsAndBytes 4-bit (NF4, double quant, `compute_dtype=torch.float16`)
 - **LoRA Config:**

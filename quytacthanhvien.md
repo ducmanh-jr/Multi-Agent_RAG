@@ -1,4 +1,4 @@
-﻿# QUY TẮC PHỐI HỢP PHÁT TRIỂN DỰ ÁN (TEAMWORK GUIDELINES)
+# QUY TẮC PHỐI HỢP PHÁT TRIỂN DỰ ÁN (TEAMWORK GUIDELINES)
 ### Dự án: Multi-Agent Research RAG System
 > **Dành cho tất cả thành viên trong nhóm phát triển.**  
 > Bắt buộc đọc kỹ và tuân thủ 100% để tránh xung đột Git (Merge Conflict), lệch định dạng dữ liệu và vỡ đồ thị LangGraph khi tích hợp.
@@ -96,8 +96,8 @@ Mỗi thành viên kiểm tra đúng Agent mình phụ trách:
 
 Thành viên có nhiệm vụ fine-tune mô hình (Agent 1, 2, 3, 4) phải tuân theo các quy tắc sau:
 
-1. **Vị trí script train:** Toàn bộ code sinh dữ liệu, tiền xử lý và huấn luyện trên Kaggle/Colab/GPU phải đặt trong thư mục con `training/` của agent mình (ví dụ: `agents/agent1_retrieval/training/`).
-2. **Quy tắc tường lửa:** File `node.py` (chạy inference phục vụ người dùng) **KHÔNG ĐƯỢC import chéo** vào thư mục `training/`.
+1. **Vị trí script fine-tune:** Toàn bộ code sinh dữ liệu, tiền xử lý và tinh chỉnh trên Kaggle/Colab/GPU phải đặt trong thư mục con `finetuning/` của agent mình (ví dụ: `agents/agent1_retrieval/finetuning/`).
+2. **Quy tắc tường lửa:** File `node.py` (chạy inference phục vụ người dùng) **KHÔNG ĐƯỢC import chéo** vào thư mục `finetuning/`.
 3. **⛔ TUYỆT ĐỐI KHÔNG COMMIT FILE MODEL LÊN GIT:**
    - Các file nặng: `*.safetensors`, `*.bin`, `*.pt`, `checkpoints/`... không bao giờ được push lên Git repo (đã được cấu hình chặn trong `.gitignore`).
 4. **Cách lưu trữ và nạp model sau khi train xong:**

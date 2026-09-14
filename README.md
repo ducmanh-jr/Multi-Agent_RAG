@@ -1,4 +1,4 @@
-﻿# Multi-Agent Research RAG System
+# Multi-Agent Research RAG System
 
 Hệ thống Multi-Agent RAG nâng cao dành cho nghiên cứu và xử lý tài liệu học thuật/kỹ thuật, được xây dựng dựa trên **LangGraph StateGraph** với 5 Agent chuyên trách, cơ chế tự sửa lỗi đa tầng (Multi-level Self-Correction), kiểm chứng độ thật giả (Fact-Checking) và tổng hợp báo cáo chuyên sâu.
 
@@ -59,25 +59,25 @@ DM_Multi-Agent_RAG/
 │   │   ├── README.md                       # Hướng dẫn riêng cho Agent 1
 │   │   ├── node.py                         # Điểm chạm duy nhất: class RetrievalAgent
 │   │   ├── tools/                          # bm25.py, dense.py, hybrid.py
-│   │   └── training/                       # train_qlora.py, generate_training_data.py, data/
+│   │   └── finetuning/                     # train_qlora.py, generate_training_data.py, data/
 │   │
 │   ├── agent2_reader/                      # Thành viên 2: Reader Agent
 │   │   ├── README.md                       # Hướng dẫn riêng cho Agent 2
 │   │   ├── node.py                         # Điểm chạm duy nhất: class ReaderAgent
 │   │   ├── tools/                          # pdf_parser.py (PyMuPDF + Heuristics)
-│   │   └── training/                       # notebooks huấn luyện LayoutLMv3 trên DocLayNet
+│   │   └── finetuning/                     # notebooks huấn luyện LayoutLMv3 trên DocLayNet
 │   │
 │   ├── agent3_summarizer/                  # Thành viên 3: Summarizer Agent
 │   │   ├── README.md                       # Hướng dẫn riêng cho Agent 3
 │   │   ├── node.py                         # Điểm chạm duy nhất: class SummarizerAgent
 │   │   ├── components/                     # generator.py, critic.py, verifier.py
-│   │   └── training/                       # train_generator, train_critic, validate_evidence_span, data/
+│   │   └── finetuning/                     # train_generator, train_critic, validate_evidence_span, data/
 │   │
 │   ├── agent4_fact_checker/                # Thành viên 4: Fact-Checker Agent
 │   │   ├── README.md                       # Hướng dẫn riêng cho Agent 4
 │   │   ├── node.py                         # Điểm chạm duy nhất: class FactCheckerAgent
 │   │   ├── components/                     # claim_extractor.py, judge.py
-│   │   └── training/                       # Tài liệu huấn luyện SciBERT NLI trên SciFact
+│   │   └── finetuning/                     # Tài liệu huấn luyện SciBERT NLI trên SciFact
 │   │
 │   └── agent5_writer/                      # Thành viên 5: Writer Agent
 │       ├── README.md                       # Hướng dẫn riêng cho Agent 5

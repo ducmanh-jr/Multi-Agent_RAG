@@ -50,7 +50,7 @@ Chạy trên Kaggle Notebook (chỉ cần 1 GPU T4):
 !pip install -q -U "transformers>=4.40.0" "datasets" "accelerate" "scikit-learn" "torch"
 ```
 
-### Script huấn luyện mẫu (`training/train_scibert_scifact.py`):
+### Script tinh chỉnh mẫu (`finetuning/finetune_scibert_scifact.py` hoặc notebook `finetuning/finetune_agent4_kaggle.ipynb`):
 ```python
 import torch
 from datasets import load_dataset
