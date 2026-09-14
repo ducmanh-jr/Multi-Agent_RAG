@@ -1,140 +1,180 @@
-﻿# TÀI LIỆU ĐẶC TẢ KỸ THUẬT: AGENT 1 - RETRIEVAL AGENT
+# TÀI LIỆU ĐẶC TẢ KỸ THUẬT: AGENT 1 - RETRIEVAL AGENT
 ### Vị trí: Dynamic Router & Document Critique Agent
 > **Người thực hiện:** Thành viên 1  
 > **Thư mục làm việc độc lập:** `agents/agent1_retrieval/`  
-> **File bàn giao hệ thống:** `agents/agent1_retrieval/node.py`
+> **File bàn giao hệ thống:** `agents/agent1_retrieval/node.py`  
+> **Môi trường chạy mục tiêu:** Kaggle Notebook (GPU T4 x2 - 2x 15GB VRAM)
 
 ---
 
-## 1. TỔNG QUAN NHIỆM VỤ
+## 1. TỔNG QUAN NHIỆM VỤ & VỊ TRÍ KIẾN TRÚC
 
-Retrieval Agent đóng vai trò là "người trinh sát" đầu tiên trong hệ thống Multi-Agent RAG:
-1. **Dynamic Routing (Điều phối tìm kiếm động):** Thay vì luôn dùng 1 công cụ cố định, Agent phải đọc câu truy vấn (`query`), lịch sử thất bại (`history_trials` / `retry_count`) để tự quyết định chiến lược tìm kiếm tối ưu:
-   - `bm25`: Tìm kiếm từ khóa chính xác (phù hợp khi query chứa thuật ngữ viết tắt, mã số, tên riêng).
-   - `dense`: Tìm kiếm ngữ nghĩa vector (phù hợp khi câu hỏi dài, mang tính diễn đạt ý niệm).
-   - `hybrid`: Kết hợp cả BM25 và Dense bằng thuật toán **Reciprocal Rank Fusion (RRF)**.
-   - `decompose`: Phân rã câu hỏi phức tạp thành nhiều câu hỏi con, tìm kiếm từng phần rồi gộp lại.
-   - `hyde` (Hypothetical Document Embeddings): Tạo văn bản giả định trả lời câu hỏi để mở rộng từ khóa trước khi tìm kiếm.
-2. **Document Critique (Tự phê bình tài liệu):** Sau khi có kết quả tìm kiếm, Agent tự đánh giá xem tài liệu tìm về có thực sự chứa câu trả lời cho truy vấn hay không (`is_sufficient`). Nếu chưa đạt, tự động thử lại bằng chiến lược khác (vòng lặp nội bộ $\le N$).
-
----
-
-## 2. KIẾN TRÚC MÔ HÌNH & THƯ VIỆN
-
-- **Mô hình nền (Base Model):** `Qwen/Qwen2.5-7B-Instruct`
-- **Phương pháp huấn luyện:** QLoRA 4-bit (BitsAndBytes NF4, Double Quantization, `torch.float16`).
-- **Cấu hình LoRA Adapter:**
-  - Rank ($r$): `16`
-  - Alpha ($\alpha$): `32` (tỷ lệ $\alpha / r = 2$)
-  - LoRA Dropout: `0.05`
-  - Target Modules: Cả Attention (`q_proj`, `k_proj`, `v_proj`, `o_proj`) và MLP (`gate_proj`, `up_proj`, `down_proj`).
-- **Thư viện chính:** `peft`, `transformers`, `trl`, `bitsandbytes`, `scikit-learn`, `numpy`.
+Retrieval Agent là cửa ngõ đầu tiên nhận truy vấn từ `Orchestrator`. Agent này chịu trách nhiệm:
+1. **Dynamic Routing (Điều phối tìm kiếm thông minh):** Thay vì áp dụng một cách cứng nhắc một công cụ tìm kiếm, mô hình phải phân tích câu hỏi (`query`) và lịch sử thất bại trước đó (`retry_count`) để chọn chiến lược:
+   - `bm25`: Tìm kiếm từ khóa chính xác (keyword matching). Rất mạnh khi câu hỏi chứa thuật ngữ khoa học, tên viết tắt, mã số bài báo.
+   - `dense`: Tìm kiếm ngữ nghĩa vector (FAISS index với embedding model). Phù hợp với câu hỏi mô tả khái niệm, trừu tượng.
+   - `hybrid`: Kết hợp cả BM25 và Dense bằng thuật toán **Reciprocal Rank Fusion (RRF)**:
+     $$\text{RRF\_Score}(d) = \frac{1}{60 + \text{rank}_{\text{bm25}}(d)} + \frac{1}{60 + \text{rank}_{\text{dense}}(d)}$$
+   - `decompose`: Tách câu hỏi phức hợp / so sánh thành 2-3 câu hỏi con, tìm kiếm riêng từng câu rồi gộp tài liệu.
+   - `hyde` (Hypothetical Document Embeddings): Dùng LLM sinh một đoạn giả lập câu trả lời lý tưởng trước để làm phong phú từ khóa, sau đó mới truy xuất vector.
+2. **Document Critique (Tự phê bình tài liệu $\le N$ lần):** Kiểm tra xem các đoạn tài liệu tìm về có thực sự chứa câu trả lời không (`is_sufficient`). Nếu không đạt và chưa hết số lượt nội bộ, tự động chuyển đổi công cụ để tìm lại.
 
 ---
 
-## 3. ĐẶC TẢ DỮ LIỆU HUẤN LUYỆN (TRAINING DATA)
+## 2. PHÂN TÍCH LỖI VÀ BÀI HỌC TỪ CODE CŨ (BRANCHES)
 
-- **Vị trí file:** `agents/agent1_retrieval/training/data/retrieval_sft_train_validated.jsonl`
-- **Cấu trúc mỗi mẫu dữ liệu:**
-  ```json
-  {
-    "sub_query": "Music RG là gì?",
-    "history_trials": [],
-    "target_output": {
-      "thought": "Câu hỏi tra cứu thuật ngữ cụ thể, phù hợp keyword matching chính xác.",
-      "tool_selected": "bm25",
-      "critique_is_relevant": true,
-      "critique_reason": "Kết quả BM25 khớp chính xác thuật ngữ được hỏi."
-    },
-    "source_doc_id": "2008.12348::chunk_54"
-  }
-  ```
-- **Kịch bản có lịch sử thất bại (History Trials):**
-  Nếu lượt trước dùng `bm25` mà bị critique từ chối (`is_relevant: false`), mô hình phải học cách đổi sang `decompose` hoặc `hyde` ở lượt sau.
+Khi nhóm trước phát triển trên Kaggle, họ đã gặp các lỗi nghiêm trọng sau đây mà bạn **bắt buộc phải tránh**:
+
+| Thành phần | Lỗi code cũ trong `branches/` | Cách khắc phục chuẩn xác |
+|---|---|---|
+| **Bộ nhớ GPU trên Kaggle T4x2** | Dùng `device_map="auto"` khiến HuggingFace cố chia nhỏ mô hình 7B sang cả 2 GPU, gây phân mảnh bộ nhớ và báo lỗi `CUDA out of memory`. | Khóa cố định chỉ dùng 1 GPU bằng: `os.environ["CUDA_VISIBLE_DEVICES"] = "0"` và bật `os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"`. 1 GPU T4 (15GB) là quá đủ cho mô hình 7B QLoRA 4-bit (~5.5GB VRAM). |
+| **Dữ liệu cột Corpus** | Gọi `doc['text']` trong khi dataset ArXiv thực tế tên cột là `doc['chunk']` $\rightarrow$ Crash toàn bộ quá trình nạp dữ liệu. | Đọc chính xác trường `row['chunk']` hoặc cấu hình alias `text = row.get('chunk') or row.get('text')`. |
+| **Tokenization BM25** | Tải thư viện `nltk.punkt` nhưng lúc index lại dùng `.split()` khoảng trắng $\rightarrow$ Xử lý dấu câu bị lệch, từ khóa dính dấu phẩy không tìm ra. | Dùng regex tokenizer thống nhất: `re.findall(r"\w+", text.lower())` cho cả lúc index lẫn lúc search. |
+| **Mất ánh xạ ID trong FAISS** | Khi build FAISS vector index, code cũ chỉ ném vector vào ma trận mà không lưu mảng `doc_ids` tương ứng $\rightarrow$ Khi tìm thấy top vector không biết nó thuộc về tài liệu nào! | Luôn lưu kèm file ánh xạ `faiss_doc_ids.json` song song với file `faiss_arxiv.index`. |
+| **Sinh dữ liệu SFT tốn tiền** | Code cũ chỉ hỗ trợ OpenAI GPT-4o (mất $8-$15) | Cung cấp sẵn cơ chế fallback sang **Google Gemini 2.0 Flash** (hoàn toàn miễn phí quota qua Google AI Studio) để sinh tập dữ liệu huấn luyện. |
 
 ---
 
-## 4. GIAO KÈO INTERFACE TRONG `node.py`
+## 3. THIẾT LẬP MÔI TRƯỜNG TRÊN KAGGLE (T4 x2)
 
-File `node.py` là điểm duy nhất mà đồ thị LangGraph gọi vào. Bạn PHẢI tuân thủ:
+Tạo notebook mới trên Kaggle, bật **Accelerator: GPU T4 x2**, bật **Internet: On**.
 
-### 📥 Dữ liệu đầu vào (Đọc từ `AgentState`):
-- `state["query"]`: Chuỗi câu hỏi gốc từ người dùng (`str`).
-- `state.get("retry_count", 0)`: Số lần Orchestrator đã quay lại tìm kiếm (`int`).
+### Cài đặt thư viện:
+```bash
+!pip install -q -U "transformers>=4.40.0" "datasets" "peft" "trl" "bitsandbytes" "accelerate" "scikit-learn" "rank-bm25" "sentence-transformers" "faiss-gpu"
+```
 
-### 📤 Dữ liệu đầu ra (Bắt buộc trả về):
+### Cấu hình kiểm soát VRAM:
 ```python
-return {
-    "retrieved_docs": [
-        {
-            "doc_id": "arxiv_2305_lora",
-            "text": "Nội dung đoạn văn bản tìm được...",
-            "score": 0.0327  # Điểm RRF hoặc BM25
-        },
-        ...
-    ],
-    "sub_queries": ["câu_hỏi_1", "câu_hỏi_2"],  # Danh sách câu hỏi sau decompose
-    "reasoning_trace": [{
-        "agent": "RetrievalAgent",
-        "selected_tool": "hybrid",
-        "retrieved_count": 3,
-        "internal_attempts": 1,
-        "critique": "Lý do đánh giá chất lượng tài liệu"
-    }]
+import os
+import torch
+
+# Khóa chạy trên GPU 0 để tránh phân mảnh giữa 2 GPU T4
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
+print(f"CUDA Available: {torch.cuda.is_available()}")
+print(f"Device Name: {torch.cuda.get_device_name(0)}")
+```
+
+---
+
+## 4. QUY TRÌNH DỮ LIỆU & HUẤN LUYỆN (STEP-BY-STEP)
+
+```mermaid
+flowchart LR
+    A[data/corpus.jsonl] --> B[Xây dựng BM25 & FAISS Index]
+    A --> C[generate_training_data.py]
+    C --> D[retrieval_sft_raw.jsonl]
+    D --> E[validate_synthetic_data.py]
+    E --> F[retrieval_sft_train_validated.jsonl]
+    F --> G[train_qlora.py trên Kaggle T4]
+    G --> H[LoRA Adapter Checkpoint]
+```
+
+### Bước 1: Xây dựng chỉ mục tìm kiếm (Indexing)
+Chạy script chuẩn bị `corpus.jsonl` (kho tài liệu ArXiv gồm ~5000 chunks nghiên cứu):
+- Tạo file `bm25_index.pkl` (dùng `rank_bm25.BM25Okapi`).
+- Tạo file `faiss_arxiv.index` kèm `faiss_doc_ids.json` dùng mô hình embedding nhẹ `BAAI/bge-small-en-v1.5` (chạy cực nhanh trên T4).
+
+### Bước 2: Dữ liệu huấn luyện SFT (Format chuẩn)
+File dữ liệu huấn luyện: `training/data/retrieval_sft_train_validated.jsonl`.
+Mỗi dòng là một mẫu quyết định có cấu trúc:
+```json
+{
+  "sub_query": "What is the parameter reduction factor of LoRA compared to GPT-3 175B?",
+  "history_trials": [
+    {
+      "attempt": 1,
+      "tool": "dense",
+      "critique_is_relevant": false,
+      "reason": "Dense search returns general papers about Transformers, missing exact numbers."
+    }
+  ],
+  "target_output": {
+    "thought": "Lần trước dùng dense bị thiếu số liệu cụ thể. Câu hỏi chứa từ khóa số liệu rõ ràng, chuyển sang bm25 để tìm chính xác.",
+    "tool_selected": "bm25",
+    "critique_is_relevant": true,
+    "critique_reason": "BM25 tìm thấy đoạn chứa 'reduces parameters by 10,000x'."
+  },
+  "source_doc_id": "arxiv_2106.09685::chunk_12"
 }
 ```
 
+### Bước 3: Huấn luyện QLoRA trên Kaggle
+Cấu hình trong file `training/train_qlora.py`:
+- **Base Model:** `Qwen/Qwen2.5-7B-Instruct`
+- **Quantization:** BitsAndBytes 4-bit (NF4, double quant, `compute_dtype=torch.float16`)
+- **LoRA Config:**
+  ```python
+  from peft import LoraConfig
+  peft_config = LoraConfig(
+      r=16,
+      lora_alpha=32,
+      lora_dropout=0.05,
+      bias="none",
+      task_type="CAUSAL_LM",
+      target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+  )
+  ```
+- **Hyperparameters:**
+  - `per_device_train_batch_size = 2`
+  - `gradient_accumulation_steps = 8` (effective batch size = 16)
+  - `learning_rate = 2e-4`
+  - `max_seq_length = 1024`
+  - `num_train_epochs = 3`
+  - `fp16 = True`
+
 ---
 
-## 5. THUẬT TOÁN & QUY TRÌNH THỰC THI CHI TIẾT
+## 5. ĐẶC TẢ GIAO DIỆN `node.py`
 
-```mermaid
-flowchart TD
-    A[Nhận query + retry_count] --> B[Router: Chọn tool bm25/dense/hybrid/decompose/hyde]
-    B --> C[Thực thi công cụ tìm kiếm trên corpus.jsonl]
-    C --> D[Critique: Kiểm tra độ phủ và sự phù hợp của tài liệu]
-    D --> E{Tài liệu đạt yêu cầu?}
-    E -- Có --> F[Trả retrieved_docs + trace ra ngoài]
-    E -- Không & còn lượt retry --> G[Đổi sang chiến lược khác] --> C
-    E -- Hết lượt nội bộ N lần --> F
+Khi triển khai vào đồ thị LangGraph, file `agents/agent1_retrieval/node.py` phải tuân thủ nghiêm ngặt:
+
+```python
+from typing import Any
+from core.base_agent import BaseAgent
+from core.state import AgentState
+
+class RetrievalAgent(BaseAgent):
+    def __init__(self, max_internal_retry: int = 2):
+        super().__init__(name="RetrievalAgent", max_internal_retry=max_internal_retry)
+        # 1. Nạp index BM25 và FAISS
+        # 2. Nạp adapter LoRA hoặc gọi router policy
+        
+    def run(self, state: AgentState) -> dict[str, Any]:
+        query = state.get("query", "")
+        retry_count = state.get("retry_count", 0) # Lượt retry từ Orchestrator
+        
+        # Vòng lặp nội bộ <= max_internal_retry:
+        # Chọn tool -> search -> critique -> đạt thì break
+        
+        return {
+            "retrieved_docs": [
+                {
+                    "doc_id": "arxiv_2106.09685::chunk_12",
+                    "text": "Nội dung đoạn văn...",
+                    "score": 0.032
+                }
+            ],
+            "sub_queries": [query],
+            "reasoning_trace": [
+                {
+                    "agent": self.name,
+                    "selected_tool": "hybrid",
+                    "retrieved_count": 3,
+                    "internal_attempts": 1,
+                    "critique": "Tài liệu khớp trực tiếp với câu hỏi."
+                }
+            ]
+        }
 ```
 
-1. **Khởi tạo:** Nạp kho dữ liệu [`data/corpus.jsonl`](file:///c:/Users/Admin/ducmanh/DM_Multi-Agent_RAG/data/corpus.jsonl), lập chỉ mục sẵn BM25 và Dense TF-IDF/FAISS.
-2. **Chọn tool:**
-   - Nếu `retry_count == 0`: Mặc định ưu tiên `hybrid` (BM25 + Dense kết hợp RRF).
-   - Nếu `retry_count == 1`: Tự động phân rã `decompose` (tách thành các khía cạnh nhỏ).
-   - Nếu `retry_count >= 2`: Dùng `hyde` sinh văn bản giả định để mở rộng từ khóa.
-3. **Cơ chế an toàn (Safe Fallback):** Nếu mô hình sinh ra tên tool không hợp lệ, tự động fallback về `hybrid`. Không bao giờ để script crash!
-
 ---
 
-## 6. HƯỚNG DẪN HUẤN LUYỆN TRÊN KAGGLE (GPU T4 x2)
+## 6. TIÊU CHÍ NGHIỆM THU (DEFINITION OF DONE)
 
-1. Nén thư mục `agents/agent1_retrieval/training/` thành file zip và upload lên Kaggle Notebook.
-2. Cài đặt môi trường trên Kaggle:
-   ```bash
-   pip install -q -U transformers datasets peft trl bitsandbytes accelerate
-   ```
-3. Chạy script train:
-   ```bash
-   python train_qlora.py
-   ```
-   *Lưu ý:* Script đã được cấu hình sẵn `os.environ["CUDA_VISIBLE_DEVICES"] = "0"` để tránh lỗi OOM do phân mảnh bộ nhớ giữa 2 GPU T4.
-4. Đánh giá độ chính xác của Router sau khi train:
-   ```bash
-   python eval_router_accuracy.py
-   ```
-5. Đẩy LoRA adapter lên Hugging Face Hub cá nhân:
-   ```python
-   model.push_to_hub("your-username/qwen25-7b-retrieval-router-lora")
-   ```
-6. Cập nhật đường dẫn Hugging Face vào `node.py` để chạy phục vụ người dùng.
-
----
-
-## 7. TIÊU CHÍ NGHIỆM THU (DEFINITION OF DONE)
-
-- [ ] File `node.py` chạy thành công độc lập mà không báo lỗi.
-- [ ] Chạy lệnh `python -m pytest agents/agent1_retrieval/tests/` đạt 100% PASS.
-- [ ] Router chọn đúng công cụ trong các tình huống: từ khóa rõ ràng $\rightarrow$ `bm25`, câu so sánh 2 ý $\rightarrow$ `decompose`, câu hỏi tổng quát $\rightarrow$ `hybrid`.
-- [ ] Luôn trả về đúng các trường: `retrieved_docs`, `sub_queries`, `reasoning_trace`.
+- [ ] Script index chạy tạo ra đầy đủ `bm25_index.pkl` và `faiss_arxiv.index`.
+- [ ] Huấn luyện thành công trên Kaggle T4, file LoRA adapter được lưu an toàn hoặc upload lên HuggingFace.
+- [ ] Chạy độc lập `python -m pytest agents/agent1_retrieval/tests/` vượt qua 100% test cases.
+- [ ] Đảm bảo cơ chế **Safe Fallback**: Khi model trả về tool không tồn tại hoặc rỗng, luôn fallback về `hybrid`, tuyệt đối không làm crash toàn bộ đồ thị.

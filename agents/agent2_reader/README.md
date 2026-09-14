@@ -1,136 +1,155 @@
-﻿# TÀI LIỆU ĐẶC TẢ KỸ THUẬT: AGENT 2 - READER AGENT
+# TÀI LIỆU ĐẶC TẢ KỸ THUẬT: AGENT 2 - READER AGENT
 ### Vị trí: Document Layout Reader & Multi-modal Parser Agent
 > **Người thực hiện:** Thành viên 2  
 > **Thư mục làm việc độc lập:** `agents/agent2_reader/`  
-> **File bàn giao hệ thống:** `agents/agent2_reader/node.py`
+> **File bàn giao hệ thống:** `agents/agent2_reader/node.py`  
+> **Môi trường chạy mục tiêu:** Kaggle Notebook (GPU T4 x2) & Môi trường thực thi cục bộ
 
 ---
 
-## 1. TỔNG QUAN NHIỆM VỤ
+## 1. TỔNG QUAN NHIỆM VỤ & VỊ TRÍ KIẾN TRÚC
 
-Reader Agent chịu trách nhiệm bóc tách các tài liệu nghiên cứu dạng **file PDF phức tạp** (bài báo 2 cột, bảng biểu khoa học, công thức toán học, hình vẽ kèm chú thích).
+Reader Agent là thành phần chuyên xử lý các tài liệu khoa học dạng **file PDF phức tạp** (bài báo 2 cột, bảng biểu số liệu, công thức toán học, sơ đồ). 
 
-Thay vì trích xuất văn bản thô (Plain text làm mất cấu trúc thứ bậc), Agent kết hợp **3 công cụ bóc tách** cùng cơ chế **Heuristic Guardrails (tiết kiệm chi phí)** và **Gemini Chain-of-Thought**:
-1. **PyMuPDF (`fitz`):** Trích xuất văn bản siêu tốc đối với tài liệu số có text layer đơn giản.
-2. **Tesseract OCR:** Cơ chế dự phòng (Fallback) khi gặp tài liệu scan hoặc mờ không có text layer.
-3. **LayoutLMv3 (Token Classification):** Mô hình thị giác ngôn ngữ đã fine-tune để gán nhãn cấu trúc không gian (Bảng biểu, Tiêu đề, Công thức, Chú thích hình).
-
----
-
-## 2. KIẾN TRÚC MÔ HÌNH & 11 NHÃN LAYOUT
-
-- **Mô hình thị giác:** `microsoft/layoutlmv3-base` (Chạy inference trên dòng chữ - Line-level, không phải từng từ riêng lẻ).
-- **Tập dữ liệu huấn luyện:** `DocLayNet-base` (từ Hugging Face: `pierreguillou/DocLayNet-base`).
-- **11 nhãn layout chuẩn khoa học:**
-  1. `Title` (Tiêu đề chính)
-  2. `Section-header` (Tiêu đề mục con)
-  3. `Text` (Đoạn văn bản nội dung)
-  4. `Table` (Bảng số liệu)
-  5. `Picture` (Hình ảnh, sơ đồ)
-  6. `Caption` (Chú thích hình / bảng)
-  7. `Formula` (Công thức toán học)
-  8. `Footnote` (Ghi chú chân trang)
-  9. `List-item` (Mục danh sách gạch đầu dòng)
-  10. `Page-header` (Tiêu đề đầu trang)
-  11. `Page-footer` (Số trang / Chân trang)
-
-> [!CAUTION]
-> **Quy tắc tính toán Bounding Box (BBox):**
-> Toàn bộ tọa độ BBox $(x_0, y_0, x_1, y_1)$ trong dataset phải chuẩn hóa về thang $0 - 1000$ dựa trên kích thước trang gốc (`original_width` và `original_height`), **tuyệt đối không dùng kích cỡ ảnh COCO (1025x1025)** vì sẽ làm sai lệch toàn bộ vị trí văn bản.
+Thay vì bóc tách text thô sơ (plain-text flatten làm mất hoàn toàn cấu trúc bảng biểu và mối liên kết đoạn), Reader Agent kết hợp:
+1. **PyMuPDF (`fitz`):** Bóc tách siêu tốc các tài liệu dạng digital PDF có text layer sẵn có.
+2. **Tesseract OCR Fallback:** Tự động phát hiện trang PDF dạng ảnh scan, tài liệu mờ hoặc không có text layer để chuyển sang OCR quang học.
+3. **LayoutLMv3 (Token Classification):** Mô hình thị giác ngôn ngữ đã fine-tune trên tập `DocLayNet-base` để gán 11 nhãn cấu trúc không gian (Bảng, Tiêu đề, Đoạn văn, Công thức, Chú thích...).
+4. **Heuristic Guardrails (Tiết kiệm chi phí):** Dùng các luật cố định về số lượng text block, tỉ lệ ảnh/chữ để tự quyết định công cụ mà không cần gọi LLM đắt tiền; chỉ gọi Gemini CoT Router khi gặp layout thực sự mơ hồ.
 
 ---
 
-## 3. GIAO KÈO INTERFACE TRONG `node.py`
+## 2. PHÂN TÍCH LỖI VÀ CẠM BẪY TỪ CODE CŨ (BRANCHES)
 
-File `node.py` là điểm duy nhất mà đồ thị LangGraph gọi vào. Bạn PHẢI tuân thủ:
+Nhánh `agent2-reader` cũ chứa các vấn đề kỹ thuật lớn cần đặc biệt chú ý khi chạy trên Kaggle:
 
-### 📥 Dữ liệu đầu vào (Đọc từ `AgentState`):
-- `state["pdf_path"]`: Đường dẫn tới file PDF người dùng tải lên (`str` hoặc `None`).
+| Vấn đề kỹ thuật | Cạm bẫy trong code cũ | Giải pháp chuẩn xác |
+|---|---|---|
+| **Lỗi tải dataset DocLayNet trên HuggingFace** | Repo `pierreguillou/DocLayNet-base` vẫn còn script cũ `DocLayNet-base.py`. Các bản `datasets` mới trên Kaggle chặn cơ chế này và báo lỗi `RuntimeError: Dataset scripts are no longer supported`. | **Bắt buộc** truy cập vào nhánh Parquet tự động convert: dùng tham số `revision="refs/convert/parquet"` khi gọi `load_dataset`. |
+| **Cạm bẫy tọa độ Bounding Box (BBox)** | Một số đoạn code lấy kích thước ảnh COCO cố định `(1025x1025)` để chuẩn hóa BBox về `0-1000`, trong khi tọa độ gốc của text lại nằm theo kích thước trang thật `original_width` và `original_height` $\rightarrow$ Kết quả bbox bị méo lệch hoàn toàn so với dòng chữ! | Chuẩn hóa tọa độ theo đúng kích thước trang thật:<br>`x0_norm = int(1000 * x0 / original_width)`<br>`y0_norm = int(1000 * y0 / original_height)`. |
+| **Cài đặt Tesseract OCR trên Kaggle / Linux** | Chỉ chạy `pip install pytesseract` là không đủ, sẽ bị lỗi `TesseractNotFoundError`. | Bắt buộc chạy lệnh hệ thống cài binary trước:<br>`!apt-get update && !apt-get install -y tesseract-ocr tesseract-ocr-vie`. |
+| **Độ mịn của Token Classification** | Cố gắng đưa từng từ đơn lẻ vào LayoutLMv3 khiến chuỗi vượt quá `max_seq_length=512` của mô hình rất nhanh. | Gom các từ thành **Line-level** (từng dòng chữ) theo `(block_no, line_no)` của PyMuPDF trước khi infer qua LayoutLMv3. |
 
-### 📤 Dữ liệu đầu ra (Bắt buộc trả về):
+---
+
+## 3. THIẾT LẬP TRÊN KAGGLE (GPU T4) & FINE-TUNE LAYOUTLMV3
+
+Chạy notebook trên Kaggle với GPU T4:
+
+### Cài đặt môi trường:
+```bash
+!apt-get update && !apt-get install -y tesseract-ocr
+!pip install -q -U "transformers>=4.40.0" "datasets" "accelerate" "scikit-learn" "pillow" "pytesseract" "pymupdf"
+```
+
+### 11 Nhãn cấu trúc chuẩn khoa học của DocLayNet:
 ```python
-return {
-    "document_schema": {
-        "title": "Attention Is All You Need.pdf",
-        "total_pages": 12,
-        "pages": [
-            {
-                "page_no": 1,
-                "needs_ocr": False,
-                "sections": [
-                    {
-                        "type": "Title",
-                        "bbox": [50.0, 45.2, 950.0, 80.5],
-                        "text": "Attention Is All You Need"
-                    },
-                    {
-                        "type": "Table",
-                        "bbox": [100.0, 320.0, 900.0, 520.0],
-                        "text": "Bảng 1: Kết quả BLEU score trên WMT 2014"
-                    }
-                ]
-            }
-        ]
-    },
-    "reasoning_trace": [{
-        "agent": "ReaderAgent",
-        "strategy": "pymupdf_fast",  # hoặc ocr_fallback, layoutlmv3
-        "parsed_pages": 12,
-        "status": "document_schema_ready"
-    }]
+LABEL_MAP = {
+    0: "Caption",
+    1: "Footnote",
+    2: "Formula",
+    3: "List-item",
+    4: "Page-footer",
+    5: "Page-header",
+    6: "Picture",
+    7: "Section-header",
+    8: "Table",
+    9: "Text",
+    10: "Title"
 }
 ```
 
+### Cấu hình huấn luyện tối ưu cho VRAM 16GB (Kaggle T4):
+- **Base Model:** `microsoft/layoutlmv3-base`
+- **Max Length:** `512`
+- **Batch Size:** `per_device_train_batch_size = 4`
+- **Gradient Accumulation Steps:** `4` (effective batch size = 16)
+- **Precision:** `fp16 = True`
+- **Learning Rate:** `3e-5`
+- **Epochs:** `3`
+
 ---
 
-## 4. QUY TRÌNH RA QUYẾT ĐỊNH & CƠ CHẾ GUARDRAIL
-
-Để tránh tốn tiền gọi LLM API vô tội vạ, quy trình xử lý mỗi trang tuân theo:
+## 4. QUY TRÌNH RA QUYẾT ĐỊNH & THUẬT TOÁN ĐIỀU PHỐI
 
 ```mermaid
 flowchart TD
-    A[Nhận trang PDF] --> B{Có text layer không?}
-    B -- Không có hoặc < 30 ký tự --> C[Chạy ngay Tesseract OCR Fallback]
-    B -- Có text layer --> D{Layout đơn giản? < 15 block, không bảng}
-    D -- Đúng --> E[Chạy nhanh PyMuPDF alt_segmentation]
-    D -- Mơ hồ / Phức tạp --> F[Gọi Gemini Router CoT để chọn chiến lược]
-    F --> G[Chạy LayoutLMv3 Token Classification]
-    C --> H[Self-Critique nội bộ: Kiểm tra confidence]
-    E --> H
-    G --> H
-    H -- Đạt --> I[Xuất document_schema]
-    H -- Không đạt & Còn retry --> J[Chuyển sang công cụ kế tiếp trong fallback chain] --> H
+    A[Nhận trang PDF] --> B{Kiểm tra text layer}
+    B -- Số ký tự < 30 hoặc không có text --> C[Công cụ 1: Tesseract OCR Fallback]
+    B -- Có text layer rõ ràng --> D{Đếm số block văn bản}
+    D -- Dưới 15 block, không có bảng biểu --> E[Công cụ 2: PyMuPDF Fast Parser]
+    D -- Nhiều block, bố cục 2 cột hoặc phức tạp --> F[Công cụ 3: LayoutLMv3 Visual Token Classifier]
+    C --> G[Đánh giá kết quả bóc tách: Self-Critique]
+    E --> G
+    F --> G
+    G -- Kết quả hợp lệ --> H[Xuất document_schema]
+    G -- Lỗi hoặc rỗng & Còn lượt thử --> I[Fallback sang công cụ kế tiếp] --> G
 ```
-
-- **Fallback chain mặc định:** `alt_segmentation` $\rightarrow$ `ocr_fallback` $\rightarrow$ `layoutlmv3`.
-- **Giới hạn số lần thử lại:** Tối đa 3 lần cho mỗi trang, không bao giờ để script crash.
 
 ---
 
-## 5. HƯỚNG DẪN HUẤN LUYỆN TRÊN KAGGLE (GPU T4)
+## 5. ĐẶC TẢ GIAO DIỆN `node.py`
 
-Thư mục `training/notebooks/` chứa toàn bộ quy trình tiền xử lý và huấn luyện:
+File `agents/agent2_reader/node.py` phải tuân thủ nghiêm ngặt schema đầu ra:
 
-1. **Bước 1:** `00_inspect_doclaynet.py`:
-   - Đọc nhánh `refs/convert/parquet` của dataset `pierreguillou/DocLayNet-base` để kiểm tra schema thực tế.
-2. **Bước 2:** `01_process_doclaynet.py`:
-   - Chuyển đổi tọa độ $(x, y, w, h) \rightarrow (x_0, y_0, x_1, y_1)$.
-   - Chuẩn hóa về thang $0-1000$.
-   - Lưu ra `/kaggle/working/doclaynet_processed/` kèm file `label_map.json`.
-3. **Bước 3:** `01_train_layoutlmv3.py`:
-   - Fine-tune mô hình `microsoft/layoutlmv3-base`.
-   - Tham số: `fp16=True`, gradient accumulation steps để vừa VRAM 16GB của GPU T4.
-   - Lưu checkpoint vào `/kaggle/working/layoutlmv3_doclaynet_model/`.
-4. **Bước 4:** Nén thư mục model và tải về hoặc đẩy lên Hugging Face Hub:
-   ```python
-   model.push_to_hub("your-username/layoutlmv3-doclaynet")
-   ```
+```python
+from typing import Any
+import os
+from core.base_agent import BaseAgent
+from core.state import AgentState
+
+class ReaderAgent(BaseAgent):
+    def __init__(self, max_internal_retry: int = 2):
+        super().__init__(name="ReaderAgent", max_internal_retry=max_internal_retry)
+        # Nạp các công cụ: PyMuPDF, OCR wrapper, LayoutLMv3 pipeline
+        
+    def run(self, state: AgentState) -> dict[str, Any]:
+        pdf_path = state.get("pdf_path")
+        
+        # 1. Kiểm tra an toàn: Nếu không truyền pdf_path hoặc file không tồn tại
+        if not pdf_path or not os.path.exists(pdf_path):
+            self.logger.warning("Không có file PDF hợp lệ, bỏ qua Reader Agent.")
+            return {
+                "document_schema": None,
+                "reasoning_trace": [{"agent": self.name, "status": "skipped_no_pdf"}]
+            }
+            
+        # 2. Xử lý từng trang PDF
+        # Bóc tách cấu trúc -> Trả về DocLayNet schema chuẩn
+        
+        return {
+            "document_schema": {
+                "title": os.path.basename(pdf_path),
+                "total_pages": 1,
+                "pages": [
+                    {
+                        "page_no": 1,
+                        "needs_ocr": False,
+                        "sections": [
+                            {"type": "Title", "bbox": [50, 40, 950, 80], "text": "Cơ chế Attention trong NLP"},
+                            {"type": "Text", "bbox": [50, 90, 500, 300], "text": "Mô hình Transformer loại bỏ hoàn toàn hồi quy..."},
+                            {"type": "Table", "bbox": [50, 320, 950, 600], "text": "Bảng 1: Kết quả thử nghiệm trên WMT 2014"}
+                        ]
+                    }
+                ]
+            },
+            "reasoning_trace": [
+                {
+                    "agent": self.name,
+                    "strategy": "pymupdf_fast",
+                    "parsed_pages": 1,
+                    "status": "document_schema_ready"
+                }
+            ]
+        }
+```
 
 ---
 
 ## 6. TIÊU CHÍ NGHIỆM THU (DEFINITION OF DONE)
 
-- [ ] File `node.py` chạy thành công khi truyền đường dẫn file PDF thật lẫn trường hợp file PDF không tồn tại (có fallback an toàn).
-- [ ] Chạy lệnh `python -m pytest agents/agent2_reader/tests/` đạt 100% PASS.
-- [ ] Bóc tách chính xác ít nhất 3 loại khối layout cơ bản: `Title`, `Text`, `Table`.
-- [ ] Tự động nhận diện được file scan mờ và chuyển sang OCR mà không cần gọi LLM API.
+- [ ] File `node.py` xử lý mượt mà cả trường hợp có file PDF thật lẫn trường hợp `pdf_path=None` (không bao giờ gây lỗi crash đồ thị).
+- [ ] Khi đưa vào một ảnh PDF scan không có text, tự động chuyển sang Tesseract OCR.
+- [ ] Bóc tách và gán nhãn được tối thiểu 3 thành phần chính: `Title`, `Text`, `Table`.
+- [ ] Tọa độ BBox được chuẩn hóa đúng trong khoảng `0 - 1000`.
+- [ ] Toàn bộ unit tests trong `agents/agent2_reader/tests/` đều vượt qua (100% PASS).
