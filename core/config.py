@@ -1,25 +1,85 @@
-﻿import os
+"""
+Unified Configuration for Multi-Agent Research RAG System.
+Supports:
+  1. local_api: Lightweight execution on Laptop (ThinkBook G8+) using Gemini / DeepSeek API + CPU search.
+  2. kaggle_gpu: Remote high-throughput execution forwarding heavy inference to Kaggle Dual Tesla T4 worker.
+  3. local_gpu: On-premise execution with local CUDA GPUs.
+"""
+
+import os
 from dataclasses import dataclass, field
 from dotenv import load_dotenv
 
 load_dotenv()
 
+
 @dataclass
 class Settings:
-    # API Keys
-    OPENAI_API_KEY: str = field(default_factory=lambda: os.getenv("OPENAI_API_KEY", ""))
+    # Execution Mode: "local_api" | "kaggle_gpu" | "local_gpu"
+    EXECUTION_MODE: str = field(
+        default_factory=lambda: os.getenv("EXECUTION_MODE", "local_api").lower()
+    )
+
+    # Remote Kaggle Worker Endpoint (Cloudflare Tunnel or ngrok URL)
+    REMOTE_INFERENCE_URL: str = field(
+        default_factory=lambda: os.getenv("REMOTE_INFERENCE_URL", "").rstrip("/")
+    )
+    REMOTE_TIMEOUT_SECONDS: int = int(os.getenv("REMOTE_TIMEOUT_SECONDS", "300"))
+
+    # API Keys for Cloud Foundation Models
     GEMINI_API_KEY: str = field(default_factory=lambda: os.getenv("GEMINI_API_KEY", ""))
-    
-    # LLM Settings
-    DEFAULT_LLM_MODEL: str = field(default_factory=lambda: os.getenv("DEFAULT_LLM_MODEL", "gemini-2.5-flash"))
-    EMBEDDING_MODEL: str = field(default_factory=lambda: os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"))
-    
-    # Multi-Agent StateGraph Limits
+    DEEPSEEK_API_KEY: str = field(default_factory=lambda: os.getenv("DEEPSEEK_API_KEY", ""))
+    OPENAI_API_KEY: str = field(default_factory=lambda: os.getenv("OPENAI_API_KEY", ""))
+    COHERE_API_KEY: str = field(default_factory=lambda: os.getenv("COHERE_API_KEY", ""))
+
+    # Foundation LLM Models
+    DEFAULT_LLM_MODEL: str = field(
+        default_factory=lambda: os.getenv("DEFAULT_LLM_MODEL", "gemini-2.5-flash")
+    )
+    FALLBACK_LLM_MODEL: str = field(
+        default_factory=lambda: os.getenv("FALLBACK_LLM_MODEL", "deepseek-chat")
+    )
+
+    # Embedding & Retrieval Models
+    EMBEDDING_MODEL: str = field(
+        default_factory=lambda: os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
+    )
+    FALLBACK_EMBEDDING_MODEL: str = field(
+        default_factory=lambda: os.getenv("FALLBACK_EMBEDDING_MODEL", "BAAI/bge-large-en-v1.5")
+    )
+    RERANKER_MODEL: str = field(
+        default_factory=lambda: os.getenv("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
+    )
+
+    # Multi-Agent StateGraph Limits & Budget Guards
     MAX_ORCHESTRATOR_RETRY: int = int(os.getenv("MAX_ORCHESTRATOR_RETRY", "3"))
     DEFAULT_MAX_INTERNAL_RETRY: int = int(os.getenv("DEFAULT_MAX_INTERNAL_RETRY", "2"))
-    
-    # Paths
-    CORPUS_PATH: str = field(default_factory=lambda: os.getenv("CORPUS_PATH", "data/corpus.jsonl"))
-    ARTIFACTS_DIR: str = field(default_factory=lambda: os.getenv("ARTIFACTS_DIR", "artifacts"))
+    MAX_FACTCHECK_CALLS: int = int(os.getenv("MAX_FACTCHECK_CALLS", "120"))
+    MAX_RETRIEVED_CHUNKS: int = int(os.getenv("MAX_RETRIEVED_CHUNKS", "10"))
+    TOP_K_RERANK: int = int(os.getenv("TOP_K_RERANK", "5"))
+
+    # Data & Storage Paths
+    BASE_DIR: str = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    CORPUS_PATH: str = field(
+        default_factory=lambda: os.getenv(
+            "CORPUS_PATH", os.path.join(os.path.dirname(__file__), "..", "data", "corpus.jsonl")
+        )
+    )
+    INDEX_DIR: str = field(
+        default_factory=lambda: os.getenv(
+            "INDEX_DIR", os.path.join(os.path.dirname(__file__), "..", "data", "index")
+        )
+    )
+    ARTIFACTS_DIR: str = field(
+        default_factory=lambda: os.getenv(
+            "ARTIFACTS_DIR", os.path.join(os.path.dirname(__file__), "..", "artifacts")
+        )
+    )
+    UPLOAD_DIR: str = field(
+        default_factory=lambda: os.getenv(
+            "UPLOAD_DIR", os.path.join(os.path.dirname(__file__), "..", "uploads")
+        )
+    )
+
 
 settings = Settings()

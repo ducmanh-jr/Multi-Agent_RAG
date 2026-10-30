@@ -183,17 +183,7 @@ def build_research_rag_graph():
     # Thêm các Edge cố định và có điều kiện
     workflow.add_edge(START, "orchestrator_router")
     workflow.add_edge("orchestrator_router", "retrieval_node")
-    
-    # Retrieval -> (Reader hoặc Summarizer)
-    workflow.add_conditional_edges(
-        "retrieval_node",
-        route_after_retrieval,
-        {
-            "reader_node": "reader_node",
-            "summarizer_node": "summarizer_node"
-        }
-    )
-    
+    workflow.add_edge("retrieval_node", "reader_node")
     workflow.add_edge("reader_node", "summarizer_node")
     workflow.add_edge("summarizer_node", "fact_checker_node")
     
