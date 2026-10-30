@@ -1,7 +1,13 @@
-﻿# Byte-compiled / optimized / DLL files
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
 
 # Environments
 .env
@@ -10,7 +16,13 @@ env/
 venv/
 ENV/
 
-# Large Model Weights and Checkpoints (Tuyệt đối không commit vào Git)
+# Runtime Uploads & Artifacts
+uploads/*
+!uploads/.gitkeep
+artifacts/*
+!artifacts/.gitkeep
+
+# Large Model Weights and Checkpoints
 **/checkpoints/
 **/weights/
 *.safetensors
@@ -20,7 +32,12 @@ ENV/
 *.onnx
 *.gguf
 
-# Kaggle / Temporary Data
+# Notebooks & Logs
 .ipynb_checkpoints
-/kaggle/
 *.log
+
+# OS & Editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

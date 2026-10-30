@@ -1,40 +1,38 @@
-# Multi-Agent Research RAG System
+# Unified Multi-Agent Research RAG System (Evidence-First)
 
-Hệ thống Multi-Agent RAG nâng cao dành cho nghiên cứu và xử lý tài liệu học thuật/kỹ thuật, được xây dựng dựa trên **LangGraph StateGraph** với 5 Agent chuyên trách, cơ chế tự sửa lỗi đa tầng (Multi-level Self-Correction), kiểm chứng độ thật giả (Fact-Checking) và tổng hợp báo cáo chuyên sâu.
-
-Dự án được cấu trúc theo mô hình **Modular Self-Contained Agent Package**, cho phép các thành viên trong nhóm phát triển độc lập từng Agent (bao gồm cả inference, tools, training scripts và datasets) trước khi tích hợp vào đồ thị điều phối chung.
+Hệ thống Nghiên cứu và Xử lý Tài liệu Học thuật Tự động dựa trên **LangGraph StateGraph** với 5 Agent chuyên trách, triệt tiêu ảo giác (0% Hallucination by Design) theo chuẩn mực **Evidence-First**, tích hợp tinh hoa từ các nghiên cứu SOTA quốc tế (**PaperQA2** & **Stanford STORM**).
 
 ---
 
-## 📐 Kiến trúc hệ thống qua LangGraph StateGraph
-
-Sơ đồ luồng điều phối 5 Function Node, Router Node và cơ chế kiểm duyệt/Escalation:
+## 🏛️ Kiến Trúc Hệ Thống (LangGraph StateGraph)
 
 ```mermaid
 flowchart TD
-    %% Styling
     classDef startEnd fill:#1e293b,stroke:#94a3b8,stroke-width:2px,color:#f8fafc;
     classDef orchestrator fill:#7c2d12,stroke:#ea580c,stroke-width:2px,color:#ffedd5;
     classDef agent fill:#1e1b4b,stroke:#6366f1,stroke-width:2px,color:#e0e7ff;
     classDef decision fill:#0f172a,stroke:#64748b,stroke-width:2px,color:#f1f5f9;
     classDef escalation fill:#7f1d1d,stroke:#ef4444,stroke-width:2px,color:#fee2e2;
 
-    START([START]):::startEnd --> Orchestrator["<b>Orchestrator (router node)</b><br/>Đọc intent + retry_count để chọn agent kế"]:::orchestrator
+    START([START]):::startEnd --> Orchestrator["<b>Orchestrator Router</b><br/>Khởi tạo trạng thái, đếm retry"]:::orchestrator
 
-    Orchestrator --> Agent1["<b>1. Retrieval Agent</b><br/>LLM chọn tool: bm25 / dense / hyde / rewrite / decompose<br/><i>(vòng lặp nội bộ ≤ N)</i>"]:::agent
+    Orchestrator --> Agent1["<b>1. Retrieval Agent</b><br/>Hybrid BM25 + Dense RRF<br/>STORM Multi-Perspective"]:::agent
 
-    Agent1 -->|"nếu kèm PDF"| Agent2["<b>2. Reader Agent</b><br/>LLM chọn chiến lược trích xuất → document_schema<br/><i>(vòng lặp nội bộ ≤ N)</i>"]:::agent
-    Agent1 -->|"nếu không cần PDF"| Agent3["<b>3. Summarizer Agent</b><br/>LLM sinh answer + evidence span + LLM critic độc lập<br/><i>(vòng lặp nội bộ ≤ N)</i>"]:::agent
+    Agent1 --> Agent2["<b>2. Reader Agent</b><br/>DocLayNet Layout Parser<br/>Offset & PaperQA2 Context Hash"]:::agent
 
-    Agent2 -->|"document_schema sẵn sàng"| Agent3
+    Agent2 --> Agent3["<b>3. Summarizer Agent</b><br/>Generator + Critic Architecture<br/>Tách Atomic Claims & Spans"]:::agent
 
-    Agent3 --> Agent4["<b>4. Fact-Checker Agent</b><br/>LLM-as-judge: support / contradict / not_enough_info<br/><i>(vòng lặp nội bộ ≤ N)</i>"]:::agent
+    Agent3 --> Agent4["<b>4. Fact-Checker Agent</b><br/>Tầng 1: Kiểm tra số học tất định<br/>Tầng 2: SciFact NLI Consensus"]:::agent
 
-    Agent4 --> CondEdge{"<b>fact_check_label?</b><br/><i>conditional_edge tầng Orchestrator</i>"}:::decision
+    Agent4 --> CondEdge{"<b>fact_check_label?</b><br/>(conditional_edge)"}:::decision
 
-    CondEdge -->|"contradict / not_enough_info<br/><b>retry_count += 1 (giới hạn 3 lần)</b>"| Agent1
-    CondEdge -->|"support"| Agent5["<b>5. Writer Agent</b><br/>LLM sinh báo cáo + validate schema + LLM phê bình câu<br/><i>(vòng lặp nội bộ ≤ N)</i>"]:::agent
-    CondEdge -->|"retry_count ≥ 3 → escalate"| Escalation["<b>Escalation node</b><br/>Trả kết quả kèm cảnh báo độ tin cậy thấp"]:::escalation
+    CondEdge -->|"support"| Agent5["<b>5. Writer Agent</b><br/>Deterministic Claim Pool Assembly<br/>Xuất báo cáo khoa học có nguồn"]:::agent
+
+    CondEdge -->|"contradict / not_enough_info<br/>retry_count < 3"| RetryNode["<b>Self-Correction Loop</b><br/>Tăng retry_count += 1<br/>Bù đắp Evidence Gaps"]:::orchestrator
+    
+    RetryNode --> Agent1
+
+    CondEdge -->|"retry_count >= 3"| Escalation["<b>Escalation Node</b><br/>Xuất báo cáo cảnh báo độ tin cậy"]:::escalation
 
     Agent5 --> END([END]):::startEnd
     Escalation --> END
@@ -42,105 +40,78 @@ flowchart TD
 
 ---
 
-## 📁 Cấu Trúc Dự Án (Phân Chia Theo Từng Agent Cho Thành Viên)
+## 🌟 5 Tác Tử Chuyên Biệt & Kỹ Thuật Đột Phá
 
-Hệ thống được chia thành các gói độc lập (Package-per-agent), mỗi thành viên toàn quyền phát triển trong thư mục của mình:
-
-```
-DM_Multi-Agent_RAG/
-├── core/                                   # [LEAD QUẢN LÝ] Giao tiếp hệ thống
-│   ├── config.py                           # Cấu hình biến môi trường và tham số
-│   ├── state.py                            # Định nghĩa duy nhất AgentState
-│   ├── base_agent.py                       # Abstract Base Class thống nhất
-│   └── graph.py                            # Ghép nối LangGraph StateGraph E2E
-│
-├── agents/                                 # [CÁC THÀNH VIÊN LÀM ĐỘC LẬP]
-│   ├── agent1_retrieval/                   # Thành viên 1: Retrieval Agent
-│   │   ├── README.md                       # Hướng dẫn riêng cho Agent 1
-│   │   ├── node.py                         # Điểm chạm duy nhất: class RetrievalAgent
-│   │   ├── tools/                          # bm25.py, dense.py, hybrid.py
-│   │   └── finetuning/                     # train_qlora.py, generate_training_data.py, data/
-│   │
-│   ├── agent2_reader/                      # Thành viên 2: Reader Agent
-│   │   ├── README.md                       # Hướng dẫn riêng cho Agent 2
-│   │   ├── node.py                         # Điểm chạm duy nhất: class ReaderAgent
-│   │   ├── tools/                          # pdf_parser.py (PyMuPDF + Heuristics)
-│   │   └── finetuning/                     # notebooks huấn luyện LayoutLMv3 trên DocLayNet
-│   │
-│   ├── agent3_summarizer/                  # Thành viên 3: Summarizer Agent
-│   │   ├── README.md                       # Hướng dẫn riêng cho Agent 3
-│   │   ├── node.py                         # Điểm chạm duy nhất: class SummarizerAgent
-│   │   ├── components/                     # generator.py, critic.py, verifier.py
-│   │   └── finetuning/                     # train_generator, train_critic, validate_evidence_span, data/
-│   │
-│   ├── agent4_fact_checker/                # Thành viên 4: Fact-Checker Agent
-│   │   ├── README.md                       # Hướng dẫn riêng cho Agent 4
-│   │   ├── node.py                         # Điểm chạm duy nhất: class FactCheckerAgent
-│   │   ├── components/                     # claim_extractor.py, judge.py
-│   │   └── finetuning/                     # Tài liệu huấn luyện SciBERT NLI trên SciFact
-│   │
-│   └── agent5_writer/                      # Thành viên 5: Writer Agent
-│       ├── README.md                       # Hướng dẫn riêng cho Agent 5
-│       ├── node.py                         # Điểm chạm duy nhất: class WriterAgent
-│       └── components/                     # report_builder.py, sentence_critic.py
-│
-├── data/                                   # Kho tri thức phục vụ tìm kiếm
-│   └── corpus.jsonl                        # Các bài báo khoa học AI/NLP (ArXiv chunked)
-├── tests/                                  # Kiểm thử tự động (Unit + Integration)
-├── main.py                                 # Giao diện dòng lệnh CLI chạy hệ thống
-└── requirements.txt
-```
+| Tác tử | Nhiệm vụ khoa học | Kỹ thuật cốt lõi |
+| :--- | :--- | :--- |
+| **1. Retrieval Agent** | Tìm kiếm đa chiều & bù đắp thông tin | • **Hybrid RRF (Reciprocal Rank Fusion):** Dung hợp BM25 và Dense Search.<br>• **Stanford STORM Multi-Perspective:** Tự động phân rã câu hỏi theo nhiều góc nhìn khoa học.<br>• **Preserved Seen Chunks:** Lưu trữ vĩnh viễn các chunk phản bác qua mọi vòng lặp. |
+| **2. Reader Agent** | Bóc tách cấu trúc tài liệu PDF | • **DocLayNet Schema:** Phân đoạn tiêu đề, bảng biểu, công thức.<br>• **PaperQA2 Provenance:** Gắn mã băm SHA-256 (`context_hash`) và vị trí ký tự tuyệt đối để truy xuất trích dẫn. |
+| **3. Summarizer Agent** | Tổng hợp nhận định nguyên tử | • **Kiến trúc kép Generator – Critic:** Generator trích xuất mệnh đề; Critic độc lập phản biện và loại bỏ các khẳng định overclaim.<br>• **Atomic Claims:** Tách câu trả lời thành từng mệnh đề kiểm chứng độc lập được. |
+| **4. Fact-Checker Agent** | Thẩm định tính trung thực khoa học | • **Tầng 1 (Numeric Verifier):** Kiểm chứng số học tất định (loại bỏ ảo giác về % hoặc số liệu).<br>• **Tầng 2 (SciFact NLI Judge):** Thẩm định logic `SUPPORT` / `CONTRADICT` / `NOT_ENOUGH_INFO`.<br>• **Gap Detection:** Xuất danh sách `evidence_gaps` yêu cầu Retrieval tìm kiếm bổ sung. |
+| **5. Writer Agent** | Xuất bản báo cáo khoa học | • **Deterministic Claim Pool Assembly (0% Hallucination):** Chỉ cho phép tổng hợp từ các nhận định đã được dán nhãn `SUPPORT`.<br>• **Interactive Citations:** Tạo trích dẫn chuẩn học thuật `[1]`, `[2]` trỏ về tài liệu nguồn. |
 
 ---
 
-## 🧠 Bản Giao Kèo Giao Diện (Agent Contract)
+## ⚡ Hai Chế Độ Vận Hành (Dual-Execution Architecture)
 
-Để tránh xung đột khi gộp mã nguồn (Merge), mỗi thành viên chỉ cần tuân thủ đúng một quy tắc: xuất ra một class trong file `node.py` kế thừa từ `core.base_agent.BaseAgent`:
-
-```python
-# agents/agentX_.../node.py
-from core.base_agent import BaseAgent
-from core.state import AgentState
-
-class MyAgent(BaseAgent):
-    def __init__(self, max_internal_retry: int = 2):
-        super().__init__(name="MyAgent", max_internal_retry=max_internal_retry)
-
-    def run(self, state: AgentState) -> dict:
-        # 1. Đọc dữ liệu từ state
-        # 2. Xử lý nội bộ (model, tool, CoT)
-        # 3. Trả về dict cập nhật vào AgentState
-        return {
-            "output_field": "value",
-            "reasoning_trace": [{"agent": self.name, "status": "done"}]
-        }
-```
+Hệ thống được thiết kế tối ưu riêng cho cấu hình:
+- **Laptop ThinkBook G8+ (Local Client):**
+  - Đặt `EXECUTION_MODE=local_api` trong `.env`.
+  - Sử dụng **Gemini 2.5 Flash** (Free API) hoặc **DeepSeek** kết hợp tìm kiếm BM25 trên CPU. Siêu nhẹ, mát máy, không tốn VRAM.
+- **Kaggle Dual Tesla T4 (Remote Compute Cluster):**
+  - Mở notebook `kaggle/run_dual_t4_serving.ipynb` trên Kaggle (GPU T4 x 2), nhấn Run All để khởi chạy máy chủ mô hình và lấy link public ngrok.
+  - Điền URL vào `.env`: `REMOTE_INFERENCE_URL=https://xxxx.ngrok-free.app` và đặt `EXECUTION_MODE=kaggle_gpu`.
+  - Toàn bộ suy luận nặng được phân bổ tự động lên 2 GPU (32GB VRAM).
 
 ---
 
-## 🚀 Hướng Dẫn Chạy & Kiểm Thử
+## 🚀 Hướng Dẫn Sử Dụng Nhanh
 
-1. **Cài đặt thư viện:**
-   ```bash
-   pip install -r requirements.txt
-   ```
+### 1. Cài đặt môi trường
+```powershell
+py -3.10 -m pip install -r requirements.txt
+cp .env.example .env
+```
 
-2. **Chạy kiểm thử tự động toàn bộ hệ thống:**
-   ```bash
-   python -m pytest tests/
-   ```
+### 2. Khởi động Web Workspace UI
+```powershell
+py -3.10 main.py --serve
+```
+👉 Mở trình duyệt tại: **`http://localhost:8000`** để trải nghiệm giao diện Web đầy đủ, tải PDF lên và xem báo cáo tương tác.
 
-3. **Chạy truy vấn nghiên cứu khoa học thực tế:**
-   ```bash
-   python main.py --query "What is LoRA and how does it reduce memory?"
-   ```
+### 3. Chạy qua CLI
+```powershell
+py -3.10 main.py --query "Mô hình Transformer và đánh giá trên tập QASPER"
+```
 
-4. **Chạy kèm tài liệu PDF (kích hoạt Reader Agent):**
-   ```bash
-   python main.py --query "Phân tích bảng biểu" --pdf "data/sample.pdf"
-   ```
+### 4. Chạy kiểm thử tự động (Test Suite)
+```powershell
+py -3.10 -m pytest -v
+```
+*(Hiện có 24/24 unit & integration tests đạt 100% tỷ lệ thành công).*
 
-5. **Kiểm thử cơ chế tự sửa sai (Self-Correction & Escalation):**
-   ```bash
-   python main.py --test-retry
-   ```
+---
+
+## 📁 Cấu Trúc Mã Nguồn
+
+```text
+.Multi-Agent_RAG/
+├── core/                                     # Lõi điều phối hệ thống
+│   ├── config.py                             # Cấu hình đa chế độ (ThinkBook / Kaggle)
+│   ├── state.py                              # Unified StateGraph TypedDict & Contracts
+│   ├── base_agent.py                         # Abstract Protocol BaseAgent
+│   └── graph.py                              # LangGraph StateGraph E2E
+├── agents/                                   # 5 Tác tử chuyên trách
+│   ├── agent1_retrieval/                     # Hybrid RRF, BM25, STORM Perspective
+│   ├── agent2_reader/                        # PDF Parser, SourceUnits, Layout
+│   ├── agent3_summarizer/                    # Generator-Critic Component
+│   ├── agent4_fact_checker/                  # SciFact NLI Judge, Numeric Verifier
+│   └── agent5_writer/                        # Claim Pool Synthesizer, Citations
+├── api/                                      # Máy chủ FastAPI & Streaming SSE
+├── web/                                      # Web Workspace UI (HTML, CSS, JS, Fonts)
+├── kaggle/                                   # Tài nguyên phục vụ Kaggle Dual T4 Worker
+├── data/                                     # Kho tri thức corpus.jsonl
+├── tests/                                    # 24 Unit & Integration Tests tự động
+├── main.py                                   # Điểm vào chính (CLI & Web server)
+└── pytest.ini                                # Cấu hình PyTest chuẩn
+```
