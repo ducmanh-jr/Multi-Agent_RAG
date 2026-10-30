@@ -1,0 +1,13 @@
+# V2 API-Driven Multi-Agent RAG Requirements
+# No heavy PyTorch / CUDA / bitsandbytes / LayoutLMv3 required!
+
+langgraph>=1.2.0
+langchain-core>=1.6.0
+google-genai>=1.0.0
+pydantic>=2.7.0
+python-dotenv>=1.0.0
+PyMuPDF>=1.24.0
+rank-bm25>=0.2.2
+numpy>=1.24.0
+rich>=13.0.0
+requests>=2.31.0

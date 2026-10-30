@@ -60,7 +60,7 @@ class FactCheckJudge:
                     "text-classification",
                     model=self.model_path,
                     device=self.device,
-                    return_all_scores=True
+                    top_k=None
                 )
                 logger.info(f"[FactCheckJudge] Đã nạp thành công mô hình NLI từ: {self.model_path}")
             except Exception as e:
@@ -112,9 +112,10 @@ class FactCheckJudge:
 
         results = []
         for span in spans_to_test:
-            text_pair = f"{span[:384]} </s></s> {claim}"
+            # Truyền dict để pipeline tự tokenize đúng cặp NLI với [CLS] premise [SEP] hypothesis [SEP]
+            truncated_span = span[:384]
             try:
-                scores_list = self.classifier(text_pair)[0]
+                scores_list = self.classifier({"text": truncated_span, "text_pair": claim})[0]
                 label_scores = {r["label"].lower(): r["score"] for r in scores_list}
                 top_label = max(label_scores, key=label_scores.get)
 

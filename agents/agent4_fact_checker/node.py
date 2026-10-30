@@ -88,11 +88,7 @@ class FactCheckerAgent(BaseAgent):
         nei_cnt = statuses.count("not_enough_info")
         total_claims = len(statuses)
 
-        # Cờ đặc biệt cho bài test vòng lặp Orchestrator
-        if query.lower().startswith("[test_retry]") and retry_count < 3:
-            overall_label = "not_enough_info"
-            reasoning = f"Kích hoạt cờ test retry: Chưa đủ thông tin ở lần thử {retry_count + 1}."
-        elif contradict_cnt > 0:
+        if contradict_cnt > 0:
             overall_label = "contradict"
             reasoning = f"Phát hiện {contradict_cnt}/{total_claims} luận điểm mâu thuẫn trực tiếp với ngữ cảnh nguồn."
         elif nei_cnt >= (total_claims / 2):

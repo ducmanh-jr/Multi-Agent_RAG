@@ -46,8 +46,8 @@ def evaluate():
         hypothesis = item["hypothesis"]
         true_label = item["label"]
 
-        text_pair = f"{premise[:256]} </s></s> {hypothesis}"
-        res = classifier(text_pair)[0]
+        # Truyền dict để pipeline tự tokenize đúng cặp NLI
+        res = classifier({"text": premise, "text_pair": hypothesis})[0]
         pred_label_str = res["label"]
 
         pred_label_id = 1
