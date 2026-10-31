@@ -1681,6 +1681,7 @@ function updatePipeWarningBanner() {
 }
 
 function initPipelineStudio() {
+  initAgentStepper();
   // Mode selection buttons
   $$(".pipe-mode-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -1842,6 +1843,7 @@ function initPipelineStudio() {
           docsContainer.appendChild(item);
         });
       }
+      lastAgent1RetrievedDocs = res.retrieved_docs || [];
 
       // Populate Section 4: All Agent 1 Outputs Summary & JSON Payload
       const strategyText = res.retrieval_strategy || `${res.router_decision?.tool_selected || "dense"}_hybrid_rrf`;
@@ -1927,4 +1929,181 @@ function openPipeDocModal(doc, rank) {
   }
 
   dialog.showModal();
+}
+
+
+/* ==================== PIPELINE AGENT 2 STUDIO & STEPPER LOGIC ==================== */
+
+let lastAgent1RetrievedDocs = [];
+
+function initAgentStepper() {
+  // Navigation between Agent 1 and Agent 2 panels
+  const btnStep1 = $("#pipe-nav-agent1");
+  const btnStep2 = $("#pipe-nav-agent2");
+  const panel1 = $("#pipe-agent1-panel");
+  const panel2 = $("#pipe-agent2-panel");
+
+  function switchToStep(step) {
+    if (step === "agent1") {
+      btnStep1?.classList.add("active");
+      btnStep2?.classList.remove("active");
+      if (panel1) panel1.hidden = false;
+      if (panel2) panel2.hidden = true;
+    } else {
+      btnStep1?.classList.remove("active");
+      btnStep2?.classList.add("active");
+      if (panel1) panel1.hidden = true;
+      if (panel2) panel2.hidden = false;
+
+      // Update count of docs received from Agent 1
+      const countLabel = $("#agent2-input-docs-count");
+      if (countLabel) {
+        countLabel.textContent = `${lastAgent1RetrievedDocs.length} tài liệu đã trích xuất`;
+      }
+    }
+  }
+
+  btnStep1?.addEventListener("click", () => switchToStep("agent1"));
+  btnStep2?.addEventListener("click", () => switchToStep("agent2"));
+
+  // Handoff button from Agent 1 results to Agent 2
+  $("#btn-handoff-to-agent2")?.addEventListener("click", () => {
+    switchToStep("agent2");
+    // Automatically select the "from agent1" radio option
+    const radioA1 = $("#agent2-src-from-agent1");
+    if (radioA1) radioA1.checked = true;
+    toast("Đã chuyển dữ liệu sang Agent 2 (Reader). Nhấn 'Chạy Thử Nghiệm Agent 2' để bóc tách!");
+  });
+
+  // Engine selection buttons for Agent 2
+  let agent2SelectedEngine = "pymupdf";
+  $$("#pipe-agent2-panel .pipe-mode-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      $$("#pipe-agent2-panel .pipe-mode-btn").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      agent2SelectedEngine = btn.dataset.engine || "pymupdf";
+    });
+  });
+
+  // Execute Agent 2 button
+  $("#btn-agent2-execute")?.addEventListener("click", async () => {
+    const isFromAgent1 = $("#agent2-src-from-agent1")?.checked;
+    const docsToSend = isFromAgent1 ? lastAgent1RetrievedDocs : [];
+    const pdfPath = isFromAgent1 ? null : "sample.pdf";
+
+    // Show loading
+    $("#agent2-empty-state").hidden = true;
+    $("#agent2-output-container").hidden = true;
+    $("#agent2-loading-state").hidden = false;
+    const btn = $("#btn-agent2-execute");
+    if (btn) btn.disabled = true;
+
+    try {
+      const res = await api("/pipeline/agent2/run", {
+        method: "POST",
+        body: {
+          retrieved_docs: docsToSend,
+          pdf_path: pdfPath,
+          mode: agent2SelectedEngine === "doclaynet" ? "model" : "cpu",
+        },
+      });
+
+      $("#agent2-loading-state").hidden = true;
+
+      if (!res.success) {
+        alert("Lỗi khi chạy Agent 2: " + (res.message || "Không xác định"));
+        return;
+      }
+
+      // Metrics
+      $("#res-agent2-total-units").textContent = `${res.total_units || 0} units`;
+      $("#res-agent2-latency").textContent = `${res.latency_ms || 0} ms`;
+      $("#res-agent2-sections").textContent = `${res.sections_count || 0} sections`;
+      $("#res-agent2-source-name").textContent = res.pdf_path_used ? `File: ${res.pdf_path_used}` : "Agent 1 Chunks";
+
+      // Sections List
+      const secContainer = $("#res-agent2-sections-list");
+      if (secContainer) {
+        secContainer.innerHTML = "";
+        const sections = res.document_schema?.sections || [];
+        if (!sections.length) {
+          secContainer.innerHTML = '<p class="pipe-empty-note">Không có section cấu trúc đặc biệt (Dùng chunk phẳng).</p>';
+        } else {
+          sections.slice(0, 8).forEach((sec) => {
+            const item = document.createElement("div");
+            item.className = "pipe-section-badge-item";
+            item.innerHTML = `
+              <span>${escapePipeHtml(sec.title || sec.unit_id || "Section")}</span>
+              <span class="pipe-section-tag">${sec.category || "Section"}</span>
+            `;
+            secContainer.appendChild(item);
+          });
+        }
+      }
+
+      // SourceUnits List
+      const unitsContainer = $("#res-agent2-units-list");
+      if (unitsContainer) {
+        unitsContainer.innerHTML = "";
+        const units = res.source_units || [];
+        units.forEach((u, idx) => {
+          const item = document.createElement("div");
+          item.className = "pipe-doc-item";
+          item.title = "Nhấn để xem toàn bộ SourceUnit";
+          item.innerHTML = `
+            <div class="pipe-doc-header">
+              <div class="pipe-doc-title-row">
+                <span class="pipe-rank-badge">Unit #${idx + 1}</span>
+                <span class="pipe-doc-id">${escapePipeHtml(u.id || `unit_${idx}`)}</span>
+                <small>(Trang ${u.page_no || 1} · Offset: ${u.character_offset || 0})</small>
+              </div>
+              <span class="pipe-rrf-score">Hash: ${(u.context_hash || "").slice(0, 8)}...</span>
+            </div>
+            <p class="pipe-doc-snippet">${escapePipeHtml((u.text || "").slice(0, 200))}${(u.text || "").length > 200 ? "..." : ""}</p>
+          `;
+
+          item.addEventListener("click", () => {
+            openPipeDocModal({
+              title: `SourceUnit: ${u.id}`,
+              doc_id: u.doc_id || u.id,
+              page_no: u.page_no || 1,
+              rrf_score: `Offset: ${u.character_offset || 0}`,
+              context_hash: u.context_hash || "N/A",
+              text: u.text || "",
+            }, idx + 1);
+          });
+
+          unitsContainer.appendChild(item);
+        });
+      }
+
+      // Raw JSON Payload for Agent 3
+      const rawJsonPre = $("#res-agent2-raw-json");
+      if (rawJsonPre) {
+        rawJsonPre.textContent = JSON.stringify(res.agent2_state_payload || {}, null, 2);
+      }
+
+      // Copy payload button
+      const copyPayloadBtn = $("#btn-copy-agent2-payload");
+      if (copyPayloadBtn) {
+        copyPayloadBtn.onclick = async () => {
+          try {
+            await navigator.clipboard.writeText(JSON.stringify(res.agent2_state_payload || {}, null, 2));
+            toast("Đã sao chép gói State chuyển giao cho Agent 3!");
+          } catch {
+            toast("Không thể sao chép dữ liệu.");
+          }
+        };
+      }
+
+      // Show container
+      $("#agent2-output-container").hidden = false;
+
+    } catch (err) {
+      $("#agent2-loading-state").hidden = true;
+      alert("Lỗi kết nối khi gọi Agent 2: " + err.message);
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  });
 }

@@ -1067,6 +1067,79 @@ YÊU CẦU TRẢ VỀ JSON:
 
 
 
+
+
+
+class Agent2PlaygroundRequest(BaseModel):
+    pdf_path: Optional[str] = None
+    retrieved_docs: Optional[list[dict[str, Any]]] = None
+    mode: Optional[str] = "cpu"
+
+
+@app.post("/api/pipeline/agent2/run")
+async def run_agent2_playground(req: Agent2PlaygroundRequest):
+    """Executes isolated Agent 2 (Reader Agent) pipeline with full observability."""
+    try:
+        import time
+        from agents.agent2_reader.node import ReaderAgent
+
+        agent = ReaderAgent()
+        retrieved_docs = req.retrieved_docs or []
+        pdf_path = req.pdf_path
+
+        # If neither docs nor PDF are provided, pick an available sample from uploads
+        if not retrieved_docs and not pdf_path:
+            sample_candidates = [
+                os.path.join(settings.UPLOAD_DIR, "Hu_et_al_2021_LoRA_Low_Rank_Adaptation.txt"),
+                os.path.join(settings.BASE_DIR, "training_lab", "agent2_reader", "sample.pdf"),
+                os.path.join(settings.UPLOAD_DIR, "Dettmers_et_al_2023_QLoRA_Efficient_Finetuning.txt"),
+            ]
+            for c in sample_candidates:
+                if os.path.exists(c):
+                    pdf_path = c
+                    break
+
+        state = {
+            "pdf_path": pdf_path,
+            "retrieved_docs": retrieved_docs,
+        }
+
+        start_time = time.perf_counter()
+        result = await asyncio.to_thread(agent.run, state)
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
+
+        doc_schema = result.get("document_schema", {})
+        source_units = result.get("source_units", [])
+        trace = result.get("reasoning_trace", [])
+
+        agent2_state_payload = {
+            "document_schema": doc_schema,
+            "total_source_units": len(source_units),
+            "source_units": source_units,
+            "reasoning_trace": trace,
+        }
+
+        return {
+            "success": True,
+            "mode_used": req.mode or "cpu",
+            "latency_ms": round(elapsed_ms, 2),
+            "pdf_path_used": os.path.basename(pdf_path) if pdf_path else None,
+            "total_units": len(source_units),
+            "sections_count": len(doc_schema.get("sections", [])),
+            "pages_count": len(doc_schema.get("pages", [])),
+            "document_schema": doc_schema,
+            "source_units": source_units,
+            "agent2_state_payload": agent2_state_payload,
+        }
+
+    except Exception as e:
+        return {
+            "success": False,
+            "error_code": "EXECUTION_ERROR",
+            "message": f"Lỗi trong quá trình chạy Agent 2: {str(e)}",
+        }
+
+
 # Mount static Web Workspace UI & Assets
 web_dir = os.path.join(settings.BASE_DIR, "web")
 if os.path.exists(web_dir):

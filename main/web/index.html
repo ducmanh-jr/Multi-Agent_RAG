@@ -1121,14 +1121,34 @@
           <!-- VIEW PIPELINE (QUY TRÌNH ĐA TÁC TỬ - AGENT 1 STUDIO) -->
           <section id="view-pipeline" class="view" hidden>
             <div class="simple-heading">
-              <div class="eyebrow">INTERACTIVE AGENT 1 STUDIO</div>
-              <h1>Quy trình Đa tác tử — Thử nghiệm Agent 1 (Retrieval & Router)</h1>
+              <div class="eyebrow">MULTI-AGENT PIPELINE STUDIO</div>
+              <h1>Quy trình Đa tác tử — Thử nghiệm Từng Agent Riêng Lẻ</h1>
               <p>
-                Trải nghiệm độc lập từng quyết định điều phối công cụ, phân rã đa chiều Stanford STORM và trích xuất FTS5/BM25 của Agent 1.
+                Trải nghiệm độc lập từng mắt xích trong chuỗi Multi-Agent: Quan sát dữ liệu đầu vào, quá trình suy luận và gói State bàn giao giữa các Agent.
               </p>
             </div>
 
-            <div class="pipeline-studio-layout">
+            <!-- Stepper Navigation chuyển đổi giữa các Agent -->
+            <div class="pipe-stepper-nav">
+              <button type="button" class="pipe-step-btn active" id="pipe-nav-agent1" data-target="agent1">
+                <span class="step-num">1</span>
+                <div class="step-info">
+                  <strong>Agent 1: Retrieval & Router</strong>
+                  <small>Điều phối, Phân rã STORM & Trích xuất FTS5</small>
+                </div>
+              </button>
+              <div class="pipe-stepper-arrow">➔</div>
+              <button type="button" class="pipe-step-btn" id="pipe-nav-agent2" data-target="agent2">
+                <span class="step-num">2</span>
+                <div class="step-info">
+                  <strong>Agent 2: Reader & Document Parser</strong>
+                  <small>Bóc tách DocLayNet LayoutLMv3 & Băm SourceUnits</small>
+                </div>
+              </button>
+            </div>
+
+            <div id="pipe-agent1-panel" class="pipe-agent-panel active">
+              <div class="pipeline-studio-layout">
               <!-- Cột điều khiển & Form nhập -->
               <div class="pipeline-control-card">
                 <div class="pipe-header">
@@ -1368,12 +1388,163 @@
                         </div>
                         <pre class="pipe-json-code" id="res-agent1-raw-json">Đang chuẩn bị dữ liệu...</pre>
                       </div>
+
+                      <!-- Nút chuyển tiếp nhanh sang Agent 2 -->
+                      <div class="pipe-handoff-banner">
+                        <div class="handoff-text">
+                          <strong>💡 Bạn đã có kết quả trích xuất của Agent 1!</strong>
+                          <p>Bấm nút bên cạnh để chuyển toàn bộ các tài liệu này sang Agent 2 phân tích bố cục & băm SourceUnit.</p>
+                        </div>
+                        <button type="button" class="primary-button" id="btn-handoff-to-agent2">
+                          👉 Chuyển sang Agent 2 (Reader) ➔
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
               </div>
             </div>
-          </section>
+          </div> <!-- End #pipe-agent1-panel -->
+
+          <!-- ==================== PANEL AGENT 2 (READER & DOCLAYNET) ==================== -->
+          <div id="pipe-agent2-panel" class="pipe-agent-panel" hidden>
+            <div class="pipeline-studio-layout">
+              <!-- Cột điều khiển Agent 2 -->
+              <div class="pipeline-control-card">
+                <div class="pipe-header">
+                  <h3>📑 Thiết lập Kiểm thử Agent 2 (Reader)</h3>
+                  <p>Phân tích cấu trúc bố cục văn bản, trích xuất sections và gắn mã băm PaperQA2.</p>
+                </div>
+
+                <div class="pipe-form-group">
+                  <label><strong>Nguồn dữ liệu đầu vào cho Agent 2:</strong></label>
+                  <div class="pipe-agent2-source-options">
+                    <label class="pipe-radio-label">
+                      <input type="radio" name="agent2_source" value="agent1" id="agent2-src-from-agent1" checked />
+                      <span>Dùng kết quả tài liệu chuyển giao từ Agent 1 (<strong id="agent2-input-docs-count">0 tài liệu</strong>)</span>
+                    </label>
+                    <label class="pipe-radio-label">
+                      <input type="radio" name="agent2_source" value="sample_doc" id="agent2-src-sample" />
+                      <span>Đọc bài báo khoa học mẫu (Hu et al. 2021 LoRA Paper / DocLayNet PDF)</span>
+                    </label>
+                  </div>
+                </div>
+
+                <div class="pipe-form-group">
+                  <label><strong>Động cơ phân tích bố cục (Layout Engine):</strong></label>
+                  <div class="pipe-mode-btn-group">
+                    <button type="button" class="pipe-mode-btn active" data-engine="pymupdf" id="btn-engine-pymupdf">
+                      <div class="pipe-mode-icon">⚡</div>
+                      <div class="pipe-mode-info">
+                        <strong>PyMuPDF C-Speed Parser</strong>
+                        <small>Xếp thứ tự 2 cột (Multi-column reading order) & băm SourceUnit</small>
+                      </div>
+                      <span class="pipe-status-pill status-ready">🟢 Sẵn sàng 100%</span>
+                    </button>
+                    <button type="button" class="pipe-mode-btn" data-engine="doclaynet" id="btn-engine-doclaynet">
+                      <div class="pipe-mode-icon">👁️</div>
+                      <div class="pipe-mode-info">
+                        <strong>DocLayNet LayoutLMv3 Model</strong>
+                        <small>Nhận diện 11 nhãn bố cục (Title, Header, Table, Text)</small>
+                      </div>
+                      <span class="pipe-status-pill status-ready">🟢 Trọng số 503MB sẵn sàng</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div class="pipe-action-row">
+                  <button type="button" class="primary-button pipe-submit-btn" id="btn-agent2-execute">
+                    <svg><use href="#i-book" /></svg>
+                    <span>Chạy Thử Nghiệm Agent 2</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Cột kết quả Agent 2 -->
+              <div class="pipeline-results-area" id="agent2-results-area">
+                <div class="pipe-empty-state" id="agent2-empty-state">
+                  <div class="pipe-empty-icon">📖</div>
+                  <h3>Chưa có kết quả đọc tài liệu</h3>
+                  <p>Chọn nguồn dữ liệu và nhấn <strong>"Chạy Thử Nghiệm Agent 2"</strong> để quan sát quá trình phân tách Section, tính toán character_offset và mã băm context_hash.</p>
+                </div>
+
+                <div class="pipe-loading-state" id="agent2-loading-state" hidden>
+                  <div class="pipe-spinner"></div>
+                  <h4>Agent 2 đang đọc tài liệu & bóc tách bố cục...</h4>
+                  <p>Đang phân tích cấu trúc cột, phát hiện đề mục và tạo SourceUnits chuẩn hóa</p>
+                </div>
+
+                <div class="pipe-output-container" id="agent2-output-container" hidden>
+                  <div class="pipe-metrics-grid">
+                    <div class="pipe-metric-card">
+                      <span class="metric-label">Tổng SourceUnits</span>
+                      <strong class="metric-value metric-tool" id="res-agent2-total-units">0 units</strong>
+                    </div>
+                    <div class="pipe-metric-card">
+                      <span class="metric-label">Thời gian bóc tách</span>
+                      <strong class="metric-value metric-latency" id="res-agent2-latency">0 ms</strong>
+                    </div>
+                    <div class="pipe-metric-card">
+                      <span class="metric-label">Số Sections / Đề mục</span>
+                      <strong class="metric-value" id="res-agent2-sections">0 sections</strong>
+                    </div>
+                    <div class="pipe-metric-card">
+                      <span class="metric-label">Nguồn dữ liệu đọc</span>
+                      <strong class="metric-value" id="res-agent2-source-name">Chunks</strong>
+                    </div>
+                  </div>
+
+                  <!-- Khối 1: Bố cục DocLayNet / Schema -->
+                  <div class="pipe-result-box">
+                    <div class="result-box-header">
+                      <h4>📐 1. Cấu trúc Bố cục Tài liệu (Document Schema & Sections)</h4>
+                      <span class="pipe-count-tag" id="res-agent2-schema-badge">DocLayNet Schema</span>
+                    </div>
+                    <div class="result-box-body">
+                      <div class="pipe-field-group">
+                        <label>Đề mục và các phân vùng cấu trúc nhận diện được:</label>
+                        <div id="res-agent2-sections-list" class="pipe-sections-container"></div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Khối 2: Danh sách SourceUnits -->
+                  <div class="pipe-result-box">
+                    <div class="result-box-header">
+                      <h4>📑 2. Danh sách SourceUnits Đã Chuẩn Hóa (Gắn Offset & Context Hash)</h4>
+                      <span class="pipe-count-tag" id="res-agent2-units-count">0 units</span>
+                    </div>
+                    <div class="result-box-body">
+                      <div id="res-agent2-units-list" class="pipe-docs-flow"></div>
+                    </div>
+                  </div>
+
+                  <!-- Khối 3: Gói Payload bàn giao cho Agent 3 -->
+                  <div class="pipe-result-box">
+                    <div class="result-box-header">
+                      <h4>📦 3. Gói State Chuyển Giao Cho Agent 3 (Summarizer & Critic)</h4>
+                      <div class="pipe-header-actions">
+                        <button type="button" class="pipe-mini-btn" id="btn-copy-agent2-payload">📋 Sao chép JSON State</button>
+                      </div>
+                    </div>
+                    <div class="result-box-body">
+                      <p class="pipe-output-note">
+                        Đây là <strong>gói State chuẩn hóa</strong> của Agent 2 sẵn sàng cho <strong>Agent 3 (Summarizer)</strong> đọc và trích xuất nhận định kèm chỉ số đối soát:
+                      </p>
+                      <div class="pipe-json-viewer-wrapper">
+                        <div class="pipe-json-header">
+                          <span>DỮ LIỆU ĐẦU RA AGENT 2 CHUYỂN GIAO CHO AGENT 3:</span>
+                          <span class="pipe-json-badge">JSON Format</span>
+                        </div>
+                        <pre class="pipe-json-code" id="res-agent2-raw-json">Đang chuẩn bị...</pre>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
           <section id="view-history" class="view" hidden>
             <div class="simple-heading">
               <div class="eyebrow">YOUR RESEARCH JOURNEY</div>
