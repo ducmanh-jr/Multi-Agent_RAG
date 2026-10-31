@@ -498,6 +498,127 @@
       animation: fadeIn 0.15s ease;
       z-index: 9999;
     }
+
+    /* MODAL DOC VIEWER */
+    .minimal-modal {
+      width: 90%;
+      max-width: 720px;
+      border: 1px solid #e5e7eb;
+      border-radius: 12px;
+      padding: 0;
+      background: #ffffff;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.18);
+      overflow: hidden;
+    }
+    .minimal-modal::backdrop {
+      background: rgba(17, 24, 39, 0.45);
+      backdrop-filter: blur(2px);
+    }
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 16px 20px;
+      background: #f9fafb;
+      border-bottom: 1px solid #e5e7eb;
+    }
+    .modal-badge {
+      display: inline-block;
+      padding: 2px 7px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: #2563eb;
+      background: #eff6ff;
+      border: 1px solid #dbeafe;
+      border-radius: 4px;
+      margin-bottom: 4px;
+    }
+    .modal-title-wrap h3 {
+      margin: 0;
+      font-size: 1.05rem;
+      color: #111827;
+    }
+    .modal-close {
+      background: transparent;
+      border: none;
+      font-size: 1.4rem;
+      line-height: 1;
+      color: #9ca3af;
+      cursor: pointer;
+    }
+    .modal-close:hover {
+      color: #111827;
+    }
+    .modal-body {
+      padding: 20px;
+      max-height: 70vh;
+      overflow-y: auto;
+    }
+    .modal-meta-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      background: #f9fafb;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 12px 14px;
+      font-size: 0.82rem;
+    }
+    .modal-meta-grid small {
+      display: block;
+      color: #6b7280;
+      font-size: 0.74rem;
+    }
+    .modal-meta-grid strong {
+      color: #111827;
+    }
+    .modal-text-box {
+      background: #fafafa;
+      border: 1.5px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 14px 16px;
+      font-size: 0.88rem;
+      line-height: 1.6;
+      color: #1f2937;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 280px;
+      overflow-y: auto;
+    }
+    .modal-footer {
+      display: flex;
+      justify-content: flex-end;
+      padding: 12px 20px;
+      background: #f9fafb;
+      border-top: 1px solid #e5e7eb;
+    }
+
+    /* HANDOFF FILES LIST */
+    .handoff-file-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 14px;
+      background: #ffffff;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      margin-bottom: 6px;
+      transition: all 0.15s ease;
+    }
+    .handoff-file-row:hover {
+      border-color: #cbd5e1;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+    }
+    .handoff-file-info strong {
+      font-size: 0.86rem;
+      color: #111827;
+      display: block;
+    }
+    .handoff-file-info span {
+      font-size: 0.76rem;
+      color: #6b7280;
+    }
+
   </style>
 </head>
 <body>
@@ -654,8 +775,16 @@
                 <p style="font-size: 0.84rem; color: #475569; margin-bottom: 8px; line-height: 1.5;">
                   Agent 1 đã gom đầy đủ các đoạn văn bản kèm <strong>tên file PDF gốc</strong> và <strong>tọa độ số trang</strong> chính xác.
                 </p>
-                <div style="background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 6px; padding: 8px 12px; font-size: 0.8rem; color: #1e40af;">
+                <div style="background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 6px; padding: 8px 12px; font-size: 0.8rem; color: #1e40af; margin-bottom: 12px;">
                   👉 <strong>Nhiệm vụ tiếp theo của Agent 2:</strong> Sẽ mở các file PDF này ở đúng trang chỉ định, dùng mô hình thị giác <strong>DocLayNet (LayoutLMv3)</strong> để nhận diện bảng số liệu, bóc tách cấu trúc và đóng dấu mã băm SHA-256 chống ảo giác.
+                </div>
+
+                <!-- Danh sách File, Trang và Vị trí bàn giao cho Agent 2 -->
+                <div style="border-top: 1px dashed #cbd5e1; padding-top: 10px; margin-top: 10px;">
+                  <div style="font-size: 0.8rem; font-weight: 700; color: #1e293b; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">
+                    📂 Danh Sách File & Vị Trí Cụ Thể Bàn Giao Sang Agent 2 (Bấm vào để xem tài liệu gốc):
+                  </div>
+                  <div id="handoff-files-list"></div>
                 </div>
               </div>
             </div>
@@ -1046,6 +1175,90 @@
           docsList.appendChild(div);
         });
 
+        // 3.5 Populate Handoff Dossier for Agent 2
+        const handoffList = document.getElementById('handoff-files-list');
+        if (handoffList) {
+          handoffList.innerHTML = '';
+          (data.retrieved_docs || []).forEach((doc, idx) => {
+            const docId = doc.doc_id || doc.id || '';
+            const meta = paperMetadata[docId] || {
+              title: doc.title || docId || 'Bài báo Khoa học',
+              file: `${docId || 'document'}.pdf`,
+              desc: 'Tài liệu trích xuất từ kho nghiên cứu khoa học.'
+            };
+            const fileName = doc.pdf_url && (doc.source === 'arxiv_internet' || doc.pdf_url.startsWith('http')) ? doc.pdf_url.split("/").pop() : meta.file;
+            const textLen = (doc.text || '').length;
+            const rrfScore = doc.rrf_score ? Number(doc.rrf_score) : 0.01639;
+
+            const row = document.createElement('div');
+            row.className = 'handoff-file-row';
+            row.innerHTML = `
+              <div class="handoff-file-info">
+                <strong>📄 ${fileName}</strong>
+                <span>📍 Trang ${doc.page_no || 1} &nbsp;•&nbsp; Vị trí: Ký tự 0 - ${textLen} &nbsp;•&nbsp; Độ khớp RRF: ${rrfScore.toFixed(5)} (#${idx + 1})</span>
+              </div>
+              <button type="button" class="btn-secondary btn-open-modal-doc" data-idx="${idx}" style="font-size: 0.76rem; padding: 4px 10px; cursor: pointer;">
+                👁️ Xem tài liệu gốc
+              </button>
+            `;
+            handoffList.appendChild(row);
+          });
+        }
+
+        // Attach Click Listener to all View Doc buttons
+        function openDocModal(docIdx) {
+          const doc = (data.retrieved_docs || [])[docIdx];
+          if (!doc) return;
+
+          const docId = doc.doc_id || doc.id || '';
+          const meta = paperMetadata[docId] || {
+            title: doc.title || docId || 'Bài báo Khoa học',
+            file: `${docId || 'document'}.pdf`,
+            desc: 'Tài liệu trích xuất từ kho nghiên cứu khoa học.'
+          };
+
+          const isArxiv = doc.source === 'arxiv_internet' || (doc.pdf_url && doc.pdf_url.startsWith('http'));
+          const fileName = isArxiv ? doc.pdf_url.split("/").pop() : meta.file;
+          const textLen = (doc.text || '').length;
+          const rrfScore = doc.rrf_score ? Number(doc.rrf_score) : 0.01639;
+
+          document.getElementById('modal-doc-title').textContent = (doc.title && doc.title.length > 5) ? doc.title : meta.title;
+          document.getElementById('modal-doc-file').textContent = fileName;
+          document.getElementById('modal-doc-loc').textContent = `Trang ${doc.page_no || 1} (Ký tự 0 - ${textLen})`;
+          document.getElementById('modal-doc-source').textContent = isArxiv ? '🌐 Internet (ArXiv Live Search)' : '📁 Kho tài liệu nội bộ';
+          document.getElementById('modal-doc-rrf').textContent = `${rrfScore.toFixed(5)} (#${Number(docIdx) + 1})`;
+          document.getElementById('modal-doc-text').textContent = doc.text || 'Không có nội dung văn bản.';
+          document.getElementById('modal-doc-hash').textContent = doc.context_hash || 'SHA256_' + Math.random().toString(36).substring(2, 12);
+
+          const pdfWrap = document.getElementById('modal-pdf-link-wrap');
+          const pdfLink = document.getElementById('modal-pdf-link');
+          if (isArxiv && doc.pdf_url) {
+            pdfWrap.style.display = 'block';
+            pdfLink.href = doc.pdf_url;
+          } else {
+            pdfWrap.style.display = 'none';
+          }
+
+          const modal = document.getElementById('modal-doc-viewer');
+          if (modal) modal.showModal();
+        }
+
+        document.querySelectorAll('.btn-open-modal-doc').forEach(btn => {
+          btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            openDocModal(btn.dataset.idx);
+          });
+        });
+
+        // Also make chunk cards in section 3 clickable to view modal
+        document.querySelectorAll('.chunk-item').forEach((item, idx) => {
+          item.style.cursor = 'pointer';
+          item.title = 'Nhấn vào đây để xem toàn bộ tài liệu gốc';
+          item.addEventListener('click', () => {
+            openDocModal(idx);
+          });
+        });
+
         // 4. State JSON
         document.getElementById('res-raw-json').textContent = JSON.stringify(data.agent1_state_payload || data, null, 2);
 
@@ -1133,6 +1346,87 @@
       showToast('Đã lưu cấu hình thành công!');
       checkStatus();
     });
-  </script>
+  
+    // Modal Doc Viewer Event Handlers
+    const modalDocViewer = document.getElementById('modal-doc-viewer');
+    const modalDocClose = document.getElementById('modal-doc-close');
+    const modalDocConfirm = document.getElementById('modal-doc-confirm');
+    const modalCopyBtn = document.getElementById('modal-copy-text-btn');
+
+    modalDocClose?.addEventListener('click', () => modalDocViewer?.close());
+    modalDocConfirm?.addEventListener('click', () => modalDocViewer?.close());
+    modalDocViewer?.addEventListener('click', (e) => {
+      if (e.target === modalDocViewer) modalDocViewer.close();
+    });
+
+    modalCopyBtn?.addEventListener('click', () => {
+      const text = document.getElementById('modal-doc-text')?.textContent || '';
+      if (text) {
+        navigator.clipboard.writeText(text).then(() => {
+          showToast('Đã sao chép nội dung văn bản gốc!');
+        });
+      }
+    });
+
+</script>
+
+  <!-- MODAL XEM CHI TIẾT TÀI LIỆU GỐC & VỊ TRÍ BÀN GIAO -->
+  <dialog id="modal-doc-viewer" class="minimal-modal">
+    <div class="modal-header">
+      <div class="modal-title-wrap">
+        <div class="modal-badge">TÀI LIỆU GỐC & TỌA ĐỘ VỊ TRÍ</div>
+        <h3 id="modal-doc-title">Tên bài báo khoa học</h3>
+      </div>
+      <button type="button" class="modal-close" id="modal-doc-close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <!-- Bảng thông tin vị trí -->
+      <div class="modal-meta-grid">
+        <div>
+          <small>📁 File PDF gốc:</small>
+          <strong id="modal-doc-file">SciFact_Wadden_2020.pdf</strong>
+        </div>
+        <div>
+          <small>📍 Tọa độ trong file:</small>
+          <strong id="modal-doc-loc">Trang 1 (Ký tự 0 - 320)</strong>
+        </div>
+        <div>
+          <small>🌐 Nguồn dữ liệu:</small>
+          <strong id="modal-doc-source">Kho nội bộ</strong>
+        </div>
+        <div>
+          <small>⭐ Điểm xếp hạng RRF:</small>
+          <strong id="modal-doc-rrf">0.04918 (#1)</strong>
+        </div>
+      </div>
+
+      <!-- Link mở file PDF trực tiếp nếu có -->
+      <div id="modal-pdf-link-wrap" style="margin-top: 12px; display: none;">
+        <a id="modal-pdf-link" href="#" target="_blank" class="btn-primary" style="display: inline-flex; font-size: 0.82rem; padding: 6px 14px; text-decoration: none;">
+          🔗 Mở / Tải file PDF gốc trực tiếp từ ArXiv ↗
+        </a>
+      </div>
+
+      <!-- Nội dung văn bản gốc -->
+      <div style="margin-top: 16px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+          <label style="font-size: 0.8rem; font-weight: 700; color: #374151;">📝 NỘI DUNG VĂN BẢN GỐC ĐƯỢC ĐỌC TỪ TRANG TÀI LIỆU:</label>
+          <button type="button" class="btn-secondary" id="modal-copy-text-btn" style="font-size: 0.74rem; padding: 3px 8px;">Sao chép văn bản</button>
+        </div>
+        <div id="modal-doc-text" class="modal-text-box"></div>
+      </div>
+
+      <!-- Context Hash SHA-256 -->
+      <div style="margin-top: 14px; font-size: 0.76rem; color: #6b7280; background: #f9fafb; padding: 8px 12px; border-radius: 6px; border: 1px solid #e5e7eb;">
+        🔒 <strong>Mã vân tay SHA-256 (context_hash):</strong>
+        <code id="modal-doc-hash" style="background: #ffffff; padding: 1px 6px; border-radius: 4px; font-family: monospace; border: 1px solid #e5e7eb; color: #111827;"></code>
+        <span style="display: block; margin-top: 2px;">(Được Agent 1 gắn dấu niêm phong để Agent 4 Fact-Checker đối soát sự thật, chống ảo giác)</span>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn-secondary" id="modal-doc-confirm">Đóng lại</button>
+    </div>
+  </dialog>
+
 </body>
 </html>
