@@ -175,6 +175,51 @@ async def test_remote_url():
     except Exception as e:
         return {"is_online": False, "details": f"Không thể kết nối: {str(e)[:60]}"}
 
+
+class LocalCpuConfigRequest(BaseModel):
+    local_cpu_url: Optional[str] = None
+    local_cpu_model: Optional[str] = None
+
+@app.get("/api/config/local-cpu/test")
+async def test_local_cpu():
+    url = settings.LOCAL_CPU_URL or "http://localhost:11434"
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            resp = await client.get(f"{url}/api/tags")
+            if resp.status_code == 200:
+                tags = resp.json().get("models", [])
+                names = [m.get("name") for m in tags][:3]
+                model_info = f"Online - Ollama ({', '.join(names) if names else 'Sẵn sàng'})"
+                return {"is_online": True, "details": model_info}
+            resp = await client.get(f"{url}/v1/models")
+            if resp.status_code == 200:
+                return {"is_online": True, "details": "Online - Local CPU Server (OpenAI compat)"}
+            return {"is_online": False, "details": f"CPU Server HTTP {resp.status_code}"}
+    except Exception as e:
+        return {"is_online": False, "details": f"Chưa bật server CPU ({str(e)[:40]})"}
+
+@app.post("/api/config/local-cpu")
+async def update_local_cpu_config(req: LocalCpuConfigRequest):
+    if req.local_cpu_url is not None:
+        new_url = req.local_cpu_url.strip().rstrip("/")
+        settings.LOCAL_CPU_URL = new_url
+        update_env_file("LOCAL_CPU_URL", new_url)
+    if req.local_cpu_model is not None:
+        new_model = req.local_cpu_model.strip()
+        settings.LOCAL_CPU_MODEL = new_model
+        update_env_file("LOCAL_CPU_MODEL", new_model)
+    
+    test_res = await test_local_cpu()
+    return {
+        "status": "updated",
+        "local_cpu_url": settings.LOCAL_CPU_URL,
+        "local_cpu_model": settings.LOCAL_CPU_MODEL,
+        "is_online": test_res.get("is_online", False),
+        "details": test_res.get("details", ""),
+        "config": get_config(),
+    }
+
 @app.get("/api/config")
 def get_config():
     model_name = settings.DEFAULT_LLM_MODEL if settings.EXECUTION_MODE == "local_api" else "Qwen2.5-7B (Kaggle Dual T4)"
@@ -199,6 +244,8 @@ def get_config():
             "storm_perspectives": True,
         },
         "agent_modes": settings.get_all_agent_modes(),
+        "local_cpu_url": settings.LOCAL_CPU_URL,
+        "local_cpu_model": settings.LOCAL_CPU_MODEL,
     }
 
 
@@ -213,12 +260,12 @@ def set_agent_modes(req: SetAgentModesRequest):
     updated = {}
     if req.agent_modes:
         for agent_name, mode in req.agent_modes.items():
-            if mode in ["api", "model"]:
+            if mode in ["api", "model", "cpu"]:
                 settings.set_agent_mode(agent_name, mode)
                 update_env_file(f"AGENT_{agent_name.upper()}_MODE", mode)
                 updated[agent_name] = mode
     elif req.agent and req.mode:
-        if req.mode in ["api", "model"]:
+        if req.mode in ["api", "model", "cpu"]:
             settings.set_agent_mode(req.agent, req.mode)
             update_env_file(f"AGENT_{req.agent.upper()}_MODE", req.mode)
             updated[req.agent] = req.mode
@@ -226,6 +273,8 @@ def set_agent_modes(req: SetAgentModesRequest):
     return {
         "status": "success",
         "agent_modes": settings.get_all_agent_modes(),
+        "local_cpu_url": settings.LOCAL_CPU_URL,
+        "local_cpu_model": settings.LOCAL_CPU_MODEL,
         "config": get_config(),
     }
 

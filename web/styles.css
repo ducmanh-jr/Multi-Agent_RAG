@@ -3971,6 +3971,14 @@ a {
   font-weight: 700;
 }
 
+
+.btn-agent-mode.active[data-mode="cpu"] {
+  background: #1e3a8a;
+  color: #ffffff;
+  box-shadow: 0 1px 3px rgba(30, 58, 138, 0.3);
+  font-weight: 700;
+}
+
 .btn-agent-mode.active[data-mode="model"] {
   background: #14532d;
   color: #ffffff;

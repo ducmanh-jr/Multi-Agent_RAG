@@ -898,6 +898,7 @@
                   <div class="agent-quick-presets">
                     <span class="preset-label">Thiết lập nhanh:</span>
                     <button type="button" class="preset-btn" id="preset-all-api">⚡ Toàn bộ API</button>
+                    <button type="button" class="preset-btn" id="preset-all-cpu">💻 Toàn bộ CPU</button>
                     <button type="button" class="preset-btn" id="preset-all-model">🚀 Toàn bộ Model (Kaggle T4)</button>
                     <button type="button" class="preset-btn" id="preset-hybrid">⚖️ Hybrid Tối ưu</button>
                   </div>
@@ -916,6 +917,7 @@
                     </div>
                     <div class="agent-toggle-group">
                       <button type="button" class="btn-agent-mode active" data-agent="retrieval" data-mode="api">⚡ Gemini API</button>
+                      <button type="button" class="btn-agent-mode" data-agent="retrieval" data-mode="cpu">💻 CPU Router</button>
                       <button type="button" class="btn-agent-mode" data-agent="retrieval" data-mode="model">🚀 Qwen-7B Router LoRA</button>
                     </div>
                   </div>
@@ -932,6 +934,7 @@
                     </div>
                     <div class="agent-toggle-group">
                       <button type="button" class="btn-agent-mode active" data-agent="reader" data-mode="api">⚡ PyMuPDF + API</button>
+                      <button type="button" class="btn-agent-mode" data-agent="reader" data-mode="cpu">💻 PyMuPDF CPU</button>
                       <button type="button" class="btn-agent-mode" data-agent="reader" data-mode="model">🚀 LayoutLMv3 DocLayNet</button>
                     </div>
                   </div>
@@ -948,6 +951,7 @@
                     </div>
                     <div class="agent-toggle-group">
                       <button type="button" class="btn-agent-mode active" data-agent="summarizer" data-mode="api">⚡ Gemini API</button>
+                      <button type="button" class="btn-agent-mode" data-agent="summarizer" data-mode="cpu">💻 CPU Qwen-1.5B</button>
                       <button type="button" class="btn-agent-mode" data-agent="summarizer" data-mode="model">🚀 Generator-Critic LoRA</button>
                     </div>
                   </div>
@@ -964,6 +968,7 @@
                     </div>
                     <div class="agent-toggle-group">
                       <button type="button" class="btn-agent-mode active" data-agent="factchecker" data-mode="api">⚡ Gemini API</button>
+                      <button type="button" class="btn-agent-mode" data-agent="factchecker" data-mode="cpu">💻 CPU Verifier & NLI</button>
                       <button type="button" class="btn-agent-mode" data-agent="factchecker" data-mode="model">🚀 Qwen-3B SciFact (GPU 1)</button>
                     </div>
                   </div>
@@ -980,6 +985,7 @@
                     </div>
                     <div class="agent-toggle-group">
                       <button type="button" class="btn-agent-mode active" data-agent="writer" data-mode="api">⚡ Gemini API</button>
+                      <button type="button" class="btn-agent-mode" data-agent="writer" data-mode="cpu">💻 CPU Qwen-3B</button>
                       <button type="button" class="btn-agent-mode" data-agent="writer" data-mode="model">🚀 Qwen2.5-7B (GPU 0)</button>
                     </div>
                   </div>
@@ -1019,6 +1025,38 @@
                   <div class="detail-row">
                     <span class="detail-label">Mô hình dự phòng (Fallback Model):</span>
                     <strong class="detail-val" id="st-fallback">gemini-3.5-flash-lite</strong>
+                  </div>
+                                    <div class="detail-row detail-row-remote">
+                    <div class="detail-remote-header">
+                      <span class="detail-label"><strong>Máy chủ Local CPU (Ollama / Llama.cpp trên máy tính)</strong></span>
+                      <span class="tunnel-status-badge" id="local-cpu-status">Đang kiểm tra...</span>
+                    </div>
+                    <div class="remote-input-wrapper">
+                      <input
+                        type="url"
+                        id="input-local-cpu-url"
+                        class="remote-url-input"
+                        placeholder="http://localhost:11434"
+                        value="http://localhost:11434"
+                      />
+                      <input
+                        type="text"
+                        id="input-local-cpu-model"
+                        class="remote-url-input"
+                        style="max-width: 170px;"
+                        placeholder="qwen2.5:1.5b"
+                        value="qwen2.5:1.5b"
+                      />
+                      <button type="button" class="primary-button" id="btn-save-local-cpu">
+                        Lưu cấu hình CPU
+                      </button>
+                      <button type="button" class="secondary-button" id="btn-test-local-cpu">
+                        Kiểm tra CPU
+                      </button>
+                    </div>
+                    <small class="remote-helper-text">
+                      💡 Chạy mô hình lượng tử hóa trực tiếp trên CPU laptop/máy tính cá nhân (hỗ trợ Ollama, Llama.cpp hoặc LM Studio) hoàn toàn offline.
+                    </small>
                   </div>
                   <div class="detail-row detail-row-remote">
                     <div class="detail-remote-header">

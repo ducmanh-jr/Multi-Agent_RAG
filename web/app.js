@@ -1285,9 +1285,12 @@ function renderSettingsView() {
 
   const agentModes = cfg.agent_modes || {};
   const modelCount = Object.values(agentModes).filter((m) => m === "model").length;
+  const cpuCount = Object.values(agentModes).filter((m) => m === "cpu").length;
+  const apiCount = Object.values(agentModes).filter((m) => m === "api").length;
   const isAllModel = modelCount === 5;
-  const isAllApi = modelCount === 0;
-  const activeModeSummary = isAllModel ? "Kaggle Dual T4 GPU" : (isAllApi ? "Google Gemini Cloud API" : `Hybrid (${5 - modelCount} API, ${modelCount} Model)`);
+  const isAllCpu = cpuCount === 5;
+  const isAllApi = apiCount === 5;
+  const activeModeSummary = isAllModel ? "Kaggle Dual T4 GPU" : (isAllCpu ? "Local CPU (Máy tính)" : (isAllApi ? "Google Gemini Cloud API" : `Hybrid (${apiCount} API, ${cpuCount} CPU, ${modelCount} GPU)`));
 
   const modelName = $("#settings-model-name");
   if (modelName) modelName.textContent = activeModeSummary;
@@ -1305,29 +1308,42 @@ function renderSettingsView() {
   if (remoteInput && !remoteInput.value) {
     remoteInput.value = cfg.remote_worker || "";
   }
+  const cpuUrlInput = $("#input-local-cpu-url");
+  if (cpuUrlInput && cfg.local_cpu_url) {
+    cpuUrlInput.value = cfg.local_cpu_url;
+  }
+  const cpuModelInput = $("#input-local-cpu-model");
+  if (cpuModelInput && cfg.local_cpu_model) {
+    cpuModelInput.value = cfg.local_cpu_model;
+  }
+  checkLocalCpuStatus();
   checkTunnelStatus();
 
   // Render Per-Agent Modes
-  const agentModes = cfg.agent_modes || {};
   const agentDescriptions = {
     retrieval: {
       api: "⚡ Gemini API (Decomposition)",
+      cpu: "💻 CPU Router (BM25 + Regex/0.5B)",
       model: "🚀 Qwen-7B Router LoRA (Kaggle T4)",
     },
     reader: {
       api: "⚡ PyMuPDF & Gemini Guardrail",
+      cpu: "💻 PyMuPDF CPU Layout Engine",
       model: "🚀 LayoutLMv3 DocLayNet (Segmentation)",
     },
     summarizer: {
       api: "⚡ Gemini API (Generator & Critic)",
+      cpu: "💻 Local Qwen-1.5B (Ollama CPU)",
       model: "🚀 Generator-Critic LoRA (Dual T4)",
     },
     factchecker: {
       api: "⚡ Gemini NLI & Numeric Verifier",
+      cpu: "💻 Local Rule & Numeric Verifier (CPU)",
       model: "🚀 Qwen-3B SciFact (GPU 1)",
     },
     writer: {
       api: "⚡ Gemini API (Academic Synthesis)",
+      cpu: "💻 Local Qwen-3B (Ollama CPU)",
       model: "🚀 Qwen2.5-7B Instruct (GPU 0)",
     },
   };
@@ -1417,6 +1433,16 @@ function setupSettingsListeners() {
     }
   };
 
+  $("#preset-all-cpu")?.addEventListener("click", () => {
+    applyPreset({
+      retrieval: "cpu",
+      reader: "cpu",
+      summarizer: "cpu",
+      factchecker: "cpu",
+      writer: "cpu",
+    }, "💻 Toàn bộ CPU (Máy tính cá nhân)");
+  });
+
   $("#preset-all-api")?.addEventListener("click", () => {
     applyPreset({
       retrieval: "api",
@@ -1449,6 +1475,27 @@ function setupSettingsListeners() {
 }
 
 
+
+async function checkLocalCpuStatus() {
+  const badge = $("#local-cpu-status");
+  if (!badge) return;
+  badge.textContent = "Đang kiểm tra CPU...";
+  badge.className = "tunnel-status-badge";
+  try {
+    const res = await api("/config/local-cpu/test");
+    if (res.is_online) {
+      badge.textContent = `🟢 ${res.details}`;
+      badge.className = "tunnel-status-badge online";
+    } else {
+      badge.textContent = `⚪ Chưa bật (${res.details})`;
+      badge.className = "tunnel-status-badge offline";
+    }
+  } catch (err) {
+    badge.textContent = "⚪ Offline";
+    badge.className = "tunnel-status-badge offline";
+  }
+}
+
 async function checkTunnelStatus() {
   const badge = $("#tunnel-status");
   if (!badge) return;
@@ -1470,6 +1517,42 @@ async function checkTunnelStatus() {
 }
 
 function setupRemoteWorkerListeners() {
+  $("#btn-save-local-cpu")?.addEventListener("click", async () => {
+    const urlVal = $("#input-local-cpu-url")?.value?.trim() || "http://localhost:11434";
+    const modelVal = $("#input-local-cpu-model")?.value?.trim() || "qwen2.5:1.5b";
+    const btn = $("#btn-save-local-cpu");
+    btn.disabled = true;
+    btn.textContent = "Đang lưu...";
+    try {
+      const res = await api("/config/local-cpu", {
+        method: "POST",
+        body: { local_cpu_url: urlVal, local_cpu_model: modelVal },
+      });
+      state.config = res.config;
+      renderConfig();
+      toast(res.is_online ? `Đã lưu cấu hình CPU và kết nối thành công (${res.details})` : `Đã lưu cấu hình CPU vào .env (${res.details})`);
+      await checkLocalCpuStatus();
+    } catch (err) {
+      toast(err.message, true);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Lưu cấu hình CPU";
+    }
+  });
+
+  $("#btn-test-local-cpu")?.addEventListener("click", async () => {
+    const btn = $("#btn-test-local-cpu");
+    btn.disabled = true;
+    btn.textContent = "Đang test...";
+    try {
+      await checkLocalCpuStatus();
+      toast("Kiểm tra kết nối CPU hoàn tất.");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Kiểm tra CPU";
+    }
+  });
+
   $("#btn-save-remote-url")?.addEventListener("click", async () => {
     const val = $("#input-remote-url")?.value?.trim();
     if (!val) {

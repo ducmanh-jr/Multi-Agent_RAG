@@ -49,11 +49,25 @@ class UnifiedLLMClient:
 
         response_text = ""
 
-        # Check per-agent execution mode: 'model' vs 'api'
+        # Check per-agent execution mode: 'api' | 'model' | 'cpu'
         target_mode = self.settings.get_agent_mode(agent) if agent else ("model" if self.settings.EXECUTION_MODE == "kaggle_gpu" else "api")
 
+        # 0. Forward to Local CPU if mode is 'cpu'
+        if target_mode == "cpu":
+            try:
+                response_text = self._call_local_cpu(
+                    prompt=prompt,
+                    system_instruction=system_instruction,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    json_mode=json_mode,
+                    agent=agent,
+                )
+            except Exception as e:
+                logger.warning(f"Local CPU inference for agent '{agent}' failed ({e}), falling back to Gemini API...")
+
         # 1. Forward to Kaggle if mode is 'model' and URL configured
-        if target_mode == "model" and self.settings.REMOTE_INFERENCE_URL:
+        elif target_mode == "model" and self.settings.REMOTE_INFERENCE_URL:
             try:
                 response_text = self._call_remote_kaggle(
                     task="generate",
@@ -212,6 +226,65 @@ class UnifiedLLMClient:
         )
         resp.raise_for_status()
         return resp.json()["choices"][0]["message"]["content"]
+
+    def _call_local_cpu(
+        self,
+        prompt: str,
+        system_instruction: Optional[str] = None,
+        temperature: float = 0.2,
+        max_tokens: int = 2048,
+        json_mode: bool = False,
+        agent: Optional[str] = None,
+    ) -> str:
+        """Call local CPU inference (e.g. Ollama or OpenAI-compatible local server like Llama.cpp)."""
+        base_url = (self.settings.LOCAL_CPU_URL or "http://localhost:11434").rstrip("/")
+        model_name = self.settings.LOCAL_CPU_MODEL or "qwen2.5:1.5b"
+
+        messages = []
+        if system_instruction:
+            messages.append({"role": "system", "content": system_instruction})
+        messages.append({"role": "user", "content": prompt})
+
+        # 1. Try Ollama native endpoint (/api/chat)
+        ollama_url = f"{base_url}/api/chat"
+        payload = {
+            "model": model_name,
+            "messages": messages,
+            "stream": False,
+            "options": {
+                "temperature": temperature,
+                "num_predict": max_tokens,
+            },
+        }
+        if json_mode:
+            payload["format"] = "json"
+
+        try:
+            resp = self.http_client.post(ollama_url, json=payload, timeout=60.0)
+            if resp.status_code == 200:
+                data = resp.json()
+                content = data.get("message", {}).get("content", "")
+                if content:
+                    logger.info(f"Local CPU [Ollama {model_name}] generated response ({len(content)} chars)")
+                    return content
+        except Exception:
+            pass
+
+        # 2. Try OpenAI-compatible endpoint (/v1/chat/completions)
+        compat_url = f"{base_url}/v1/chat/completions"
+        compat_payload = {
+            "model": model_name,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        if json_mode:
+            compat_payload["response_format"] = {"type": "json_object"}
+
+        resp = self.http_client.post(compat_url, json=compat_payload, timeout=60.0)
+        resp.raise_for_status()
+        data = resp.json()
+        return data["choices"][0]["message"]["content"]
 
     def _call_remote_kaggle(self, task: str, payload: dict[str, Any]) -> Any:
         """Send task to remote Kaggle GPU server."""

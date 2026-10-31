@@ -31,7 +31,15 @@ class Settings:
     )
     REMOTE_TIMEOUT_SECONDS: int = int(os.getenv("REMOTE_TIMEOUT_SECONDS", "15"))
 
-    # Granular Per-Agent Execution Modes: "api" | "model"
+    # Local CPU Inference Engine (Ollama / Llama.cpp / GGUF on user's PC)
+    LOCAL_CPU_URL: str = field(
+        default_factory=lambda: os.getenv("LOCAL_CPU_URL", "http://localhost:11434").rstrip("/")
+    )
+    LOCAL_CPU_MODEL: str = field(
+        default_factory=lambda: os.getenv("LOCAL_CPU_MODEL", "qwen2.5:1.5b")
+    )
+
+    # Granular Per-Agent Execution Modes: "api" | "model" | "cpu"
     AGENT_RETRIEVAL_MODE: str = field(
         default_factory=lambda: os.getenv("AGENT_RETRIEVAL_MODE", "api").lower()
     )
