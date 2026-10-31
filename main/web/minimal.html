@@ -584,47 +584,86 @@
         </div>
       </div>
 
-      <!-- Khu vực hiển thị kết quả -->
+      <!-- Khu vực hiển thị kết quả (Dễ hiểu cho Người xem & Tùy chọn Kỹ thuật) -->
       <div id="results-area" class="card">
         <div class="card-title">
-          <span>Kết quả đầu ra của Agent 1</span>
-          <button type="button" class="btn-secondary" id="btn-copy-json" style="font-size: 0.78rem; padding: 4px 10px;">Sao chép JSON</button>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span>Kết quả Xử lý của Agent 1</span>
+            <span class="brand-badge" style="background: #ecfdf5; color: #047857; border-color: #a7f3d0;">Hoàn tất</span>
+          </div>
+
+          <!-- Nút chuyển đổi Chế độ Người xem vs Chế độ Kỹ thuật -->
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <div class="nav-tabs" style="padding: 2px;">
+              <button type="button" class="tab-btn active" id="btn-view-mode-human" style="padding: 4px 10px; font-size: 0.76rem;">👤 Người xem</button>
+              <button type="button" class="tab-btn" id="btn-view-mode-tech" style="padding: 4px 10px; font-size: 0.76rem;">🛠️ Kỹ thuật</button>
+            </div>
+            <button type="button" class="btn-secondary" id="btn-copy-json" style="font-size: 0.76rem; padding: 4px 10px;">Sao chép JSON</button>
+          </div>
         </div>
 
+        <!-- Thanh tóm tắt nhanh -->
         <div class="meta-bar">
-          <div class="meta-item">Chế độ: <strong id="res-mode">Cloud API</strong></div>
-          <div class="meta-item">Thời gian: <strong id="res-time">0 ms</strong></div>
-          <div class="meta-item">Trích xuất: <strong id="res-chunks">0 chunks</strong></div>
-          <div class="meta-item">Tự phê bình: <strong id="res-critique">Đạt yêu cầu</strong></div>
+          <div class="meta-item">Môi trường: <strong id="res-mode">Cloud API</strong></div>
+          <div class="meta-item">Thời gian xử lý: <strong id="res-time">0 ms</strong></div>
+          <div class="meta-item">Tài liệu tìm thấy: <strong id="res-chunks">0 bài báo</strong></div>
+          <div class="meta-item">Tự phê duyệt bằng chứng: <strong id="res-critique">Đầy đủ</strong></div>
         </div>
 
-        <!-- 1. Quyết định Điều phối -->
+        <!-- 1. CHIẾN LƯỢC TÌM KIẾM CỦA AI -->
         <div class="res-block">
-          <div class="res-label">1. Quyết định Điều phối (Router Decision)</div>
-          <span class="tool-badge" id="res-tool">DENSE</span>
+          <div class="res-label" id="lbl-sec-1">1. Chiến lược Tìm kiếm & Định tuyến của AI</div>
+          <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+            <span class="tool-badge" id="res-tool-badge" style="background: #111827; color: #ffffff; padding: 4px 10px; border-radius: 6px; font-size: 0.84rem;">DENSE</span>
+            <span id="res-tool-explain" style="font-size: 0.82rem; color: #4b5563; font-weight: 500;">Tìm kiếm theo ngữ nghĩa sâu (Hiểu bản chất câu hỏi)</span>
+          </div>
           <div class="thought-text" id="res-thought">Đang nạp suy luận...</div>
         </div>
 
-        <!-- 2. Phân rã Đa chiều Stanford STORM -->
+        <!-- 2. CÁC GÓC NHÌN AI CHIA NHỎ ĐỂ NGHIÊN CỨU -->
         <div class="res-block">
-          <div class="res-label">2. Phân rã Đa chiều (Stanford STORM Perspectives & Sub-queries)</div>
+          <div class="res-label" id="lbl-sec-2">2. Các Góc nhìn Chuyên sâu mà AI Tự Chia nhỏ để Quét Dữ liệu (Stanford STORM)</div>
+          <div style="margin-bottom: 6px; font-size: 0.8rem; color: #6b7280;">Các khía cạnh khoa học cốt lõi:</div>
           <div class="perspectives-pills" id="res-perspectives"></div>
+
+          <div style="margin: 10px 0 6px; font-size: 0.8rem; color: #6b7280;">Các câu hỏi phụ chuyên biệt AI tự đặt ra để quét tài liệu:</div>
           <ol class="subqueries-list" id="res-subqueries"></ol>
         </div>
 
-        <!-- 3. Tài liệu Trích xuất -->
+        <!-- 3. CÁC BÀI BÁO / FILE PDF TÌM ĐƯỢC -->
         <div class="res-block">
-          <div class="res-label">3. Tài liệu Trích xuất & Điểm Dung hợp RRF</div>
+          <div class="res-label" id="lbl-sec-3">3. Danh sách Bài báo Khoa học (File PDF) & Đoạn Trích Dẫn Tìm Thấy</div>
+          <p style="font-size: 0.8rem; color: #6b7280; margin-bottom: 10px;">
+            Các tài liệu được xếp hạng tự động theo thuật toán <strong>Hybrid RRF (Reciprocal Rank Fusion)</strong> kết hợp từ khóa chính xác và ngữ nghĩa:
+          </p>
           <div id="res-docs-list"></div>
         </div>
 
-        <!-- 4. Gói State bàn giao cho Agent 2 -->
+        <!-- 4. HỒ SƠ BÀN GIAO SANG AGENT 2 -->
         <div class="res-block">
-          <div class="res-label" style="display: flex; justify-content: space-between; align-items: center;">
-            <span>4. Gói LangGraph State (Bàn giao sang Agent 2)</span>
-            <button type="button" class="toggle-baseline-link" id="toggle-raw-json-btn">Hiện JSON thô ▼</button>
+          <div class="res-label" id="lbl-sec-4">4. Hồ sơ Bàn giao sang Agent 2 (Reader & Document Parser)</div>
+          
+          <div id="handoff-card-human" style="background: #f8fafc; border: 1.5px solid #e2e8f0; border-radius: 8px; padding: 14px 16px; margin-bottom: 8px;">
+            <div style="display: flex; align-items: flex-start; gap: 12px;">
+              <span style="font-size: 1.8rem; line-height: 1;">📦</span>
+              <div>
+                <strong style="display: block; font-size: 0.92rem; color: #0f172a; margin-bottom: 4px;">
+                  Gói Tài Liệu Đã Đóng Gói Hoàn Tất — Sẵn Sàng Chuyển Giao
+                </strong>
+                <p style="font-size: 0.84rem; color: #475569; margin-bottom: 8px; line-height: 1.5;">
+                  Agent 1 đã gom đầy đủ các đoạn văn bản kèm <strong>tên file PDF gốc</strong> và <strong>tọa độ số trang</strong> chính xác.
+                </p>
+                <div style="background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 6px; padding: 8px 12px; font-size: 0.8rem; color: #1e40af;">
+                  👉 <strong>Nhiệm vụ tiếp theo của Agent 2:</strong> Sẽ mở các file PDF này ở đúng trang chỉ định, dùng mô hình thị giác <strong>DocLayNet (LayoutLMv3)</strong> để nhận diện bảng số liệu, bóc tách cấu trúc và đóng dấu mã băm SHA-256 chống ảo giác.
+                </div>
+              </div>
+            </div>
           </div>
-          <div id="raw-json-wrapper" style="display: none;">
+
+          <div style="display: flex; justify-content: flex-end; margin-top: 6px;">
+            <button type="button" class="toggle-baseline-link" id="toggle-raw-json-btn">Xem mã JSON thô của LangGraph State ▼</button>
+          </div>
+          <div id="raw-json-wrapper" style="display: none; margin-top: 6px;">
             <pre class="raw-json" id="res-raw-json"></pre>
           </div>
         </div>
@@ -673,6 +712,44 @@
 
   <script>
     // Minimal Web Script
+
+    // Toggle Human-friendly vs Tech View Mode
+    const btnModeHuman = document.getElementById('btn-view-mode-human');
+    const btnModeTech = document.getElementById('btn-view-mode-tech');
+    let isHumanMode = true;
+
+    function applyViewMode(human) {
+      isHumanMode = human;
+      btnModeHuman?.classList.toggle('active', human);
+      btnModeTech?.classList.toggle('active', !human);
+
+      const lbl1 = document.getElementById('lbl-sec-1');
+      const lbl2 = document.getElementById('lbl-sec-2');
+      const lbl3 = document.getElementById('lbl-sec-3');
+      const lbl4 = document.getElementById('lbl-sec-4');
+      const handoffHuman = document.getElementById('handoff-card-human');
+      const rawJsonWrap = document.getElementById('raw-json-wrapper');
+
+      if (human) {
+        if (lbl1) lbl1.textContent = '1. Chiến lược Tìm kiếm & Định tuyến của AI';
+        if (lbl2) lbl2.textContent = '2. Các Góc nhìn Chuyên sâu mà AI Tự Chia nhỏ để Quét Dữ liệu (Stanford STORM)';
+        if (lbl3) lbl3.textContent = '3. Danh sách Bài báo Khoa học (File PDF) & Đoạn Trích Dẫn Tìm Thấy';
+        if (lbl4) lbl4.textContent = '4. Hồ sơ Bàn giao sang Agent 2 (Reader & Document Parser)';
+        if (handoffHuman) handoffHuman.style.display = 'block';
+        if (rawJsonWrap) rawJsonWrap.style.display = 'none';
+      } else {
+        if (lbl1) lbl1.textContent = '1. Router Decision & Internal Thought';
+        if (lbl2) lbl2.textContent = '2. Stanford STORM Perspectives & Sub-queries';
+        if (lbl3) lbl3.textContent = '3. Retrieved Documents & Hybrid RRF Rank Scores';
+        if (lbl4) lbl4.textContent = '4. LangGraph AgentState Payload Handoff';
+        if (handoffHuman) handoffHuman.style.display = 'none';
+        if (rawJsonWrap) rawJsonWrap.style.display = 'block';
+      }
+    }
+
+    btnModeHuman?.addEventListener('click', () => applyViewMode(true));
+    btnModeTech?.addEventListener('click', () => applyViewMode(false));
+
     let activeMode = 'api';
     let lastResultPayload = null;
 
@@ -823,17 +900,85 @@
         document.getElementById('res-chunks').textContent = `${data.total_chunks} chunks`;
         document.getElementById('res-critique').textContent = data.router_decision?.critique_is_relevant ? 'Đạt yêu cầu' : 'Cần bổ sung';
 
-        // 1. Router
-        document.getElementById('res-tool').textContent = (data.router_decision?.tool_selected || 'DENSE').toUpperCase();
-        document.getElementById('res-thought').textContent = data.router_decision?.thought || 'Không có suy luận.';
+        // Map human-friendly paper metadata
+        const paperMetadata = {
+          "arxiv_2004_scifact": {
+            title: "Fact or Fiction: Verifying Scientific Claims",
+            file: "SciFact_Wadden_2020.pdf",
+            desc: "Bộ tiêu chuẩn đánh giá mô hình thẩm định sự thật khoa học bằng NLI và trích xuất bằng chứng."
+          },
+          "arxiv_2309_qlora": {
+            title: "QLoRA: Efficient Finetuning of Quantized LLMs",
+            file: "Dettmers_et_al_2023_QLoRA.pdf",
+            desc: "Phương pháp nén 4-bit NF4 kết hợp LoRA giúp tinh chỉnh mô hình lớn trên GPU đơn lẻ."
+          },
+          "arxiv_2305_lora": {
+            title: "LoRA: Low-Rank Adaptation of Large Language Models",
+            file: "Hu_et_al_2021_LoRA.pdf",
+            desc: "Kỹ thuật thích nghi ma trận hạng thấp, đóng băng trọng số gốc và giảm 10.000 lần tham số huấn luyện."
+          },
+          "arxiv_1706_transformer": {
+            title: "Attention Is All You Need (Kiến trúc Transformer)",
+            file: "Vaswani_et_al_2017_Transformer.pdf",
+            desc: "Nền tảng của toàn bộ các mô hình ngôn ngữ lớn hiện đại dựa trên cơ chế Multi-Head Self-Attention."
+          },
+          "arxiv_2005_rag": {
+            title: "Retrieval-Augmented Generation for Knowledge-Intensive Tasks",
+            file: "Lewis_et_al_2020_RAG.pdf",
+            desc: "Mô hình kết hợp bộ nhớ tạo sinh tham số hóa và bộ nhớ truy xuất tài liệu ngoài (RAG)."
+          },
+          "arxiv_2210_react": {
+            title: "ReAct: Synergizing Reasoning and Acting in Language Models",
+            file: "Yao_et_al_2022_ReAct.pdf",
+            desc: "Cơ chế kết hợp suy luận chuỗi tư duy (Reasoning) và hành động gọi công cụ (Acting) của Agent."
+          },
+          "arxiv_2105_qasper": {
+            title: "QASPER: Question Answering on Scholarly Documents",
+            file: "Dasigi_et_al_2021_QASPER.pdf",
+            desc: "Tập dữ liệu hỏi đáp chuyên sâu trên các bài báo khoa học NLP."
+          }
+        };
 
-        // 2. STORM
+        const toolExplanations = {
+          "dense": {
+            label: "Tìm kiếm Ngữ nghĩa Sâu (Dense Semantic Search)",
+            meaning: "Hiểu bản chất ý nghĩa của câu hỏi để quét tài liệu tương đồng, không bị giới hạn bởi từ khóa thô."
+          },
+          "decompose": {
+            label: "Phân rã Đa vế So sánh (Decompose)",
+            meaning: "Chẻ câu hỏi phức tạp thành nhiều vế nhỏ để thu thập bằng chứng đầy đủ cho từng phần so sánh."
+          },
+          "bm25": {
+            label: "Khớp Từ khóa Chính xác (BM25 Lexical)",
+            meaning: "Quét nhanh các từ khóa đặc thù, tên riêng, thuật ngữ hoặc mã số trong tài liệu."
+          },
+          "hyde": {
+            label: "Mô phỏng Giả thuyết Lý thuyết (HyDE)",
+            meaning: "Tự tạo một đoạn văn bản giả định để định hướng tìm kiếm tài liệu chuẩn xác hơn."
+          },
+          "rewrite": {
+            label: "Viết lại Câu hỏi Rõ nghĩa (Query Rewrite)",
+            meaning: "Bổ sung ngữ cảnh và làm rõ nghĩa câu hỏi trước khi truy xuất."
+          }
+        };
+
+        // 1. Router Strategy Display
+        const toolKey = (data.router_decision?.tool_selected || 'dense').toLowerCase();
+        const toolInfo = toolExplanations[toolKey] || { label: toolKey.toUpperCase(), meaning: "Chiến lược trích xuất tối ưu" };
+        
+        document.getElementById('res-tool-badge').textContent = toolKey.toUpperCase();
+        document.getElementById('res-tool-explain').textContent = toolInfo.label;
+        document.getElementById('res-thought').innerHTML = `<strong>💡 Lời giải thích của AI:</strong> ${data.router_decision?.thought || 'Đã phân tích cấu trúc câu hỏi.'}`;
+
+        // 2. STORM Perspectives & Subqueries
         const pWrap = document.getElementById('res-perspectives');
         pWrap.innerHTML = '';
         (data.perspectives || []).forEach(p => {
           const span = document.createElement('span');
           span.className = 'p-pill';
-          span.textContent = p;
+          span.style.background = '#f3f4f6';
+          span.style.border = '1px solid #d1d5db';
+          span.textContent = `🎯 ${p}`;
           pWrap.appendChild(span);
         });
 
@@ -841,22 +986,48 @@
         sqList.innerHTML = '';
         (data.sub_queries || []).forEach(sq => {
           const li = document.createElement('li');
-          li.textContent = sq;
+          li.style.marginBottom = '4px';
+          li.innerHTML = `<span>${sq}</span>`;
           sqList.appendChild(li);
         });
 
-        // 3. Chunks
+        // 3. Retrieved Paper Chunks (Human-Friendly Cards)
         const docsList = document.getElementById('res-docs-list');
         docsList.innerHTML = '';
         (data.retrieved_docs || []).forEach((doc, idx) => {
+          const docId = doc.doc_id || doc.id || '';
+          const meta = paperMetadata[docId] || {
+            title: doc.title || docId || 'Bài báo Khoa học',
+            file: `${docId || 'document'}.pdf`,
+            desc: 'Tài liệu trích xuất từ kho nghiên cứu khoa học.'
+          };
+
+          const rrfScore = doc.rrf_score ? Number(doc.rrf_score) : 0.01639;
+          const matchLevel = idx === 0 ? '🟢 Độ liên quan cao nhất (#1)' : (idx === 1 ? '🔵 Độ liên quan cao (#2)' : `⚪ Khớp xếp hạng #${idx + 1}`);
+
           const div = document.createElement('div');
           div.className = 'chunk-item';
+          div.style.padding = '14px 16px';
+          div.style.marginBottom = '12px';
+          div.style.border = '1px solid #e5e7eb';
+          div.style.borderRadius = '8px';
+          div.style.background = '#ffffff';
+
           div.innerHTML = `
-            <div class="chunk-header">
-              <strong>#${idx + 1} ${doc.title || doc.doc_id || 'Tài liệu'} (Trang ${doc.page_no || 1})</strong>
-              <span>RRF: ${doc.rrf_score ? Number(doc.rrf_score).toFixed(5) : '0.01639'}</span>
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 6px;">
+              <div>
+                <strong style="font-size: 0.92rem; color: #111827; display: block;">📄 ${meta.title}</strong>
+                <div style="font-size: 0.78rem; color: #6b7280; margin-top: 2px;">
+                  📁 File PDF gốc: <code style="background: #f3f4f6; padding: 1px 5px; border-radius: 4px;">${meta.file}</code> &nbsp;•&nbsp; 📍 Vị trí: <strong>Trang ${doc.page_no || 1}</strong>
+                </div>
+              </div>
+              <span style="font-size: 0.74rem; font-weight: 600; padding: 3px 8px; border-radius: 6px; background: #f3f4f6; color: #374151;">
+                ${matchLevel} &nbsp;(RRF: ${rrfScore.toFixed(5)})
+              </span>
             </div>
-            <div class="chunk-text">${doc.text || ''}</div>
+            <div style="font-size: 0.86rem; color: #374151; line-height: 1.5; background: #f9fafb; padding: 10px 12px; border-radius: 6px; border-left: 3px solid #cbd5e1; margin-top: 8px;">
+              ${doc.text || ''}
+            </div>
           `;
           docsList.appendChild(div);
         });
