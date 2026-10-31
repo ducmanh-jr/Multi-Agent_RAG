@@ -5257,3 +5257,388 @@ a {
   background: #f8fafc;
   border-top: 1px solid #e2e8f0;
 }
+
+
+/* ==================== ARCHITECTURE VIEW STYLES ==================== */
+.arch-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  padding: 24px;
+  margin-bottom: 24px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
+}
+
+.arch-card-header {
+  margin-bottom: 20px;
+}
+
+.arch-card-header h2 {
+  margin: 6px 0 4px 0;
+  font-size: 1.35rem;
+  color: #0f172a;
+}
+
+.arch-card-header p {
+  margin: 0;
+  font-size: 0.92rem;
+  color: #64748b;
+}
+
+.arch-pill {
+  display: inline-block;
+  padding: 3px 8px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #2563eb;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 4px;
+}
+
+/* 5-Stage Interactive Flow Pipeline */
+.arch-flow-pipeline {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 12px;
+  margin-bottom: 18px;
+}
+
+.arch-stage-node {
+  flex: 1;
+  min-width: 170px;
+  background: #f8fafc;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 16px 14px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.arch-stage-node:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.06);
+  border-color: #cbd5e1;
+}
+
+.arch-stage-node.highlight-stage {
+  background: #ffffff;
+  border-color: #93c5fd;
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.08);
+}
+
+.stage-badge {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #64748b;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.stage-icon {
+  font-size: 1.8rem;
+  margin-bottom: 8px;
+}
+
+.arch-stage-node h3 {
+  margin: 0 0 6px 0;
+  font-size: 0.95rem;
+  color: #0f172a;
+}
+
+.arch-stage-node p {
+  margin: 0 0 12px 0;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: #64748b;
+}
+
+.stage-tag {
+  display: inline-block;
+  align-self: flex-start;
+  padding: 3px 8px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  background: #e2e8f0;
+  color: #334155;
+  border-radius: 4px;
+}
+
+.stage-tag.tag-agent {
+  background: #dbeafe;
+  color: #1e40af;
+  border: 1px solid #bfdbfe;
+}
+
+.stage-tag.tag-success {
+  background: #dcfce7;
+  color: #15803d;
+  border: 1px solid #bbf7d0;
+}
+
+.arch-flow-arrow {
+  display: flex;
+  align-items: center;
+  color: #94a3b8;
+  font-size: 1.2rem;
+  font-weight: bold;
+}
+
+/* Feedback Loops Banner */
+.arch-feedback-loops-banner {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 12px;
+  background: #fffbeb;
+  border: 1px solid #fef3c7;
+  border-radius: 10px;
+  padding: 14px 18px;
+}
+
+.loop-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.loop-icon {
+  font-size: 1.3rem;
+  line-height: 1;
+}
+
+.loop-item strong {
+  display: block;
+  font-size: 0.86rem;
+  color: #92400e;
+  margin-bottom: 2px;
+}
+
+.loop-item span {
+  font-size: 0.8rem;
+  color: #b45309;
+  line-height: 1.4;
+}
+
+/* 4 Agents Grid */
+.arch-section-header {
+  margin: 28px 0 16px 0;
+}
+
+.arch-section-header h2 {
+  margin: 6px 0 0 0;
+  font-size: 1.35rem;
+  color: #0f172a;
+}
+
+.arch-agents-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.arch-agent-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.arch-agent-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.06);
+  border-color: #cbd5e1;
+}
+
+.arch-agent-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.agent-number {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 1rem;
+  font-weight: 800;
+  border-radius: 8px;
+  border: 1px solid #dbeafe;
+}
+
+.arch-agent-head h3 {
+  margin: 0;
+  font-size: 1rem;
+  color: #0f172a;
+}
+
+.arch-agent-head small {
+  color: #64748b;
+  font-size: 0.8rem;
+}
+
+.arch-prop {
+  margin-bottom: 12px;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: #475569;
+}
+
+.arch-prop strong {
+  display: block;
+  font-size: 0.82rem;
+  color: #1e293b;
+  margin-bottom: 3px;
+}
+
+.arch-prop ul {
+  margin: 4px 0 0 16px;
+  padding: 0;
+}
+
+.arch-prop li {
+  margin-bottom: 4px;
+}
+
+.model-badge {
+  display: inline-block;
+  padding: 4px 10px;
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: #334155;
+}
+
+/* Tri-Verifier Grid */
+.arch-verifier-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+}
+
+.verifier-card {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.verifier-icon {
+  font-size: 2rem;
+  margin-bottom: 8px;
+}
+
+.verifier-card h4 {
+  margin: 0 0 6px 0;
+  font-size: 0.95rem;
+  color: #0f172a;
+}
+
+.verifier-card p {
+  margin: 0 0 12px 0;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: #64748b;
+}
+
+.verifier-tag {
+  display: inline-block;
+  align-self: flex-start;
+  padding: 3px 8px;
+  background: #f3e8ff;
+  color: #6b21a8;
+  border: 1px solid #e9d5ff;
+  border-radius: 4px;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+/* Environments Grid */
+.arch-env-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
+  gap: 16px;
+}
+
+.env-card {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.env-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.env-icon {
+  font-size: 1.8rem;
+}
+
+.env-header h4 {
+  margin: 0;
+  font-size: 1rem;
+  color: #0f172a;
+}
+
+.env-header small {
+  color: #64748b;
+  font-size: 0.78rem;
+}
+
+.env-card p {
+  margin: 0 0 10px 0;
+  font-size: 0.84rem;
+  color: #475569;
+  line-height: 1.45;
+}
+
+.env-card ul {
+  margin: 0 0 16px 18px;
+  padding: 0;
+  font-size: 0.82rem;
+  color: #64748b;
+  line-height: 1.45;
+}
+
+.env-card li {
+  margin-bottom: 4px;
+}
+
+.env-badge {
+  display: inline-block;
+  align-self: flex-start;
+  padding: 4px 10px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  background: #e2e8f0;
+  color: #334155;
+  border-radius: 6px;
+}

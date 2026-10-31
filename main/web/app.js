@@ -838,6 +838,7 @@ function switchView(name) {
     experiments: "Thực nghiệm",
     settings: "Cài đặt",
     pipeline: "Quy trình",
+    architecture: "Cách hoạt động",
   }[name] || "Cài đặt";
   if (name === "pipeline") {
     checkPipelineStatus();

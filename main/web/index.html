@@ -157,6 +157,10 @@
             <svg><use href="#i-stack" /></svg>Quy trình
             <span class="count highlight-badge">AGENT 1</span>
           </button>
+          <button class="nav-item" data-view="architecture">
+            <svg><use href="#i-spark" /></svg>Cách hoạt động
+            <span class="count highlight-badge">KIẾN TRÚC</span>
+          </button>
         </nav>
         <div class="sidebar-section-heading">
           <span>TÀI LIỆU TRONG PHIÊN</span
@@ -1572,6 +1576,332 @@
             </div>
           </div>
         </section>
+
+          <!-- TAB CÁCH HOẠT ĐỘNG: TOÀN BỘ LUỒNG KIẾN TRÚC HỆ THỐNG -->
+          <section id="view-architecture" class="view" hidden>
+            <div class="simple-heading">
+              <div class="eyebrow">END-TO-END MULTI-AGENT ARCHITECTURE</div>
+              <h1>Cách Hoạt Động & Toàn Bộ Luồng Suy Luận Của Hệ Thống</h1>
+              <p>
+                Khám phá chi tiết luồng vận hành khép kín giữa 4 Tác tử chuyên biệt, cơ chế hồi quy tự phản tư (Reflection Loop), 
+                bộ ba thẩm định sự thật (Anti-Hallucination Tri-Verifier) và kiến trúc 3 tầng thực thi (Hybrid Execution).
+              </p>
+            </div>
+
+            <!-- 1. BẢN ĐỒ TỔNG THỂ LUỒNG HOẠT ĐỘNG (INTERACTIVE WORKFLOW MAP) -->
+            <div class="arch-card">
+              <div class="arch-card-header">
+                <span class="arch-pill">SƠ ĐỒ TỔNG THỂ</span>
+                <h2>Luồng Vận Hành Khép Kín 5 Giai Đoạn</h2>
+                <p>Từ lúc người dùng đặt câu hỏi nghiên cứu đến khi hệ thống tổng hợp báo cáo học thuật hoàn chỉnh có trích dẫn nguồn gốc.</p>
+              </div>
+
+              <div class="arch-flow-pipeline">
+                <!-- Giai đoạn 1 -->
+                <div class="arch-stage-node">
+                  <div class="stage-badge">Giai đoạn 1</div>
+                  <div class="stage-icon">💬</div>
+                  <h3>Câu hỏi Nghiên cứu</h3>
+                  <p>Người dùng nhập câu hỏi hoặc tải lên tài liệu PDF vào không gian làm việc.</p>
+                  <div class="stage-tag">Đầu vào thô</div>
+                </div>
+
+                <div class="arch-flow-arrow">➔</div>
+
+                <!-- Giai đoạn 2 -->
+                <div class="arch-stage-node highlight-stage">
+                  <div class="stage-badge">Giai đoạn 2</div>
+                  <div class="stage-icon">🎯</div>
+                  <h3>Agent 1: Retrieval & Router</h3>
+                  <p>Phân loại chiến lược (5 tools), mở rộng đa chiều Stanford STORM, dung hợp Hybrid FTS5 + Dense RRF.</p>
+                  <div class="stage-tag tag-agent">LoRA Qwen2.5-7B</div>
+                </div>
+
+                <div class="arch-flow-arrow">➔</div>
+
+                <!-- Giai đoạn 3 -->
+                <div class="arch-stage-node highlight-stage">
+                  <div class="stage-badge">Giai đoạn 3</div>
+                  <div class="stage-icon">📄</div>
+                  <h3>Agent 2: Reader & Parser</h3>
+                  <p>Bóc tách thị giác DocLayNet (11 nhãn bố cục), sinh mã băm SHA-256 context_hash, dựng Document Schema.</p>
+                  <div class="stage-tag tag-agent">LayoutLMv3 + PyMuPDF</div>
+                </div>
+
+                <div class="arch-flow-arrow">➔</div>
+
+                <!-- Giai đoạn 4 -->
+                <div class="arch-stage-node highlight-stage">
+                  <div class="stage-badge">Giai đoạn 4</div>
+                  <div class="stage-icon">✍️</div>
+                  <h3>Agent 3: Summarizer & Critic</h3>
+                  <p>Cặp tác tử Generator - Critic tự phản tư, chỉnh sửa bản thảo, trích xuất bằng chứng (Evidence Spans).</p>
+                  <div class="stage-tag tag-agent">Dual LoRA 7B</div>
+                </div>
+
+                <div class="arch-flow-arrow">➔</div>
+
+                <!-- Giai đoạn 5 -->
+                <div class="arch-stage-node highlight-stage">
+                  <div class="stage-badge">Giai đoạn 5</div>
+                  <div class="stage-icon">🛡️</div>
+                  <h3>Agent 4: Fact-Checker</h3>
+                  <p>Thẩm định sự thật nguyên tử SciFact NLI, kiểm định sai số mốc thời gian (Date) và dung sai số học (Numeric).</p>
+                  <div class="stage-tag tag-agent">Qwen-3B + Tri-Verifier</div>
+                </div>
+
+                <div class="arch-flow-arrow">➔</div>
+
+                <!-- Giai đoạn 6 -->
+                <div class="arch-stage-node">
+                  <div class="stage-badge">Đầu ra</div>
+                  <div class="stage-icon">📑</div>
+                  <h3>Báo cáo Khoa học</h3>
+                  <p>Báo cáo chuẩn học thuật với neo trích dẫn [cite], điểm tự tin và nhật ký suy luận đầy đủ.</p>
+                  <div class="stage-tag tag-success">Đã đối soát 100%</div>
+                </div>
+              </div>
+
+              <!-- Vòng lặp phản tư (Feedback Loops Banner) -->
+              <div class="arch-feedback-loops-banner">
+                <div class="loop-item">
+                  <span class="loop-icon">🔄</span>
+                  <div>
+                    <strong>Vòng lặp Hồi quy Bằng chứng (Evidence Gap Loop):</strong>
+                    <span>Nếu Agent 1 hoặc Agent 3 phát hiện thiếu dữ liệu, hệ thống tự động sinh truy vấn bù trừ và trích xuất lại (Retry Round 1..N).</span>
+                  </div>
+                </div>
+                <div class="loop-item">
+                  <span class="loop-icon">🔁</span>
+                  <div>
+                    <strong>Vòng lặp Phản tư Bản thảo (Self-Correction Loop):</strong>
+                    <span>Nếu Tác tử Critic từ chối (action: rewrite), Generator phải viết lại bản thảo dựa trên lý do phê bình của Critic trước khi đưa sang Agent 4.</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 2. CHI TIẾT 4 TÁC TỬ CHUYÊN BIỆT (DEEP DIVE 4 AGENTS) -->
+            <div class="arch-section-header">
+              <span class="arch-pill">BỘ TỨ CHUYÊN BIỆT</span>
+              <h2>Chi Tiết Vai Trò & Công Nghệ Của 4 Tác Tử</h2>
+            </div>
+
+            <div class="arch-agents-grid">
+              <!-- Card Agent 1 -->
+              <div class="arch-agent-card">
+                <div class="arch-agent-head">
+                  <span class="agent-number">01</span>
+                  <div>
+                    <h3>Agent 1: Retrieval & Router</h3>
+                    <small>Tác tử Định tuyến & Trích xuất Đa chiều</small>
+                  </div>
+                </div>
+                <div class="arch-agent-body">
+                  <div class="arch-prop">
+                    <strong>Nhiệm vụ:</strong>
+                    <span>Nhận câu hỏi người dùng, phân tích định tuyến công cụ, mở rộng đa góc nhìn học thuật và tìm kiếm tài liệu.</span>
+                  </div>
+                  <div class="arch-prop">
+                    <strong>Công nghệ lõi:</strong>
+                    <ul>
+                      <li><strong>Query Router:</strong> Chọn 1 trong 5 chiến lược (<code>dense</code>, <code>bm25</code>, <code>hyde</code>, <code>decompose</code>, <code>rewrite</code>).</li>
+                      <li><strong>Stanford STORM:</strong> Mở rộng 2-4 góc nhìn học thuật (Perspectives) và câu truy vấn con (Sub-queries).</li>
+                      <li><strong>Hybrid RRF:</strong> Kết hợp C-Engine FTS5 BM25 và Dense Vector, xếp hạng bằng Reciprocal Rank Fusion.</li>
+                      <li><strong>Self-Critique:</strong> Tự đánh giá mức độ bao phủ của tài liệu trích xuất.</li>
+                    </ul>
+                  </div>
+                  <div class="arch-prop">
+                    <strong>Mô hình / Trọng số:</strong>
+                    <span class="model-badge">Adapter LoRA: agent1_router (Qwen2.5-7B)</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Card Agent 2 -->
+              <div class="arch-agent-card">
+                <div class="arch-agent-head">
+                  <span class="agent-number">02</span>
+                  <div>
+                    <h3>Agent 2: Reader & Document Parser</h3>
+                    <small>Tác tử Đọc hiểu Thị giác & Bóc tách Cấu trúc</small>
+                  </div>
+                </div>
+                <div class="arch-agent-body">
+                  <div class="arch-prop">
+                    <strong>Nhiệm vụ:</strong>
+                    <span>Chuyển đổi văn bản thô hoặc file PDF thành các khối thông tin nguyên tử chuẩn hóa (SourceUnits) có cấu trúc thứ bậc.</span>
+                  </div>
+                  <div class="arch-prop">
+                    <strong>Công nghệ lõi:</strong>
+                    <ul>
+                      <li><strong>DocLayNet VDU:</strong> Nhận diện 11 nhãn layout (Title, Section-header, Text, Table, Figure...).</li>
+                      <li><strong>PyMuPDF Engine:</strong> Bóc tách font-size, layout và text blocks ở tốc độ cực nhanh (< 15ms).</li>
+                      <li><strong>Dấu vân tay SHA-256:</strong> Đóng dấu <code>context_hash</code> cho từng SourceUnit để Fact-Checker truy vết đối soát.</li>
+                      <li><strong>Document Schema:</strong> Xây dựng cây phân cấp tài liệu gồm Sections và Pages.</li>
+                    </ul>
+                  </div>
+                  <div class="arch-prop">
+                    <strong>Mô hình / Trọng số:</strong>
+                    <span class="model-badge">layoutlmv3_doclaynet_model + PyMuPDF</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Card Agent 3 -->
+              <div class="arch-agent-card">
+                <div class="arch-agent-head">
+                  <span class="agent-number">03</span>
+                  <div>
+                    <h3>Agent 3: Summarizer & Critic</h3>
+                    <small>Cặp Tác tử Tổng hợp & Phản biện Độc lập</small>
+                  </div>
+                </div>
+                <div class="arch-agent-body">
+                  <div class="arch-prop">
+                    <strong>Nhiệm vụ:</strong>
+                    <span>Đọc hiểu ngữ cảnh từ Agent 2, tổng hợp câu trả lời khoa học ngắn gọn và tự phản biện đa góc nhìn trước khi xuất bản.</span>
+                  </div>
+                  <div class="arch-prop">
+                    <strong>Công nghệ lõi:</strong>
+                    <ul>
+                      <li><strong>Generator Agent:</strong> Tổng hợp câu trả lời khoa học và chỉ rõ các đoạn bằng chứng gốc (<code>evidence_spans</code>).</li>
+                      <li><strong>Critic Agent:</strong> Đóng vai trò phản biện độc lập, đánh giá tính chính xác và quyết định <code>accept</code> hay <code>rewrite</code>.</li>
+                      <li><strong>Multi-Adapter Serving:</strong> Hoán đổi tức thời giữa 2 LoRA adapter trên cùng 1 mô hình nền Qwen-7B GPU 0.</li>
+                    </ul>
+                  </div>
+                  <div class="arch-prop">
+                    <strong>Mô hình / Trọng số:</strong>
+                    <span class="model-badge">Dual LoRA: generator_qlora & critic_qlora (7B)</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Card Agent 4 -->
+              <div class="arch-agent-card">
+                <div class="arch-agent-head">
+                  <span class="agent-number">04</span>
+                  <div>
+                    <h3>Agent 4: Fact-Checker & Tri-Verifier</h3>
+                    <small>Tác tử Thẩm định Sự thật & Triệt tiêu Ảo giác</small>
+                  </div>
+                </div>
+                <div class="arch-agent-body">
+                  <div class="arch-prop">
+                    <strong>Nhiệm vụ:</strong>
+                    <span>Thẩm định từng nhận định nguyên tử (Atomic Claims) và đối soát độ chính xác tuyệt đối của số liệu và mốc thời gian.</span>
+                  </div>
+                  <div class="arch-prop">
+                    <strong>Bộ ba Thẩm định (Tri-Verifier):</strong>
+                    <ul>
+                      <li><strong>Atomic SciFact NLI:</strong> Phán quyết <code>SUPPORT</code>, <code>CONTRADICT</code> hoặc <code>NOT_ENOUGH_INFO</code>.</li>
+                      <li><strong>Date Verifier:</strong> Nhận diện ngày tháng năm (tiếng Việt & tiếng Anh), đối chiếu chính xác với tài liệu gốc.</li>
+                      <li><strong>Numeric Verifier:</strong> Chuẩn hóa tỷ lệ phần trăm (%), đơn vị bộ nhớ (GB, TB, MiB) và kiểm định dung sai sai số (Rounding Tolerance).</li>
+                    </ul>
+                  </div>
+                  <div class="arch-prop">
+                    <strong>Mô hình / Trọng số:</strong>
+                    <span class="model-badge">Qwen2.5-3B NF4 (GPU 1) + Symbolic Normalizers</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 3. CƠ CHẾ ĐỒNG THUẬN CHỐNG ẢO GIÁC (TRI-VERIFIER) -->
+            <div class="arch-card">
+              <div class="arch-card-header">
+                <span class="arch-pill">BẢO HIỂM ĐỘ TIN CẬY</span>
+                <h2>Cơ Chế Đồng Thuận Chống Ảo Giác (Anti-Hallucination Tri-Verifier)</h2>
+                <p>Mô hình ngôn ngữ lớn (LLM) thường gặp vấn đề bịa số liệu hoặc nhầm mốc thời gian. Hệ thống triệt tiêu vấn đề này bằng 3 tầng kiểm định độc lập:</p>
+              </div>
+
+              <div class="arch-verifier-grid">
+                <div class="verifier-card">
+                  <div class="verifier-icon">🔬</div>
+                  <h4>1. Phán quyết NLI Nguyên tử (SciFact)</h4>
+                  <p>Tách câu trả lời thành từng nhận định độc lập (Atomic Claims) rồi cho mô hình NLI đối chiếu với ngữ cảnh để đưa ra phán quyết chặt chẽ.</p>
+                  <span class="verifier-tag">Consensus Judge</span>
+                </div>
+
+                <div class="verifier-card">
+                  <div class="verifier-icon">📅</div>
+                  <h4>2. Thẩm định Mốc Thời gian (Date Verifier)</h4>
+                  <p>Bóc tách các năm, quý, ngày tháng trong câu trả lời. Nếu phát hiện một mốc thời gian không hề xuất hiện trong tài liệu gốc, hệ thống gắn cờ Hallucination ngay lập tức.</p>
+                  <span class="verifier-tag">Temporal Grounding</span>
+                </div>
+
+                <div class="verifier-card">
+                  <div class="verifier-icon">🔢</div>
+                  <h4>3. Thẩm định Số liệu (Numeric Verifier)</h4>
+                  <p>Tự động quy đổi các đơn vị (ví dụ: 16384 MB = 16 GB, 0.42 = 42%) và kiểm tra dung sai làm tròn số học. Ngăn chặn việc làm tròn sai hoặc biến đổi số liệu khoa học.</p>
+                  <span class="verifier-tag">Mathematical Tolerance</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 4. KIẾN TRÚC 3 TẦNG THỰC THI (HYBRID EXECUTION) -->
+            <div class="arch-card">
+              <div class="arch-card-header">
+                <span class="arch-pill">HẠ TẦNG VÀ HIỆU NĂNG</span>
+                <h2>Hạ Tầng 3 Tầng Thực Thi & Cơ Chế Dự Phòng (Graceful Degradation)</h2>
+                <p>Hệ thống có thể chuyển đổi linh hoạt giữa 3 môi trường thực thi tùy thuộc vào mục đích nghiên cứu và điều kiện phần cứng:</p>
+              </div>
+
+              <div class="arch-env-grid">
+                <div class="env-card">
+                  <div class="env-header">
+                    <span class="env-icon">🚀</span>
+                    <div>
+                      <h4>Kaggle Dual T4 GPU</h4>
+                      <small>Môi trường Nghiên cứu Tự chủ 100%</small>
+                    </div>
+                  </div>
+                  <p>Chạy trực tiếp 4 bộ weights adapter bạn đã huấn luyện trên 2 card đồ họa Tesla T4 (32GB VRAM):</p>
+                  <ul>
+                    <li><strong>GPU 0 (16GB):</strong> Qwen2.5-7B 4-bit NF4 phục vụ Generator, Critic và Router.</li>
+                    <li><strong>GPU 1 (16GB):</strong> Qwen2.5-3B 4-bit NF4 phục vụ Verifier và DocLayNet.</li>
+                    <li><strong>Kết nối:</strong> Đường hầm Cloudflare Quick Tunnel mã hóa hai chiều về laptop ThinkBook.</li>
+                  </ul>
+                  <div class="env-badge">Đề xuất cho đồ án / nghiên cứu</div>
+                </div>
+
+                <div class="env-card">
+                  <div class="env-header">
+                    <span class="env-icon">☁️</span>
+                    <div>
+                      <h4>Cloud API (Google Gemini)</h4>
+                      <small>Môi trường Trải nghiệm Nhanh</small>
+                    </div>
+                  </div>
+                  <p>Sử dụng API Gemini Flash để trải nghiệm ngay tư duy đa chiều và phân rã STORM:</p>
+                  <ul>
+                    <li>Không yêu cầu phần cứng máy tính mạnh hoặc bật GPU.</li>
+                    <li>Tốc độ phản hồi cực nhanh (2 - 4 giây).</li>
+                    <li>Tự động nhận biết câu hỏi tiếng Việt / tiếng Anh học thuật.</li>
+                  </ul>
+                  <div class="env-badge">Tiện lợi & Mặc định Web</div>
+                </div>
+
+                <div class="env-card">
+                  <div class="env-header">
+                    <span class="env-icon">💻</span>
+                    <div>
+                      <h4>Local CPU (Baseline Cơ sở)</h4>
+                      <small>Môi trường Đối chứng & Dự phòng</small>
+                    </div>
+                  </div>
+                  <p>Chạy thuật toán luật Heuristic và C-Engine FTS5 BM25 hoàn toàn nội bộ trên CPU laptop ThinkBook:</p>
+                  <ul>
+                    <li>Tốc độ xử lý siêu tốc (~0.4ms đến 5ms).</li>
+                    <li>100% Offline, không cần mạng, phục vụ chạy 41 unit test tự động.</li>
+                    <li>Đóng vai trò là <strong>Đường chuẩn (Baseline)</strong> trong bài báo khoa học.</li>
+                  </ul>
+                  <div class="env-badge">Baseline Khoa học & Offline</div>
+                </div>
+              </div>
+            </div>
+          </section>
+
           <section id="view-history" class="view" hidden>
             <div class="simple-heading">
               <div class="eyebrow">YOUR RESEARCH JOURNEY</div>
