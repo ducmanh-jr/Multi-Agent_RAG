@@ -1,0 +1,953 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Multi-Agent RAG — Minimal Studio</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    /* RESET & BASE */
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background-color: #fafafa;
+      color: #111827;
+      line-height: 1.5;
+      font-size: 14px;
+      -webkit-font-smoothing: antialiased;
+    }
+    code, pre {
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    /* APP CONTAINER */
+    .app-wrap {
+      max-width: 920px;
+      margin: 0 auto;
+      padding: 24px 20px 60px;
+    }
+
+    /* TOP HEADER */
+    header.top-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 16px 0 24px;
+      border-bottom: 1px solid #e5e7eb;
+      margin-bottom: 28px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .brand-title {
+      font-size: 1.05rem;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+      color: #111827;
+    }
+    .brand-badge {
+      font-size: 0.72rem;
+      font-weight: 600;
+      padding: 2px 7px;
+      background: #f3f4f6;
+      color: #4b5563;
+      border: 1px solid #e5e7eb;
+      border-radius: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    /* NAV TABS */
+    .nav-tabs {
+      display: flex;
+      background: #f3f4f6;
+      padding: 3px;
+      border-radius: 8px;
+      gap: 2px;
+    }
+    .tab-btn {
+      padding: 6px 16px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: #6b7280;
+      background: transparent;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .tab-btn:hover {
+      color: #111827;
+    }
+    .tab-btn.active {
+      background: #ffffff;
+      color: #111827;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+    }
+    .full-studio-link {
+      font-size: 0.82rem;
+      font-weight: 500;
+      color: #4b5563;
+      text-decoration: none;
+      padding: 6px 12px;
+      border: 1px solid #e5e7eb;
+      border-radius: 6px;
+      background: #ffffff;
+      transition: all 0.15s ease;
+    }
+    .full-studio-link:hover {
+      background: #f9fafb;
+      color: #111827;
+      border-color: #d1d5db;
+    }
+
+    /* PAGE VIEW CONTAINERS */
+    .view-panel {
+      display: none;
+    }
+    .view-panel.active {
+      display: block;
+      animation: fadeIn 0.15s ease;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* SIMPLE TITLE */
+    .page-title-area {
+      margin-bottom: 24px;
+    }
+    .page-title {
+      font-size: 1.45rem;
+      font-weight: 700;
+      letter-spacing: -0.4px;
+      color: #111827;
+      margin-bottom: 6px;
+    }
+    .page-desc {
+      color: #6b7280;
+      font-size: 0.88rem;
+    }
+
+    /* CARDS */
+    .card {
+      background: #ffffff;
+      border: 1px solid #e5e7eb;
+      border-radius: 10px;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+    .card-title {
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: #111827;
+      margin-bottom: 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    /* MODE SELECTOR (MINIMAL) */
+    .mode-group {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    .mode-btn {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 14px;
+      background: #ffffff;
+      border: 1.5px solid #e5e7eb;
+      border-radius: 8px;
+      cursor: pointer;
+      text-align: left;
+      transition: all 0.15s ease;
+    }
+    .mode-btn:hover {
+      border-color: #d1d5db;
+      background: #f9fafb;
+    }
+    .mode-btn.active {
+      border-color: #111827;
+      background: #ffffff;
+      box-shadow: 0 0 0 1px #111827;
+    }
+    .mode-btn-text strong {
+      display: block;
+      font-size: 0.88rem;
+      color: #111827;
+    }
+    .mode-btn-text small {
+      font-size: 0.76rem;
+      color: #6b7280;
+    }
+    .mode-status-dot {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      padding: 2px 7px;
+      border-radius: 12px;
+    }
+    .dot-ready {
+      background: #ecfdf5;
+      color: #047857;
+      border: 1px solid #a7f3d0;
+    }
+    .dot-offline {
+      background: #fef2f2;
+      color: #b91c1c;
+      border: 1px solid #fecaca;
+    }
+
+    /* BASELINE TOGGLE */
+    .toggle-baseline-link {
+      font-size: 0.8rem;
+      color: #6b7280;
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 4px 0;
+      text-decoration: underline;
+      display: inline-block;
+    }
+    .toggle-baseline-link:hover {
+      color: #111827;
+    }
+    .baseline-box {
+      margin-top: 10px;
+      padding: 12px;
+      background: #f9fafb;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+    }
+    .baseline-box p {
+      font-size: 0.78rem;
+      color: #6b7280;
+      margin-bottom: 8px;
+    }
+
+    /* INPUT FORM */
+    .form-group {
+      margin-bottom: 14px;
+    }
+    label.form-label {
+      display: block;
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: #374151;
+      margin-bottom: 6px;
+    }
+    textarea.minimal-textarea {
+      width: 100%;
+      min-height: 90px;
+      padding: 12px;
+      font-size: 0.92rem;
+      color: #111827;
+      background: #ffffff;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      resize: vertical;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+    textarea.minimal-textarea:focus {
+      border-color: #111827;
+      box-shadow: 0 0 0 1px #111827;
+    }
+    input.minimal-input {
+      width: 100%;
+      padding: 9px 12px;
+      font-size: 0.88rem;
+      color: #111827;
+      background: #ffffff;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      outline: none;
+      font-family: inherit;
+      transition: border-color 0.15s ease;
+    }
+    input.minimal-input:focus {
+      border-color: #111827;
+      box-shadow: 0 0 0 1px #111827;
+    }
+
+    /* PROMPT CHIPS */
+    .chips-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 16px;
+    }
+    .chip {
+      background: #ffffff;
+      border: 1px solid #e5e7eb;
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 0.78rem;
+      color: #4b5563;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .chip:hover {
+      background: #f3f4f6;
+      color: #111827;
+      border-color: #d1d5db;
+    }
+
+    /* BUTTONS */
+    .btn-row {
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      gap: 10px;
+    }
+    .btn-primary {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 9px 20px;
+      background: #111827;
+      color: #ffffff;
+      font-size: 0.88rem;
+      font-weight: 600;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .btn-primary:hover {
+      background: #1f2937;
+    }
+    .btn-primary:disabled {
+      background: #9ca3af;
+      cursor: not-allowed;
+    }
+    .btn-secondary {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 14px;
+      background: #ffffff;
+      color: #374151;
+      font-size: 0.84rem;
+      font-weight: 500;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .btn-secondary:hover {
+      background: #f9fafb;
+      color: #111827;
+    }
+
+    /* RESULTS SECTION */
+    #results-area {
+      display: none;
+      animation: fadeIn 0.2s ease;
+    }
+    .meta-bar {
+      display: flex;
+      gap: 16px;
+      padding: 10px 14px;
+      background: #f9fafb;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      font-size: 0.8rem;
+      color: #4b5563;
+      margin-bottom: 16px;
+    }
+    .meta-item strong {
+      color: #111827;
+      margin-left: 4px;
+    }
+
+    /* RESULT BLOCKS */
+    .res-block {
+      margin-bottom: 18px;
+      padding-bottom: 18px;
+      border-bottom: 1px solid #f3f4f6;
+    }
+    .res-block:last-child {
+      border-bottom: none;
+      margin-bottom: 0;
+      padding-bottom: 0;
+    }
+    .res-label {
+      font-size: 0.76rem;
+      font-weight: 700;
+      color: #6b7280;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 6px;
+    }
+    .tool-badge {
+      display: inline-block;
+      padding: 3px 8px;
+      background: #f3f4f6;
+      border: 1px solid #e5e7eb;
+      border-radius: 4px;
+      font-size: 0.8rem;
+      font-weight: 700;
+      color: #111827;
+      margin-bottom: 8px;
+    }
+    .thought-text {
+      font-size: 0.9rem;
+      color: #374151;
+      line-height: 1.55;
+      background: #f9fafb;
+      padding: 12px 14px;
+      border-left: 3px solid #111827;
+      border-radius: 0 6px 6px 0;
+    }
+
+    /* STORM PERSPECTIVES & SUBQUERIES */
+    .perspectives-pills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 10px;
+    }
+    .p-pill {
+      background: #f3f4f6;
+      border: 1px solid #e5e7eb;
+      padding: 3px 10px;
+      border-radius: 12px;
+      font-size: 0.8rem;
+      color: #374151;
+      font-weight: 500;
+    }
+    .subqueries-list {
+      margin-left: 20px;
+      font-size: 0.86rem;
+      color: #4b5563;
+      line-height: 1.6;
+    }
+
+    /* RETRIEVED CHUNKS */
+    .chunk-item {
+      background: #f9fafb;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 12px 14px;
+      margin-bottom: 8px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .chunk-item:hover {
+      border-color: #cbd5e1;
+      background: #ffffff;
+    }
+    .chunk-header {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.8rem;
+      color: #6b7280;
+      margin-bottom: 4px;
+    }
+    .chunk-header strong {
+      color: #111827;
+    }
+    .chunk-text {
+      font-size: 0.85rem;
+      color: #374151;
+      line-height: 1.45;
+    }
+
+    /* JSON RAW VIEWER */
+    pre.raw-json {
+      background: #111827;
+      color: #f3f4f6;
+      padding: 14px;
+      border-radius: 8px;
+      font-size: 0.78rem;
+      max-height: 240px;
+      overflow-y: auto;
+      margin-top: 8px;
+    }
+
+    /* TOAST ALERT */
+    #minimal-toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: #111827;
+      color: #ffffff;
+      padding: 10px 18px;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      font-weight: 500;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.15);
+      display: none;
+      animation: fadeIn 0.15s ease;
+      z-index: 9999;
+    }
+  </style>
+</head>
+<body>
+  <div class="app-wrap">
+    <!-- TOP HEADER -->
+    <header class="top-bar">
+      <div class="brand">
+        <span class="brand-title">Multi-Agent Research RAG</span>
+        <span class="brand-badge">Minimal</span>
+      </div>
+
+      <nav class="nav-tabs" role="tablist">
+        <button type="button" class="tab-btn active" data-tab="main" id="tab-btn-main">Chính</button>
+        <button type="button" class="tab-btn" data-tab="settings" id="tab-btn-settings">Cài đặt</button>
+      </nav>
+
+      <a href="/" class="full-studio-link">Bản đầy đủ ↗</a>
+    </header>
+
+    <!-- ================= TAB 1: CHÍNH (AGENT 1 PLAYGROUND) ================= -->
+    <main id="view-main" class="view-panel active">
+      <div class="page-title-area">
+        <h1 class="page-title">Agent 1: Retrieval & Router</h1>
+        <p class="page-desc">Thử nghiệm định tuyến công cụ, phân rã đa chiều Stanford STORM và trích xuất FTS5/BM25.</p>
+      </div>
+
+      <!-- Card Chọn chế độ -->
+      <div class="card">
+        <div class="card-title">
+          <span>Chế độ thực thi</span>
+          <span id="active-mode-label" style="font-size: 0.78rem; font-weight: normal; color: #6b7280;">Cloud API đang chọn</span>
+        </div>
+
+        <div class="mode-group" role="radiogroup">
+          <button type="button" class="mode-btn active" data-mode="api" id="mode-api-btn">
+            <div class="mode-btn-text">
+              <strong>Cloud API</strong>
+              <small>Google Gemini Flash (Đa chiều)</small>
+            </div>
+            <span class="mode-status-dot dot-ready" id="status-api-dot">● Sẵn sàng</span>
+          </button>
+
+          <button type="button" class="mode-btn" data-mode="model" id="mode-model-btn">
+            <div class="mode-btn-text">
+              <strong>Kaggle GPU</strong>
+              <small>Qwen2.5-7B LoRA (Dual T4)</small>
+            </div>
+            <span class="mode-status-dot dot-offline" id="status-model-dot">● Đang kiểm tra...</span>
+          </button>
+        </div>
+
+        <div>
+          <button type="button" class="toggle-baseline-link" id="toggle-baseline-btn">+ Tùy chọn cơ sở: Local CPU (Baseline Heuristic)</button>
+          <div id="baseline-box" class="baseline-box" style="display: none;">
+            <p>Chế độ luật cố định chạy nội bộ trên CPU máy tính (0ms, 100% offline). Dùng làm đường chuẩn (baseline) đối chứng thực nghiệm.</p>
+            <button type="button" class="mode-btn" data-mode="cpu" id="mode-cpu-btn" style="width: 100%;">
+              <div class="mode-btn-text">
+                <strong>Local CPU (Baseline)</strong>
+                <small>FTS5 C-Engine + Heuristics</small>
+              </div>
+              <span class="mode-status-dot dot-ready">● Sẵn sàng 100%</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Card Nhập câu hỏi -->
+      <div class="card">
+        <div class="form-group">
+          <label for="minimal-query-input" class="form-label">Câu hỏi nghiên cứu khoa học</label>
+          <textarea id="minimal-query-input" class="minimal-textarea" placeholder="Nhập câu hỏi... (ví dụ: So sánh cơ chế thích ứng LoRA và QLoRA trong mô hình ngôn ngữ lớn)"></textarea>
+        </div>
+
+        <div class="chips-row">
+          <button type="button" class="chip" data-q="So sánh hiệu năng và mức tiêu thụ bộ nhớ giữa LoRA và QLoRA">LoRA vs QLoRA</button>
+          <button type="button" class="chip" data-q="Nguyên lý hoạt động của cơ chế Multi-Head Attention trong Transformer">Attention Mechanism</button>
+          <button type="button" class="chip" data-q="Phương pháp thẩm định sự thật khoa học bằng SciFact và NLI">SciFact Verification</button>
+        </div>
+
+        <div class="btn-row">
+          <button type="button" class="btn-primary" id="btn-run-agent1">
+            <span id="run-btn-text">Chạy Agent 1 →</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Khu vực hiển thị kết quả -->
+      <div id="results-area" class="card">
+        <div class="card-title">
+          <span>Kết quả đầu ra của Agent 1</span>
+          <button type="button" class="btn-secondary" id="btn-copy-json" style="font-size: 0.78rem; padding: 4px 10px;">Sao chép JSON</button>
+        </div>
+
+        <div class="meta-bar">
+          <div class="meta-item">Chế độ: <strong id="res-mode">Cloud API</strong></div>
+          <div class="meta-item">Thời gian: <strong id="res-time">0 ms</strong></div>
+          <div class="meta-item">Trích xuất: <strong id="res-chunks">0 chunks</strong></div>
+          <div class="meta-item">Tự phê bình: <strong id="res-critique">Đạt yêu cầu</strong></div>
+        </div>
+
+        <!-- 1. Quyết định Điều phối -->
+        <div class="res-block">
+          <div class="res-label">1. Quyết định Điều phối (Router Decision)</div>
+          <span class="tool-badge" id="res-tool">DENSE</span>
+          <div class="thought-text" id="res-thought">Đang nạp suy luận...</div>
+        </div>
+
+        <!-- 2. Phân rã Đa chiều Stanford STORM -->
+        <div class="res-block">
+          <div class="res-label">2. Phân rã Đa chiều (Stanford STORM Perspectives & Sub-queries)</div>
+          <div class="perspectives-pills" id="res-perspectives"></div>
+          <ol class="subqueries-list" id="res-subqueries"></ol>
+        </div>
+
+        <!-- 3. Tài liệu Trích xuất -->
+        <div class="res-block">
+          <div class="res-label">3. Tài liệu Trích xuất & Điểm Dung hợp RRF</div>
+          <div id="res-docs-list"></div>
+        </div>
+
+        <!-- 4. Gói State bàn giao cho Agent 2 -->
+        <div class="res-block">
+          <div class="res-label" style="display: flex; justify-content: space-between; align-items: center;">
+            <span>4. Gói LangGraph State (Bàn giao sang Agent 2)</span>
+            <button type="button" class="toggle-baseline-link" id="toggle-raw-json-btn">Hiện JSON thô ▼</button>
+          </div>
+          <div id="raw-json-wrapper" style="display: none;">
+            <pre class="raw-json" id="res-raw-json"></pre>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- ================= TAB 2: CÀI ĐẶT (SETTINGS) ================= -->
+    <section id="view-settings" class="view-panel">
+      <div class="page-title-area">
+        <h1 class="page-title">Cài đặt Hệ thống</h1>
+        <p class="page-desc">Cấu hình kết nối Kaggle GPU Worker và quản lý API keys.</p>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Kết nối Kaggle Dual T4 Worker</div>
+
+        <div class="form-group">
+          <label class="form-label" for="setting-kaggle-url">Cloudflare Tunnel URL của Kaggle</label>
+          <input type="url" id="setting-kaggle-url" class="minimal-input" placeholder="https://xxxx-xxxx.trycloudflare.com">
+          <small style="display: block; color: #6b7280; font-size: 0.78rem; margin-top: 4px;">
+            Dán đường link public sinh ra từ Notebook Kaggle Dual T4.
+          </small>
+        </div>
+
+        <div class="btn-row" style="margin-bottom: 16px;">
+          <button type="button" class="btn-secondary" id="btn-test-kaggle">Kiểm tra kết nối</button>
+          <span id="kaggle-test-status" style="font-size: 0.8rem; font-weight: 500; color: #6b7280;"></span>
+        </div>
+
+        <div class="form-group" style="margin-top: 20px; padding-top: 16px; border-top: 1px solid #f3f4f6;">
+          <label class="form-label">Google Gemini API Key (Đám mây)</label>
+          <input type="password" id="setting-gemini-key" class="minimal-input" placeholder="AIzaSy... (Để trống nếu giữ nguyên key từ .env)">
+          <small style="display: block; color: #6b7280; font-size: 0.78rem; margin-top: 4px;">
+            Key được lưu an toàn trong file cấu hình nội bộ máy tính.
+          </small>
+        </div>
+
+        <div class="btn-row" style="margin-top: 24px;">
+          <button type="button" class="btn-primary" id="btn-save-settings">Lưu cấu hình</button>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div id="minimal-toast">Thông báo</div>
+
+  <script>
+    // Minimal Web Script
+    let activeMode = 'api';
+    let lastResultPayload = null;
+
+    // Toast helper
+    function showToast(msg) {
+      const t = document.getElementById('minimal-toast');
+      if (!t) return;
+      t.textContent = msg;
+      t.style.display = 'block';
+      setTimeout(() => { t.style.display = 'none'; }, 2500);
+    }
+
+    // Tab Navigation
+    const tabBtns = document.querySelectorAll('.tab-btn');
+    const viewPanels = document.querySelectorAll('.view-panel');
+
+    tabBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        const tab = btn.dataset.tab;
+        tabBtns.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+
+        viewPanels.forEach(p => {
+          if (p.id === `view-${tab}`) p.classList.add('active');
+          else p.classList.remove('active');
+        });
+      });
+    });
+
+    // Mode Selection
+    const modeBtns = document.querySelectorAll('.mode-btn');
+    const activeModeLabel = document.getElementById('active-mode-label');
+
+    modeBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        modeBtns.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        activeMode = btn.dataset.mode;
+        
+        const labels = {
+          api: 'Cloud API (Gemini) đang chọn',
+          model: 'Kaggle Dual T4 GPU đang chọn',
+          cpu: 'Local CPU (Baseline) đang chọn'
+        };
+        if (activeModeLabel) activeModeLabel.textContent = labels[activeMode] || '';
+      });
+    });
+
+    // Toggle Baseline Box
+    const toggleBaselineBtn = document.getElementById('toggle-baseline-btn');
+    const baselineBox = document.getElementById('baseline-box');
+    if (toggleBaselineBtn && baselineBox) {
+      toggleBaselineBtn.addEventListener('click', () => {
+        const isHidden = baselineBox.style.display === 'none';
+        baselineBox.style.display = isHidden ? 'block' : 'none';
+        toggleBaselineBtn.textContent = isHidden ? '- Thu gọn tùy chọn cơ sở' : '+ Tùy chọn cơ sở: Local CPU (Baseline Heuristic)';
+      });
+    }
+
+    // Toggle Raw JSON
+    const toggleJsonBtn = document.getElementById('toggle-raw-json-btn');
+    const rawJsonWrap = document.getElementById('raw-json-wrapper');
+    if (toggleJsonBtn && rawJsonWrap) {
+      toggleJsonBtn.addEventListener('click', () => {
+        const isHidden = rawJsonWrap.style.display === 'none';
+        rawJsonWrap.style.display = isHidden ? 'block' : 'none';
+        toggleJsonBtn.textContent = isHidden ? 'Ẩn JSON thô ▲' : 'Hiện JSON thô ▼';
+      });
+    }
+
+    // Prompt Chips
+    document.querySelectorAll('.chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        const input = document.getElementById('minimal-query-input');
+        if (input) {
+          input.value = chip.dataset.q;
+          input.focus();
+        }
+      });
+    });
+
+    // Pre-flight status check
+    async function checkStatus() {
+      const apiDot = document.getElementById('status-api-dot');
+      const modelDot = document.getElementById('status-model-dot');
+      try {
+        const res = await fetch('/api/pipeline/agent1/status');
+        const data = await res.json();
+        if (data && data.modes) {
+          if (data.modes.api && data.modes.api.available) {
+            apiDot.textContent = '● Sẵn sàng';
+            apiDot.className = 'mode-status-dot dot-ready';
+          } else {
+            apiDot.textContent = '● Chưa có Key';
+            apiDot.className = 'mode-status-dot dot-offline';
+          }
+
+          if (data.modes.model && data.modes.model.is_online) {
+            modelDot.textContent = '● Đã kết nối';
+            modelDot.className = 'mode-status-dot dot-ready';
+          } else {
+            modelDot.textContent = '● Chưa kết nối';
+            modelDot.className = 'mode-status-dot dot-offline';
+          }
+        }
+      } catch (e) {
+        console.warn('Status check failed:', e);
+      }
+    }
+    checkStatus();
+
+    // Run Agent 1
+    const runBtn = document.getElementById('btn-run-agent1');
+    const queryInput = document.getElementById('minimal-query-input');
+    const resultsArea = document.getElementById('results-area');
+
+    runBtn?.addEventListener('click', async () => {
+      const q = queryInput.value.trim();
+      if (!q) {
+        alert('Vui lòng nhập câu hỏi nghiên cứu.');
+        return;
+      }
+
+      runBtn.disabled = true;
+      runBtn.innerHTML = '<span>Đang chạy Agent 1...</span>';
+
+      try {
+        const res = await fetch('/api/pipeline/agent1/run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: q, mode: activeMode })
+        });
+        const data = await res.json();
+
+        if (!data.success) {
+          alert(data.message || 'Lỗi thực thi Agent 1.');
+          runBtn.disabled = false;
+          runBtn.innerHTML = '<span>Chạy Agent 1 →</span>';
+          return;
+        }
+
+        lastResultPayload = data;
+
+        // Render Results
+        resultsArea.style.display = 'block';
+        document.getElementById('res-mode').textContent = data.mode_used === 'api' ? 'Cloud API (Gemini)' : (data.mode_used === 'model' ? 'Kaggle GPU' : 'Local CPU');
+        document.getElementById('res-time').textContent = `${data.latency_ms} ms`;
+        document.getElementById('res-chunks').textContent = `${data.total_chunks} chunks`;
+        document.getElementById('res-critique').textContent = data.router_decision?.critique_is_relevant ? 'Đạt yêu cầu' : 'Cần bổ sung';
+
+        // 1. Router
+        document.getElementById('res-tool').textContent = (data.router_decision?.tool_selected || 'DENSE').toUpperCase();
+        document.getElementById('res-thought').textContent = data.router_decision?.thought || 'Không có suy luận.';
+
+        // 2. STORM
+        const pWrap = document.getElementById('res-perspectives');
+        pWrap.innerHTML = '';
+        (data.perspectives || []).forEach(p => {
+          const span = document.createElement('span');
+          span.className = 'p-pill';
+          span.textContent = p;
+          pWrap.appendChild(span);
+        });
+
+        const sqList = document.getElementById('res-subqueries');
+        sqList.innerHTML = '';
+        (data.sub_queries || []).forEach(sq => {
+          const li = document.createElement('li');
+          li.textContent = sq;
+          sqList.appendChild(li);
+        });
+
+        // 3. Chunks
+        const docsList = document.getElementById('res-docs-list');
+        docsList.innerHTML = '';
+        (data.retrieved_docs || []).forEach((doc, idx) => {
+          const div = document.createElement('div');
+          div.className = 'chunk-item';
+          div.innerHTML = `
+            <div class="chunk-header">
+              <strong>#${idx + 1} ${doc.title || doc.doc_id || 'Tài liệu'} (Trang ${doc.page_no || 1})</strong>
+              <span>RRF: ${doc.rrf_score ? Number(doc.rrf_score).toFixed(5) : '0.01639'}</span>
+            </div>
+            <div class="chunk-text">${doc.text || ''}</div>
+          `;
+          docsList.appendChild(div);
+        });
+
+        // 4. State JSON
+        document.getElementById('res-raw-json').textContent = JSON.stringify(data.agent1_state_payload || data, null, 2);
+
+        showToast('Agent 1 đã hoàn tất thành công!');
+        resultsArea.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+      } catch (err) {
+        alert('Lỗi kết nối khi gọi Agent 1: ' + err.message);
+      } finally {
+        runBtn.disabled = false;
+        runBtn.innerHTML = '<span>Chạy Agent 1 →</span>';
+      }
+    });
+
+    // Copy JSON
+    document.getElementById('btn-copy-json')?.addEventListener('click', () => {
+      if (!lastResultPayload) return;
+      navigator.clipboard.writeText(JSON.stringify(lastResultPayload, null, 2)).then(() => {
+        showToast('Đã sao chép toàn bộ JSON vào clipboard!');
+      });
+    });
+
+    // Load Settings
+    async function loadSettings() {
+      try {
+        const res = await fetch('/api/config');
+        const data = await res.json();
+        if (data && data.remote_worker && data.remote_worker.startsWith('http')) {
+          document.getElementById('setting-kaggle-url').value = data.remote_worker;
+        }
+      } catch (e) {
+        console.warn('Failed to load settings:', e);
+      }
+    }
+    loadSettings();
+
+    // Test Kaggle Connection in Settings
+    document.getElementById('btn-test-kaggle')?.addEventListener('click', async () => {
+      const urlInput = document.getElementById('setting-kaggle-url');
+      const statusEl = document.getElementById('kaggle-test-status');
+      const url = urlInput.value.trim();
+      if (!url) {
+        alert('Vui lòng nhập Kaggle URL trước khi kiểm tra.');
+        return;
+      }
+
+      statusEl.textContent = '⏳ Đang kiểm tra...';
+      statusEl.style.color = '#6b7280';
+
+      try {
+        // Save remote URL first then test
+        await fetch('/api/config/remote-url', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ remote_url: url })
+        });
+
+        const res = await fetch('/api/config/remote-url/test');
+        const data = await res.json();
+        if (data.is_online) {
+          statusEl.textContent = '🟢 Online: ' + data.details;
+          statusEl.style.color = '#047857';
+          showToast('Kaggle Worker hoạt động tốt!');
+        } else {
+          statusEl.textContent = '🔴 Offline: ' + data.details;
+          statusEl.style.color = '#b91c1c';
+        }
+        checkStatus();
+      } catch (e) {
+        statusEl.textContent = '🔴 Lỗi kiểm tra: ' + e.message;
+        statusEl.style.color = '#b91c1c';
+      }
+    });
+
+    // Save Settings
+    document.getElementById('btn-save-settings')?.addEventListener('click', async () => {
+      const url = document.getElementById('setting-kaggle-url').value.trim();
+      if (url) {
+        await fetch('/api/config/remote-url', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ remote_url: url })
+        });
+      }
+      showToast('Đã lưu cấu hình thành công!');
+      checkStatus();
+    });
+  </script>
+</body>
+</html>

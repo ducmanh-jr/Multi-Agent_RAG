@@ -20,7 +20,7 @@ from typing import Any, AsyncGenerator, Optional
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -1138,6 +1138,16 @@ async def run_agent2_playground(req: Agent2PlaygroundRequest):
             "error_code": "EXECUTION_ERROR",
             "message": f"Lỗi trong quá trình chạy Agent 2: {str(e)}",
         }
+
+
+
+@app.get("/minimal")
+async def get_minimal_demo():
+    """Serves the ultra-clean minimalist web demo interface."""
+    minimal_file = os.path.join(settings.BASE_DIR, "web", "minimal.html")
+    if os.path.exists(minimal_file):
+        return FileResponse(minimal_file)
+    return RedirectResponse(url="/")
 
 
 # Mount static Web Workspace UI & Assets
