@@ -1,0 +1,1 @@
+QASPER consists of 5,049 questions over 1,585 NLP papers. Each question is sought by an NLP practitioner who has not read the paper. Dense retrieval with BGE-large achieves a Hit@5 of 40.97% on QASPER dev benchmark.
