@@ -1742,12 +1742,12 @@ function initPipelineStudio() {
     try {
       const res = await api("/pipeline/agent1/run", {
         method: "POST",
-        body: JSON.stringify({
+        body: {
           query: query,
           mode: pipeSelectedMode,
           mock_evidence_gap: mockGap,
           retry_count: mockGap ? 1 : 0,
-        }),
+        },
       });
 
       $("#pipe-loading-state").hidden = true;
