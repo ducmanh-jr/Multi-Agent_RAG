@@ -43,3 +43,8 @@ data/*.sqlite*
 Thumbs.db
 .vscode/
 .idea/
+
+# Whitelist fine-tuned Agent 1 LoRA model (< 100MB for Kaggle deployment)
+!weights/
+!weights/agent1_router/
+!weights/agent1_router/*

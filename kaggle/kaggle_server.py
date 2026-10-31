@@ -35,6 +35,10 @@ _loaded_adapters: list[str] = []
 def find_adapter_path(sub_path: str) -> Optional[str]:
     """Search common Kaggle and local paths for fine-tuned weights."""
     candidates = [
+        Path("/kaggle/working/Multi-Agent_RAG/weights") / sub_path,
+        Path.cwd() / "weights" / sub_path,
+        Path("./weights") / sub_path,
+        Path("../weights") / sub_path,
         Path("/kaggle/input/test-agent") / sub_path,
         Path("/kaggle/working/Test_agent") / sub_path,
         Path("./Test_agent") / sub_path,
@@ -91,7 +95,7 @@ def load_generator_model():
 
         generator_path = os.getenv("GENERATOR_LORA_PATH") or find_adapter_path("agent3/Weights/generator_qlora/final")
         critic_path = os.getenv("CRITIC_LORA_PATH") or find_adapter_path("agent3/Weights/critic_qlora/final")
-        router_path = os.getenv("ROUTER_LORA_PATH") or find_adapter_path("agent1/retrieval_router_critique_qlora/final")
+        router_path = os.getenv("ROUTER_LORA_PATH") or find_adapter_path("agent1_router") or find_adapter_path("agent1/retrieval_router_critique_qlora/final")
 
         peft_attached = False
 
