@@ -150,6 +150,9 @@
             <svg><use href="#i-flask" /></svg>Thực nghiệm
             <span class="count">LAB</span>
           </button>
+          <button class="nav-item" data-view="settings">
+            <svg><use href="#i-settings" /></svg>Cài đặt
+          </button>
         </nav>
         <div class="sidebar-section-heading">
           <span>TÀI LIỆU TRONG PHIÊN</span
@@ -208,6 +211,7 @@
             ><strong id="breadcrumb-view">Nghiên cứu</strong>
           </div>
           <div class="topbar-right">
+            
             <button
               class="topbar-search"
               id="workspace-search"
@@ -287,6 +291,12 @@
                   <p id="question-helper" class="input-helper">
                     Hỏi cụ thể để tìm đúng bằng chứng trong tài liệu của bạn.
                   </p>
+                  <div class="quick-prompts-container" id="quick-prompts">
+                    <span class="quick-prompts-label">Gợi ý nhanh:</span>
+                    <button type="button" class="quick-chip" data-prompt="Tóm tắt các đóng góp chính và phương pháp của các tài liệu này">💡 Tóm tắt đóng góp chính</button>
+                    <button type="button" class="quick-chip" data-prompt="So sánh cơ chế giảm bộ nhớ và hiệu năng fine-tuning của LoRA và QLoRA">💡 So sánh LoRA vs QLoRA</button>
+                    <button type="button" class="quick-chip" data-prompt="Trích xuất các kết quả thực nghiệm và số liệu benchmark chính">💡 Kết quả Benchmark</button>
+                  </div>
                   <details class="requirement-options">
                     <summary>Các ý cần trả lời <span>tùy chọn</span></summary>
                     <label for="requirements"
@@ -865,6 +875,204 @@
                   có số liệu mô phỏng.
                 </p>
               </div>
+            </div>
+          </section>
+                    <section id="view-settings" class="view" hidden>
+            <div class="simple-heading">
+              <div class="eyebrow">CẤU HÌNH HỆ THỐNG / SETTINGS</div>
+              <h1>Cài đặt</h1>
+              <p>Quản lý mô hình suy luận, chuyển đổi chế độ phần cứng và tối ưu hóa hệ thống.</p>
+            </div>
+
+            <div class="settings-grid">
+              <!-- Card 3: Cấu hình Từng Agent Riêng Biệt (Per-Agent Execution Mode) -->
+              <article class="settings-card agent-modes-card">
+                <div class="settings-card-header">
+                  <div class="settings-card-title">
+                    <svg><use href="#i-stack" /></svg>
+                    <div>
+                      <h3>Cấu hình Từng Agent (Per-Agent Execution Mode)</h3>
+                      <p>Tùy chỉnh linh hoạt từng tác tử: Chạy qua Cloud API hoặc Chạy Model trên Kaggle GPU</p>
+                    </div>
+                  </div>
+                  <div class="agent-quick-presets">
+                    <span class="preset-label">Thiết lập nhanh:</span>
+                    <button type="button" class="preset-btn" id="preset-all-api">⚡ Toàn bộ API</button>
+                    <button type="button" class="preset-btn" id="preset-all-model">🚀 Toàn bộ Model (Kaggle T4)</button>
+                    <button type="button" class="preset-btn" id="preset-hybrid">⚖️ Hybrid Tối ưu</button>
+                  </div>
+                </div>
+
+                <div class="agent-mode-list">
+                  <!-- Agent 1 -->
+                  <div class="agent-mode-row" data-agent="retrieval">
+                    <div class="agent-info">
+                      <div class="agent-badge">01</div>
+                      <div>
+                        <strong>Agent 1: Retrieval & Router</strong>
+                        <p>Điều phối truy vấn, phân tích đa chiều và tìm kiếm lai C-Speed FTS5 + BM25</p>
+                        <span class="agent-active-desc" id="desc-retrieval">Đang dùng: Gemini API (Decomposition)</span>
+                      </div>
+                    </div>
+                    <div class="agent-toggle-group">
+                      <button type="button" class="btn-agent-mode active" data-agent="retrieval" data-mode="api">⚡ Gemini API</button>
+                      <button type="button" class="btn-agent-mode" data-agent="retrieval" data-mode="model">🚀 Qwen-7B Router LoRA</button>
+                    </div>
+                  </div>
+
+                  <!-- Agent 2 -->
+                  <div class="agent-mode-row" data-agent="reader">
+                    <div class="agent-info">
+                      <div class="agent-badge">02</div>
+                      <div>
+                        <strong>Agent 2: Reader (Layout Parser)</strong>
+                        <p>Đọc cấu trúc văn bản PDF, nhận diện bảng biểu và chia khối đa cột</p>
+                        <span class="agent-active-desc" id="desc-reader">Đang dùng: PyMuPDF & Gemini Guardrail</span>
+                      </div>
+                    </div>
+                    <div class="agent-toggle-group">
+                      <button type="button" class="btn-agent-mode active" data-agent="reader" data-mode="api">⚡ PyMuPDF + API</button>
+                      <button type="button" class="btn-agent-mode" data-agent="reader" data-mode="model">🚀 LayoutLMv3 DocLayNet</button>
+                    </div>
+                  </div>
+
+                  <!-- Agent 3 -->
+                  <div class="agent-mode-row" data-agent="summarizer">
+                    <div class="agent-info">
+                      <div class="agent-badge">03</div>
+                      <div>
+                        <strong>Agent 3: Summarizer (Generator & Critic)</strong>
+                        <p>Tổng hợp câu trả lời khoa học, trích xuất nhận định nguyên tử và lọc ảo giác</p>
+                        <span class="agent-active-desc" id="desc-summarizer">Đang dùng: Gemini API (Generator & Critic)</span>
+                      </div>
+                    </div>
+                    <div class="agent-toggle-group">
+                      <button type="button" class="btn-agent-mode active" data-agent="summarizer" data-mode="api">⚡ Gemini API</button>
+                      <button type="button" class="btn-agent-mode" data-agent="summarizer" data-mode="model">🚀 Generator-Critic LoRA</button>
+                    </div>
+                  </div>
+
+                  <!-- Agent 4 -->
+                  <div class="agent-mode-row" data-agent="factchecker">
+                    <div class="agent-info">
+                      <div class="agent-badge">04</div>
+                      <div>
+                        <strong>Agent 4: Fact-Checker & Verifier</strong>
+                        <p>Đối soát số học, kiểm chứng ngày tháng và thẩm định NLI SciFact nghiêm ngặt</p>
+                        <span class="agent-active-desc" id="desc-factchecker">Đang dùng: Gemini NLI & Numeric Verifier</span>
+                      </div>
+                    </div>
+                    <div class="agent-toggle-group">
+                      <button type="button" class="btn-agent-mode active" data-agent="factchecker" data-mode="api">⚡ Gemini API</button>
+                      <button type="button" class="btn-agent-mode" data-agent="factchecker" data-mode="model">🚀 Qwen-3B SciFact (GPU 1)</button>
+                    </div>
+                  </div>
+
+                  <!-- Agent 5 -->
+                  <div class="agent-mode-row" data-agent="writer">
+                    <div class="agent-info">
+                      <div class="agent-badge">05</div>
+                      <div>
+                        <strong>Agent 5: Writer (Academic Report)</strong>
+                        <p>Biên tập báo cáo khoa học chuẩn IMRaD kèm trích dẫn nguồn APA minh bạch</p>
+                        <span class="agent-active-desc" id="desc-writer">Đang dùng: Gemini API (Academic Synthesis)</span>
+                      </div>
+                    </div>
+                    <div class="agent-toggle-group">
+                      <button type="button" class="btn-agent-mode active" data-agent="writer" data-mode="api">⚡ Gemini API</button>
+                      <button type="button" class="btn-agent-mode" data-agent="writer" data-mode="model">🚀 Qwen2.5-7B (GPU 0)</button>
+                    </div>
+                  </div>
+                </div>
+                <div class="agent-mode-footer">
+                  <small>💡 Các thay đổi được tự động đồng bộ tức thì vào file <code>.env</code> và áp dụng cho mọi phiên nghiên cứu tiếp theo.</small>
+                </div>
+              </article>
+
+              <!-- Card 2: Thông tin Mô hình & Trạng thái -->
+              <article class="settings-card">
+                <div class="settings-card-header">
+                  <div class="settings-card-title">
+                    <svg><use href="#i-book" /></svg>
+                    <div>
+                      <h3>Mô hình & Hạ tầng Hiện tại</h3>
+                      <p>Chi tiết về checkpoint, nhà cung cấp và kết nối máy chủ</p>
+                    </div>
+                  </div>
+                  <div class="settings-model-pill-wrapper">
+                    <span class="provider-pill" id="settings-provider-pill">
+                      <span class="status-dot"></span><span id="settings-model-name">Đang kết nối</span>
+                    </span>
+                    <span class="user-avatar" title="Research Workspace">RA</span>
+                  </div>
+                </div>
+
+                <div class="settings-details-list">
+                  <div class="detail-row">
+                    <span class="detail-label">Nhà cung cấp (Provider):</span>
+                    <strong class="detail-val" id="st-provider">Google Gemini API</strong>
+                  </div>
+                  <div class="detail-row">
+                    <span class="detail-label">Mô hình chính (Primary Model):</span>
+                    <strong class="detail-val" id="st-model">gemini-3.5-flash</strong>
+                  </div>
+                  <div class="detail-row">
+                    <span class="detail-label">Mô hình dự phòng (Fallback Model):</span>
+                    <strong class="detail-val" id="st-fallback">gemini-3.5-flash-lite</strong>
+                  </div>
+                  <div class="detail-row detail-row-remote">
+                    <div class="detail-remote-header">
+                      <span class="detail-label"><strong>Đường hầm Kaggle Worker (Cloudflare Tunnel)</strong></span>
+                      <span class="tunnel-status-badge" id="tunnel-status">Đang kiểm tra...</span>
+                    </div>
+                    <div class="remote-input-wrapper">
+                      <input
+                        type="url"
+                        id="input-remote-url"
+                        class="remote-url-input"
+                        placeholder="https://xyz.trycloudflare.com"
+                        value=""
+                      />
+                      <button type="button" class="primary-button" id="btn-save-remote-url">
+                        Lưu & Tự động ghi vào .env
+                      </button>
+                      <button type="button" class="secondary-button" id="btn-test-remote-url">
+                        Kiểm tra kết nối
+                      </button>
+                    </div>
+                    <small class="remote-helper-text">
+                      💡 Mỗi lần bật phiên Kaggle mới, Cloudflare Tunnel sẽ cấp 1 URL mới. Bạn chỉ cần dán URL vào ô trên và bấm <strong>"Lưu & Tự động ghi vào .env"</strong>. Hệ thống sẽ cập nhật cả bộ nhớ RAM lẫn file <code>.env</code> tức thì mà không cần khởi động lại server.
+                    </small>
+                  </div>
+                  <div class="detail-row">
+                    <span class="detail-label">Trạng thái kết nối máy chủ:</span>
+                    <strong class="detail-val text-success" id="st-conn">Backend đã kết nối (Port 8000)</strong>
+                  </div>
+                </div>
+              </article>
+
+              <!-- Card 4: Thao tác bảo trì & Chẩn đoán -->
+              <article class="settings-card">
+                <div class="settings-card-header">
+                  <div class="settings-card-title">
+                    <svg><use href="#i-settings" /></svg>
+                    <div>
+                      <h3>Bảo trì & Tối ưu hóa Bộ nhớ</h3>
+                      <p>Dọn dẹp cache suy luận và xây dựng lại chỉ mục tìm kiếm</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="settings-actions-group">
+                  <button type="button" class="secondary-button" id="btn-settings-clear-cache">
+                    Xóa sạch LLM Cache
+                  </button>
+                  <button type="button" class="secondary-button" id="btn-settings-rebuild-fts">
+                    Xây dựng lại chỉ mục FTS5
+                  </button>
+                  <p id="settings-diag-info" class="diag-text">Hệ thống đang hoạt động tối ưu.</p>
+                </div>
+              </article>
             </div>
           </section>
           <section id="view-history" class="view" hidden>

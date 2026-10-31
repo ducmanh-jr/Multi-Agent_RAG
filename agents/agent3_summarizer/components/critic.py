@@ -44,7 +44,7 @@ YÊU CẦU TRẢ VỀ JSON:
 }}
 """
     try:
-        data = llm_client.generate_json(prompt)
+        data = llm_client.generate_json(prompt, agent="summarizer")
         approved_ids = set(data.get("approved_claim_ids", [c["id"] for c in claims]))
         warnings = data.get("critic_warnings", [])
 

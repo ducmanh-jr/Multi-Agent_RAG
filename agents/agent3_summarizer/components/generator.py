@@ -11,6 +11,49 @@ from utils.llm_client import llm_client
 from utils.logger import logger
 
 
+def estimate_tokens(text: str) -> int:
+    """Rough estimation of token count for mixed Vietnamese/English text (approx ~1.3 tokens per whitespace word)."""
+    return int(len(text.split()) * 1.3) + 1
+
+
+def pack_context_by_token_budget(
+    source_units: list[dict[str, Any]],
+    max_tokens: int = 3800,
+) -> tuple[str, list[dict[str, Any]]]:
+    """
+    Packs source units into context string until max_tokens budget is reached.
+    Ensures long papers (>10 pages) are maximally represented without truncation bias
+    or overflowing LLM context windows.
+    Returns:
+      (packed_context_str, included_units)
+    """
+    context_parts = []
+    included_units = []
+    current_tokens = 0
+
+    for u in source_units:
+        text = u.get("text", "")
+        unit_header = f"[Unit ID: {u.get('id')} | Doc: {u.get('doc_id')} | Trang: {u.get('page_no')}]:\n"
+        unit_str = f"{unit_header}{text}\n\n"
+        unit_tokens = estimate_tokens(unit_str)
+
+        if current_tokens + unit_tokens > max_tokens:
+            if not included_units:
+                allowed_words = int((max_tokens - estimate_tokens(unit_header)) / 1.3)
+                if allowed_words > 50:
+                    truncated_text = " ".join(text.split()[:allowed_words]) + "..."
+                    unit_str = f"{unit_header}{truncated_text}\n\n"
+                    context_parts.append(unit_str)
+                    included_units.append(u)
+            break
+
+        context_parts.append(unit_str)
+        included_units.append(u)
+        current_tokens += unit_tokens
+
+    return "".join(context_parts), included_units
+
+
 def generate_summary_and_claims(
     query: str,
     source_units: list[dict[str, Any]],
@@ -21,10 +64,8 @@ def generate_summary_and_claims(
       - evidence_spans: verbatim quotations with unit_id & context_hash
       - claims: atomic propositions
     """
-    # Prepare top context units
-    context_str = ""
-    for u in source_units[:6]:
-        context_str += f"[Unit ID: {u['id']} | Doc: {u.get('doc_id')} | Trang: {u.get('page_no')}]:\n{u.get('text')}\n\n"
+    # Pack context units dynamically based on token budget
+    context_str, _ = pack_context_by_token_budget(source_units, max_tokens=3800)
 
     prompt = f"""Bạn là Tác tử Tóm tắt Khoa học (Agent 3 - Generator) trong hệ thống Evidence-First RAG.
 Nhiệm vụ của bạn:
@@ -59,7 +100,7 @@ YÊU CẦU TRẢ VỀ ĐÚNG ĐỊNH DẠNG JSON (không kèm markdown):
 }}
 """
     try:
-        data = llm_client.generate_json(prompt)
+        data = llm_client.generate_json(prompt, agent="summarizer")
         answer = data.get("answer", "Chưa thể tổng hợp câu trả lời.")
         raw_evidence = data.get("evidence_spans", [])
         raw_claims = data.get("claims", [])

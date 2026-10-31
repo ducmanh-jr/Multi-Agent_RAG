@@ -129,10 +129,12 @@ def route_after_fact_check(state: AgentState) -> Literal["writer_node", "retry_l
     - Nếu support -> Sang Writer Agent
     - Nếu contradict / not_enough_info:
         + Nếu retry_count >= 3 -> Sang Escalation node
+        + Nếu no_new_evidence is True (Early Stopping) -> Sang Escalation node
         + Ngược lại -> Tăng retry và quay về Retrieval Agent
     """
     label = state.get("fact_check_label", "not_enough_info")
     retry_count = state.get("retry_count", 0)
+    no_new_evidence = state.get("no_new_evidence", False)
     
     if label == "support":
         logger.info("[Routing] Fact-check: SUPPORT -> Tiến hành viết báo cáo cuối cùng.")
@@ -140,6 +142,10 @@ def route_after_fact_check(state: AgentState) -> Literal["writer_node", "retry_l
         
     if retry_count >= settings.MAX_ORCHESTRATOR_RETRY:
         logger.warning(f"[Routing] Đã retry {retry_count} lần -> Chuyển sang Escalation Node.")
+        return "escalation_node"
+
+    if no_new_evidence:
+        logger.warning("[Routing Early Stopping] Không tìm thấy bằng chứng mới sau vòng tìm kiếm bổ sung -> Dừng lặp, chuyển sang Escalation Node.")
         return "escalation_node"
         
     logger.info(f"[Routing] Fact-check: {label} (retry {retry_count}/3) -> Quay lại Retrieval Agent.")

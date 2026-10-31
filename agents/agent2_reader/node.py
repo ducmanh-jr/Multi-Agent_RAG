@@ -66,6 +66,8 @@ class ReaderAgent(BaseAgent):
             {
                 "has_pdf": bool(pdf_path),
                 "total_source_units": len(source_units),
+                "pages_detected": len(document_schema.get("pages", [])),
+                "sections_detected": len(document_schema.get("sections", [])),
             },
         )
 

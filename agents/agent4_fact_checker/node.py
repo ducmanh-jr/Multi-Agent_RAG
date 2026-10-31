@@ -14,6 +14,7 @@ from core.state import AgentState, ClaimCheckResult, EvidenceGap
 from agents.agent4_fact_checker.components.claim_extractor import ClaimExtractor
 from agents.agent4_fact_checker.components.judge import FactCheckJudge
 from agents.agent4_fact_checker.components.numeric_verifier import verify_numbers_in_claim
+from agents.agent4_fact_checker.components.dates import verify_dates_in_claim
 
 
 class FactCheckerAgent(BaseAgent):
@@ -77,16 +78,23 @@ class FactCheckerAgent(BaseAgent):
         for c_text in claims_to_check:
             # Numeric verification
             nums_ok, num_reason = verify_numbers_in_claim(c_text, context_corpus)
+            # Date & temporal verification
+            dates_ok, date_reason = verify_dates_in_claim(c_text, context_corpus)
 
             # NLI evaluation
             eval_res = self.judge.judge_claim(c_text, ev_texts, context_corpus)
             status = eval_res["status"]
 
-            # If numbers are ungrounded in context, downgrade support to not_enough_info
+            # If numbers or dates are ungrounded in context, downgrade support to not_enough_info
             if not nums_ok:
                 if status == "support":
                     status = "not_enough_info"
                 eval_res["reasoning"] = f"{eval_res.get('reasoning', '')} | {num_reason}"
+
+            if not dates_ok:
+                if status == "support":
+                    status = "not_enough_info"
+                eval_res["reasoning"] = f"{eval_res.get('reasoning', '')} | {date_reason}"
 
             statuses.append(status)
             claim_result = {

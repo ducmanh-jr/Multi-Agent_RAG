@@ -16,8 +16,10 @@ from typing import Any
 from core.base_agent import BaseAgent
 from core.state import AgentState, compute_context_hash
 from agents.agent1_retrieval.tools.bm25 import SimpleBM25
+from agents.agent1_retrieval.tools.fts5_search import SQLiteFTS5Searcher
 from agents.agent1_retrieval.tools.hybrid import reciprocal_rank_fusion
 from agents.agent1_retrieval.tools.perspective import generate_research_perspectives
+from agents.agent1_retrieval.tools.router import make_decision, select_tool
 
 
 class RetrievalAgent(BaseAgent):
@@ -25,7 +27,8 @@ class RetrievalAgent(BaseAgent):
 
     def __init__(self, max_internal_retry: int = 2):
         super().__init__(name="RetrievalAgent", max_internal_retry=max_internal_retry)
-        self.bm25 = SimpleBM25()
+        self.fts5_searcher = SQLiteFTS5Searcher()
+        self.bm25_fallback = SimpleBM25()
         self._corpus_loaded = False
         self._load_corpus()
 
@@ -69,9 +72,10 @@ class RetrievalAgent(BaseAgent):
                 },
             ]
 
-        self.bm25.fit(docs)
+        self.fts5_searcher.fit(docs)
+        self.bm25_fallback.fit(docs)
         self._corpus_loaded = True
-        self.logger.info(f"RetrievalAgent: Indexed {len(docs)} documents into BM25 engine.")
+        self.logger.info(f"RetrievalAgent: Indexed {len(docs)} documents into C-Speed FTS5 engine.")
 
     def run(self, state: AgentState) -> dict[str, Any]:
         query = state.get("query", "")
@@ -81,8 +85,29 @@ class RetrievalAgent(BaseAgent):
 
         self.logger.info(f"Running Retrieval for query: '{query}' (retry: {retry_count})")
 
-        # 1. Perspective decomposition & sub-queries
-        perspectives, sub_queries = generate_research_perspectives(query)
+        # 1. Routing decision (integrating Agent 1 fine-tuned router policy)
+        router_decision = make_decision(query, history_trials=[{"is_relevant": False}] if retry_count > 0 else [])
+        chosen_tool = router_decision.get("tool_selected", "dense")
+        self.logger.info(f"Router Policy selected: '{chosen_tool}' - {router_decision.get('thought')}")
+
+        # 2. Query expansion based on chosen strategy
+        perspectives = []
+        sub_queries = []
+
+        if chosen_tool == "decompose":
+            perspectives, sub_queries = generate_research_perspectives(query)
+        elif chosen_tool == "bm25":
+            perspectives = ["Tra cứu từ khóa chính xác"]
+            sub_queries = [query]
+        elif chosen_tool == "hyde":
+            perspectives = ["Giải thích cơ chế chuyên sâu (HyDE)"]
+            sub_queries = [query, f"cơ chế {query}", f"nguyên lý {query}"]
+        elif chosen_tool == "rewrite":
+            perspectives = ["Mở rộng truy vấn làm rõ ngữ nghĩa"]
+            sub_queries = [query, f"tổng quan {query}"]
+        else:
+            # Default / dense
+            perspectives, sub_queries = generate_research_perspectives(query)
 
         # Incorporate queries from evidence gaps if retrying
         for gap in evidence_gaps:
@@ -90,34 +115,46 @@ class RetrievalAgent(BaseAgent):
             if suggested and suggested not in sub_queries:
                 sub_queries.append(suggested)
 
-        # 2. Execute retrieval per sub-query
+        # 3. Execute retrieval per sub-query using native C FTS5 with BM25 fallback
         ranked_runs = []
         for q in sub_queries:
-            bm25_matches = self.bm25.search(q, top_k=self.settings.MAX_RETRIEVED_CHUNKS)
-            if bm25_matches:
-                ranked_runs.append(bm25_matches)
+            matches = self.fts5_searcher.search(q, top_k=self.settings.MAX_RETRIEVED_CHUNKS)
+            if not matches:
+                matches = self.bm25_fallback.search(q, top_k=self.settings.MAX_RETRIEVED_CHUNKS)
+            if matches:
+                ranked_runs.append(matches)
 
-        # 3. Hybrid Reciprocal Rank Fusion
+        # 4. Hybrid Reciprocal Rank Fusion
         fused_docs = reciprocal_rank_fusion(
             ranked_runs if ranked_runs else [[{"text": query, "id": "fallback"}]],
             top_n=self.settings.TOP_K_RERANK,
         )
 
-        # 4. Update cumulative seen_chunks to prevent losing contradiction sources
+        # 5. Update cumulative seen_chunks to prevent losing contradiction sources
         updated_seen_chunks = list(seen_chunks)
         seen_hashes = {c.get("context_hash") for c in updated_seen_chunks if "context_hash" in c}
+        new_chunks_added = 0
         for doc in fused_docs:
             h = doc.get("context_hash")
             if h and h not in seen_hashes:
                 updated_seen_chunks.append(doc)
                 seen_hashes.add(h)
+                new_chunks_added += 1
+
+        no_new_evidence = (retry_count >= 1 and new_chunks_added == 0)
+        if no_new_evidence:
+            self.logger.warning("[Retrieval] Early Stopping triggered: 0 new chunks discovered in retry round.")
 
         trace = self.log_action(
             "hybrid_retrieval_completed",
             {
+                "tool_selected": chosen_tool,
+                "router_thought": router_decision.get("thought"),
                 "sub_queries": sub_queries,
                 "fused_count": len(fused_docs),
                 "total_seen": len(updated_seen_chunks),
+                "new_chunks_added": new_chunks_added,
+                "no_new_evidence": no_new_evidence,
             },
         )
 
@@ -126,6 +163,8 @@ class RetrievalAgent(BaseAgent):
             "perspectives": perspectives,
             "retrieved_docs": fused_docs,
             "seen_chunks": updated_seen_chunks,
-            "retrieval_strategy": "hybrid_rrf",
+            "retrieval_strategy": f"{chosen_tool}_hybrid_rrf",
+            "router_decision": router_decision,
+            "no_new_evidence": no_new_evidence,
             "reasoning_trace": [trace],
         }

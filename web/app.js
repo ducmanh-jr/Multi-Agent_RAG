@@ -126,7 +126,7 @@ function renderDocuments() {
       el(
         "small",
         "",
-        `${document.kind.toUpperCase()} · ${document.chunk_count} đoạn`,
+        `${(document.kind || document.doc_type || 'TXT').toUpperCase()} · ${(document.chunk_count || 1)} đoạn`,
       ),
     );
     row.append(input, text);
@@ -165,7 +165,7 @@ function renderLibrary() {
       el("small", "", document.filename),
     );
     const kind = el("td");
-    kind.append(el("span", "doc-type", document.kind.toUpperCase()));
+    kind.append(el("span", "doc-type", (document.kind || document.doc_type || "TXT").toUpperCase()));
     row.append(
       first,
       kind,
@@ -361,6 +361,11 @@ async function pollRun(runId) {
       setWorking(false);
       if (record.result) {
         renderResult(record.result);
+        switchView("research");
+        setTimeout(() => {
+          $("#results-section")?.scrollIntoView({ behavior: "smooth", block: "start" });
+        }, 150);
+        toast("Nghiên cứu hoàn tất! Đã mở báo cáo kết quả.");
       } else {
         toast(
           record.error || statuses[record.status],
@@ -399,6 +404,7 @@ async function openRun(runId) {
   renderDocuments();
   localStorage.setItem("research-active-run", runId);
   if (record.result) {
+    renderEvents(record.events, record.status, record.result);
     renderResult(record.result);
     setWorking(false);
   } else if (["queued", "running"].includes(record.status))
@@ -828,7 +834,8 @@ function switchView(name) {
     library: "Kho tài liệu",
     history: "Lịch sử phiên",
     experiments: "Thực nghiệm",
-  }[name];
+    settings: "Cài đặt",
+  }[name] || "Cài đặt";
   const menuWasOpen = $("#sidebar").classList.contains("open");
   setSidebarOpen(false);
   if (menuWasOpen) $("#main-content").focus({ preventScroll: true });
@@ -884,6 +891,8 @@ $$(".main-nav .nav-item").forEach((button) =>
     if (button.dataset.view === "history") showHistory();
     if (button.dataset.view === "library")
       refreshDocuments().catch((error) => toast(error.message, true));
+    if (button.dataset.view === "settings")
+      renderSettingsView();
   }),
 );
 ["sidebar-upload", "library-upload", "dropzone"].forEach((id) =>
@@ -1080,6 +1089,10 @@ $("#login-form").addEventListener("submit", async (event) => {
     $("#login-error").textContent = "";
     $("#login-dialog").close();
     await initialize();
+setupUXEnhancements();
+setupSettingsListeners();
+setupRemoteWorkerListeners();
+renderSettingsView();
   } catch (error) {
     $("#login-error").textContent = error.message;
   }
@@ -1094,6 +1107,10 @@ $("#logout-button").addEventListener("click", async () => {
   }
 });
 initialize();
+setupUXEnhancements();
+setupSettingsListeners();
+setupRemoteWorkerListeners();
+renderSettingsView();
 
 $("#architecture-button").addEventListener("click", async () => {
   const root = $("#architecture-content");
@@ -1208,3 +1225,287 @@ $("#rebuild-button").addEventListener("click", async (e) => {
     button.disabled = false;
   }
 });
+
+
+// Quick Prompt Chips & Mode Switch
+function setupUXEnhancements() {
+  $$(".quick-chip").forEach((chip) => {
+    chip.addEventListener("click", () => {
+      const q = $("#question");
+      if (q) {
+        q.value = chip.dataset.prompt;
+        const count = $("#question-count");
+        if (count) count.textContent = `${q.value.length} / 2000`;
+        q.focus();
+      }
+    });
+  });
+
+  const btnGemini = $("#btn-mode-gemini");
+  const btnKaggle = $("#btn-mode-kaggle");
+
+  function updateModeButtons(mode) {
+    btnGemini?.classList.toggle("active", mode === "local_api");
+    btnKaggle?.classList.toggle("active", mode === "kaggle_gpu");
+  }
+
+  btnGemini?.addEventListener("click", async () => {
+    try {
+      const cfg = await api("/config/mode", { method: "POST", body: { mode: "local_api" } });
+      state.config = cfg;
+      renderConfig();
+      updateModeButtons("local_api");
+      toast("Đã chuyển sang chế độ ⚡ Gemini API (1-2s)");
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
+
+  btnKaggle?.addEventListener("click", async () => {
+    try {
+      const cfg = await api("/config/mode", { method: "POST", body: { mode: "kaggle_gpu" } });
+      state.config = cfg;
+      renderConfig();
+      updateModeButtons("kaggle_gpu");
+      toast("Đã chuyển sang chế độ 🚀 Kaggle Dual T4 GPU");
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
+
+  if (state.config?.execution_mode) {
+    updateModeButtons(state.config.execution_mode);
+  }
+}
+
+
+function renderSettingsView() {
+  const cfg = state.config;
+  if (!cfg) return;
+
+  const agentModes = cfg.agent_modes || {};
+  const modelCount = Object.values(agentModes).filter((m) => m === "model").length;
+  const isAllModel = modelCount === 5;
+  const isAllApi = modelCount === 0;
+  const activeModeSummary = isAllModel ? "Kaggle Dual T4 GPU" : (isAllApi ? "Google Gemini Cloud API" : `Hybrid (${5 - modelCount} API, ${modelCount} Model)`);
+
+  const modelName = $("#settings-model-name");
+  if (modelName) modelName.textContent = activeModeSummary;
+
+  const stProvider = $("#st-provider");
+  if (stProvider) stProvider.textContent = isAllApi ? "Google Gemini API" : (isAllModel ? "Kaggle Dual T4 (Qwen2.5 + DocLayNet)" : "Tích hợp Hybrid Đa nền tảng");
+
+  const stModel = $("#st-model");
+  if (stModel) stModel.textContent = cfg.default_model || "gemini-3.1-flash-lite";
+
+  const stFallback = $("#st-fallback");
+  if (stFallback) stFallback.textContent = "Qwen2.5-7B LoRA / gemini-3-flash-preview";
+
+  const remoteInput = $("#input-remote-url");
+  if (remoteInput && !remoteInput.value) {
+    remoteInput.value = cfg.remote_worker || "";
+  }
+  checkTunnelStatus();
+
+  // Render Per-Agent Modes
+  const agentModes = cfg.agent_modes || {};
+  const agentDescriptions = {
+    retrieval: {
+      api: "⚡ Gemini API (Decomposition)",
+      model: "🚀 Qwen-7B Router LoRA (Kaggle T4)",
+    },
+    reader: {
+      api: "⚡ PyMuPDF & Gemini Guardrail",
+      model: "🚀 LayoutLMv3 DocLayNet (Segmentation)",
+    },
+    summarizer: {
+      api: "⚡ Gemini API (Generator & Critic)",
+      model: "🚀 Generator-Critic LoRA (Dual T4)",
+    },
+    factchecker: {
+      api: "⚡ Gemini NLI & Numeric Verifier",
+      model: "🚀 Qwen-3B SciFact (GPU 1)",
+    },
+    writer: {
+      api: "⚡ Gemini API (Academic Synthesis)",
+      model: "🚀 Qwen2.5-7B Instruct (GPU 0)",
+    },
+  };
+
+  Object.entries(agentModes).forEach(([agent, curMode]) => {
+    const row = document.querySelector(`.agent-mode-row[data-agent="${agent}"]`);
+    if (row) {
+      row.querySelectorAll(".btn-agent-mode").forEach((btn) => {
+        btn.classList.toggle("active", btn.dataset.mode === curMode);
+      });
+      const descEl = document.getElementById(`desc-${agent}`);
+      if (descEl && agentDescriptions[agent]) {
+        descEl.textContent = `Đang dùng: ${agentDescriptions[agent][curMode] || curMode.toUpperCase()}`;
+      }
+    }
+  });
+}
+
+function setupSettingsListeners() {
+  const radios = document.querySelectorAll('input[name="exec-mode"]');
+  radios.forEach((radio) => {
+    radio.addEventListener("change", async (e) => {
+      const newMode = e.target.value;
+      try {
+        const updated = await api("/config/mode", { method: "POST", body: { mode: newMode } });
+        state.config = updated;
+        renderConfig();
+        renderSettingsView();
+        const modeLabel = newMode === "local_api" ? "⚡ Google Gemini API" : "🚀 Kaggle Dual T4 GPU";
+        toast(`Đã chuyển thành công sang ${modeLabel}`);
+      } catch (err) {
+        toast(err.message, true);
+      }
+    });
+  });
+
+  $("#btn-settings-clear-cache")?.addEventListener("click", async () => {
+    try {
+      await api("/cache/clear", { method: "POST" });
+      toast("Đã xóa sạch bộ nhớ đệm LLM Cache!");
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
+
+  $("#btn-settings-rebuild-fts")?.addEventListener("click", async () => {
+    try {
+      const res = await api("/documents/rebuild", { method: "POST" });
+      toast(`Đã tái tạo chỉ mục C-Speed FTS5 (${res.chunks_updated || 8} đoạn)!`);
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
+
+  // Per-Agent Mode Toggle Buttons
+  document.querySelectorAll(".btn-agent-mode").forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
+      const agent = btn.dataset.agent;
+      const mode = btn.dataset.mode;
+      try {
+        const res = await api("/config/agents", {
+          method: "POST",
+          body: { agent, mode },
+        });
+        state.config = res.config;
+        renderSettingsView();
+        const modeTitle = mode === "api" ? "⚡ Cloud API" : "🚀 Model / LoRA";
+        toast(`Đã chuyển ${agent.toUpperCase()} sang ${modeTitle} (Tự động ghi vào .env)!`);
+      } catch (err) {
+        toast(err.message, true);
+      }
+    });
+  });
+
+  // Presets
+  const applyPreset = async (presetModes, label) => {
+    try {
+      const res = await api("/config/agents", {
+        method: "POST",
+        body: { agent_modes: presetModes },
+      });
+      state.config = res.config;
+      renderSettingsView();
+      toast(`Đã áp dụng cấu hình: ${label} (Đã lưu .env)!`);
+    } catch (err) {
+      toast(err.message, true);
+    }
+  };
+
+  $("#preset-all-api")?.addEventListener("click", () => {
+    applyPreset({
+      retrieval: "api",
+      reader: "api",
+      summarizer: "api",
+      factchecker: "api",
+      writer: "api",
+    }, "⚡ Toàn bộ API (Gemini Cloud)");
+  });
+
+  $("#preset-all-model")?.addEventListener("click", () => {
+    applyPreset({
+      retrieval: "model",
+      reader: "model",
+      summarizer: "model",
+      factchecker: "model",
+      writer: "model",
+    }, "🚀 Toàn bộ Model (Kaggle Dual T4)");
+  });
+
+  $("#preset-hybrid")?.addEventListener("click", () => {
+    applyPreset({
+      retrieval: "model",
+      reader: "api",
+      summarizer: "model",
+      factchecker: "model",
+      writer: "api",
+    }, "⚖️ Hybrid Tối ưu (Router & Generator Model, Reader & Writer API)");
+  });
+}
+
+
+async function checkTunnelStatus() {
+  const badge = $("#tunnel-status");
+  if (!badge) return;
+  badge.textContent = "Đang kiểm tra kết nối...";
+  badge.className = "tunnel-status-badge";
+  try {
+    const res = await api("/config/remote-url/test");
+    if (res.is_online) {
+      badge.textContent = `🟢 ${res.details}`;
+      badge.className = "tunnel-status-badge online";
+    } else {
+      badge.textContent = `🔴 Offline - ${res.details}`;
+      badge.className = "tunnel-status-badge offline";
+    }
+  } catch (err) {
+    badge.textContent = "🔴 Không phản hồi";
+    badge.className = "tunnel-status-badge offline";
+  }
+}
+
+function setupRemoteWorkerListeners() {
+  $("#btn-save-remote-url")?.addEventListener("click", async () => {
+    const val = $("#input-remote-url")?.value?.trim();
+    if (!val) {
+      toast("Vui lòng nhập đường dẫn URL Cloudflare Tunnel hợp lệ.", true);
+      return;
+    }
+    const btn = $("#btn-save-remote-url");
+    btn.disabled = true;
+    btn.textContent = "Đang lưu...";
+    try {
+      const res = await api("/config/remote-url", {
+        method: "POST",
+        body: { remote_url: val },
+      });
+      state.config = res.config;
+      renderConfig();
+      toast(res.is_online ? "Đã lưu vào .env và kết nối Kaggle GPU thành công!" : `Đã lưu vào .env (${res.details})`);
+      await checkTunnelStatus();
+    } catch (err) {
+      toast(err.message, true);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Lưu & Tự động ghi vào .env";
+    }
+  });
+
+  $("#btn-test-remote-url")?.addEventListener("click", async () => {
+    const btn = $("#btn-test-remote-url");
+    btn.disabled = true;
+    btn.textContent = "Đang test...";
+    try {
+      await checkTunnelStatus();
+      toast("Kiểm tra kết nối Kaggle hoàn tất.");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Kiểm tra kết nối";
+    }
+  });
+}

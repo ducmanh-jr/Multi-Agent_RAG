@@ -138,4 +138,5 @@ class AgentState(TypedDict, total=False):
     retry_count: int  # Outer retry count (capped at MAX_ORCHESTRATOR_RETRY)
     factcheck_calls: int  # Total fact-check evaluations across whole task
     confidence: Literal["high", "low"]
+    no_new_evidence: bool  # Early stopping flag when retry yields no new chunks
     reasoning_trace: Annotated[list[dict[str, Any]], operator.add]

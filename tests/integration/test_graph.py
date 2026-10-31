@@ -41,3 +41,15 @@ def test_graph_escalation_flow():
     result = app.invoke(initial_state)
     assert result.get("confidence") in ["high", "low"]
     assert "reasoning_trace" in result
+
+
+def test_graph_early_stopping_flow():
+    """Kiểm tra khi retry_count >= 1 và no_new_evidence=True -> Early Stopping kích hoạt sang EscalationNode."""
+    from core.graph import route_after_fact_check
+    state = {
+        "fact_check_label": "not_enough_info",
+        "retry_count": 1,
+        "no_new_evidence": True,
+    }
+    destination = route_after_fact_check(state)
+    assert destination == "escalation_node"

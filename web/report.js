@@ -143,8 +143,16 @@ export function renderEvents(events, status, result = null) {
   if (emptyState) emptyState.hidden = events.length > 0;
   const eventCount = $("#trace-count");
   if (eventCount) eventCount.textContent = `${events.length} sự kiện`;
-  $("#back-research").textContent =
-    status === "completed" ? "Xem kết quả nghiên cứu" : "Về câu hỏi";
+  const backBtn = $("#back-research");
+  if (backBtn) {
+    if (status === "completed") {
+      backBtn.innerHTML = '<span>📄 Xem Báo Cáo Kết Quả</span>';
+      backBtn.className = "primary-button";
+    } else {
+      backBtn.textContent = "Về câu hỏi";
+      backBtn.className = "secondary-button";
+    }
+  }
   const latest = new Map();
   for (const event of events) latest.set(event.agent, event);
   $$(".agent-node").forEach((node) => {
@@ -174,7 +182,7 @@ export function renderEvents(events, status, result = null) {
     }
   });
   const statusLabel = $("#pipeline-status");
-  statusLabel.textContent = outcome.label.toUpperCase();
+  statusLabel.textContent = (outcome && outcome.label ? outcome.label : (status || "READY")).toUpperCase();
   statusLabel.dataset.status = outcome.partial ? "partial" : status || "ready";
   statusLabel.classList.toggle(
     "running",

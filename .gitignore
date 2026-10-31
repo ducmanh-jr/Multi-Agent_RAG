@@ -21,6 +21,8 @@ uploads/*
 !uploads/.gitkeep
 artifacts/*
 !artifacts/.gitkeep
+data/*.db
+data/*.sqlite*
 
 # Large Model Weights and Checkpoints
 **/checkpoints/

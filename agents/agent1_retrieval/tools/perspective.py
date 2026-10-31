@@ -31,7 +31,7 @@ YÊU CẦU TRẢ VỀ ĐÚNG ĐỊNH DẠNG JSON (không kèm markdown):
 }}
 """
     try:
-        data = llm_client.generate_json(prompt)
+        data = llm_client.generate_json(prompt, agent="retrieval")
         perspectives = data.get("perspectives", ["Tổng quan phương pháp", "Kết quả thực nghiệm"])
         sub_queries = data.get("sub_queries", [query])
         if query not in sub_queries:

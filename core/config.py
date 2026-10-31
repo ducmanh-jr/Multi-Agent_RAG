@@ -10,7 +10,12 @@ import os
 from dataclasses import dataclass, field
 from dotenv import load_dotenv
 
-load_dotenv()
+_project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_env_path = os.path.join(_project_root, ".env")
+if os.path.exists(_env_path):
+    load_dotenv(_env_path)
+else:
+    load_dotenv()
 
 
 @dataclass
@@ -24,7 +29,60 @@ class Settings:
     REMOTE_INFERENCE_URL: str = field(
         default_factory=lambda: os.getenv("REMOTE_INFERENCE_URL", "").rstrip("/")
     )
-    REMOTE_TIMEOUT_SECONDS: int = int(os.getenv("REMOTE_TIMEOUT_SECONDS", "300"))
+    REMOTE_TIMEOUT_SECONDS: int = int(os.getenv("REMOTE_TIMEOUT_SECONDS", "15"))
+
+    # Granular Per-Agent Execution Modes: "api" | "model"
+    AGENT_RETRIEVAL_MODE: str = field(
+        default_factory=lambda: os.getenv("AGENT_RETRIEVAL_MODE", "api").lower()
+    )
+    AGENT_READER_MODE: str = field(
+        default_factory=lambda: os.getenv("AGENT_READER_MODE", "api").lower()
+    )
+    AGENT_SUMMARIZER_MODE: str = field(
+        default_factory=lambda: os.getenv("AGENT_SUMMARIZER_MODE", "api").lower()
+    )
+    AGENT_FACTCHECKER_MODE: str = field(
+        default_factory=lambda: os.getenv("AGENT_FACTCHECKER_MODE", "api").lower()
+    )
+    AGENT_WRITER_MODE: str = field(
+        default_factory=lambda: os.getenv("AGENT_WRITER_MODE", "api").lower()
+    )
+
+    def get_agent_mode(self, agent_name: str) -> str:
+        """Returns 'api' or 'model' for the specified agent."""
+        clean_name = agent_name.lower().replace("agent", "").replace("_", "").strip()
+        name_map = {
+            "retrieval": "AGENT_RETRIEVAL_MODE",
+            "reader": "AGENT_READER_MODE",
+            "summarizer": "AGENT_SUMMARIZER_MODE",
+            "factchecker": "AGENT_FACTCHECKER_MODE",
+            "writer": "AGENT_WRITER_MODE",
+        }
+        attr = name_map.get(clean_name, f"AGENT_{clean_name.upper()}_MODE")
+        return getattr(self, attr, "api")
+
+    def set_agent_mode(self, agent_name: str, mode: str):
+        """Sets 'api' or 'model' for the specified agent."""
+        clean_name = agent_name.lower().replace("agent", "").replace("_", "").strip()
+        name_map = {
+            "retrieval": "AGENT_RETRIEVAL_MODE",
+            "reader": "AGENT_READER_MODE",
+            "summarizer": "AGENT_SUMMARIZER_MODE",
+            "factchecker": "AGENT_FACTCHECKER_MODE",
+            "writer": "AGENT_WRITER_MODE",
+        }
+        attr = name_map.get(clean_name, f"AGENT_{clean_name.upper()}_MODE")
+        if hasattr(self, attr):
+            setattr(self, attr, mode.lower())
+
+    def get_all_agent_modes(self) -> dict[str, str]:
+        return {
+            "retrieval": self.AGENT_RETRIEVAL_MODE,
+            "reader": self.AGENT_READER_MODE,
+            "summarizer": self.AGENT_SUMMARIZER_MODE,
+            "factchecker": self.AGENT_FACTCHECKER_MODE,
+            "writer": self.AGENT_WRITER_MODE,
+        }
 
     # API Keys for Cloud Foundation Models
     GEMINI_API_KEY: str = field(default_factory=lambda: os.getenv("GEMINI_API_KEY", ""))
@@ -34,10 +92,10 @@ class Settings:
 
     # Foundation LLM Models
     DEFAULT_LLM_MODEL: str = field(
-        default_factory=lambda: os.getenv("DEFAULT_LLM_MODEL", "gemini-2.5-flash")
+        default_factory=lambda: os.getenv("DEFAULT_LLM_MODEL", "gemini-3.1-flash-lite")
     )
     FALLBACK_LLM_MODEL: str = field(
-        default_factory=lambda: os.getenv("FALLBACK_LLM_MODEL", "deepseek-chat")
+        default_factory=lambda: os.getenv("FALLBACK_LLM_MODEL", "gemini-3-flash-preview")
     )
 
     # Embedding & Retrieval Models
