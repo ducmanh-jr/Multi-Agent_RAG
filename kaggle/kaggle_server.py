@@ -35,6 +35,9 @@ _loaded_adapters: list[str] = []
 def find_adapter_path(sub_path: str) -> Optional[str]:
     """Search common Kaggle and local paths for fine-tuned weights."""
     candidates = [
+        Path("/kaggle/working/drive_download") / sub_path,
+        Path("/kaggle/working/drive_download/drive") / sub_path,
+        Path("/kaggle/working/Multi-Agent_RAG/kaggle/drive") / sub_path,
         Path("/kaggle/working/Multi-Agent_RAG/main/weights") / sub_path,
         Path.cwd() / "main" / "weights" / sub_path,
         Path("./main/weights") / sub_path,
@@ -100,8 +103,8 @@ def load_generator_model():
     try:
         from peft import PeftModel
 
-        generator_path = os.getenv("GENERATOR_LORA_PATH") or find_adapter_path("agent3_summarizer/Weights/generator_qlora/final") or find_adapter_path("agent3/Weights/generator_qlora/final")
-        critic_path = os.getenv("CRITIC_LORA_PATH") or find_adapter_path("agent3_summarizer/Weights/critic_qlora/final") or find_adapter_path("agent3/Weights/critic_qlora/final")
+        generator_path = os.getenv("GENERATOR_LORA_PATH") or find_adapter_path("generator_qlora/final") or find_adapter_path("generator_qlora") or find_adapter_path("agent3_summarizer/Weights/generator_qlora/final") or find_adapter_path("agent3/Weights/generator_qlora/final")
+        critic_path = os.getenv("CRITIC_LORA_PATH") or find_adapter_path("critic_qlora/final") or find_adapter_path("critic_qlora") or find_adapter_path("agent3_summarizer/Weights/critic_qlora/final") or find_adapter_path("agent3/Weights/critic_qlora/final")
         router_path = os.getenv("ROUTER_LORA_PATH") or find_adapter_path("agent1_router") or find_adapter_path("agent1_retrieval/retrieval_router_critique_qlora/final") or find_adapter_path("agent1/retrieval_router_critique_qlora/final")
 
         peft_attached = False
