@@ -10,7 +10,8 @@ venv/
 .DS_Store
 Thumbs.db
 
-# Local SQLite runtime databases (auto-generated on startup)
+# Local Google Drive staging bundle
+drive/
 main/data/*.db
 main/data/*.sqlite*
 
