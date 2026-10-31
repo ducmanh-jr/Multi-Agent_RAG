@@ -153,6 +153,10 @@
           <button class="nav-item" data-view="settings">
             <svg><use href="#i-settings" /></svg>Cài đặt
           </button>
+          <button class="nav-item" data-view="pipeline">
+            <svg><use href="#i-stack" /></svg>Quy trình
+            <span class="count highlight-badge">AGENT 1</span>
+          </button>
         </nav>
         <div class="sidebar-section-heading">
           <span>TÀI LIỆU TRONG PHIÊN</span
@@ -1111,6 +1115,195 @@
                   <p id="settings-diag-info" class="diag-text">Hệ thống đang hoạt động tối ưu.</p>
                 </div>
               </article>
+            </div>
+          </section>
+
+          <!-- VIEW PIPELINE (QUY TRÌNH ĐA TÁC TỬ - AGENT 1 STUDIO) -->
+          <section id="view-pipeline" class="view" hidden>
+            <div class="simple-heading">
+              <div class="eyebrow">INTERACTIVE AGENT 1 STUDIO</div>
+              <h1>Quy trình Đa tác tử — Thử nghiệm Agent 1 (Retrieval & Router)</h1>
+              <p>
+                Trải nghiệm độc lập từng quyết định điều phối công cụ, phân rã đa chiều Stanford STORM và trích xuất FTS5/BM25 của Agent 1.
+              </p>
+            </div>
+
+            <div class="pipeline-studio-layout">
+              <!-- Cột điều khiển & Form nhập -->
+              <div class="pipeline-control-card">
+                <div class="pipe-header">
+                  <h3>⚙️ Thiết lập & Chọn Chế độ Thực thi</h3>
+                  <p>Hệ thống tự động kiểm tra trạng thái sống của từng chế độ trước khi chạy.</p>
+                </div>
+
+                <!-- Bộ chọn 3 chế độ -->
+                <div class="pipe-modes-wrapper">
+                  <div class="pipe-mode-btn-group" role="radiogroup" aria-label="Chế độ Agent 1">
+                    <button type="button" class="pipe-mode-btn active" data-mode="cpu" id="pipe-btn-cpu">
+                      <div class="pipe-mode-icon">💻</div>
+                      <div class="pipe-mode-info">
+                        <strong>Local CPU</strong>
+                        <small>FTS5 C-Engine + Heuristic</small>
+                      </div>
+                      <span class="pipe-status-pill status-ready" id="pipe-status-cpu">🟢 Sẵn sàng</span>
+                    </button>
+
+                    <button type="button" class="pipe-mode-btn" data-mode="api" id="pipe-btn-api">
+                      <div class="pipe-mode-icon">☁️</div>
+                      <div class="pipe-mode-info">
+                        <strong>Cloud API</strong>
+                        <small>Google Gemini Flash</small>
+                      </div>
+                      <span class="pipe-status-pill status-checking" id="pipe-status-api">Đang kiểm tra...</span>
+                    </button>
+
+                    <button type="button" class="pipe-mode-btn" data-mode="model" id="pipe-btn-model">
+                      <div class="pipe-mode-icon">🚀</div>
+                      <div class="pipe-mode-info">
+                        <strong>Kaggle GPU</strong>
+                        <small>Qwen2.5-7B LoRA</small>
+                      </div>
+                      <span class="pipe-status-pill status-checking" id="pipe-status-model">Đang kiểm tra...</span>
+                    </button>
+                  </div>
+                </div>
+
+                <!-- Banner cảnh báo khi chế độ chưa kích hoạt -->
+                <div id="pipe-mode-warning-banner" class="pipe-warning-banner" hidden>
+                  <div class="pipe-warning-icon">⚠️</div>
+                  <div class="pipe-warning-content">
+                    <strong id="pipe-warning-title">Chế độ chưa kích hoạt</strong>
+                    <p id="pipe-warning-desc">Thông báo chi tiết trạng thái.</p>
+                  </div>
+                  <button type="button" class="pipe-warning-action" id="pipe-btn-goto-settings">Mở Cài đặt</button>
+                </div>
+
+                <!-- Form nhập câu hỏi -->
+                <div class="pipe-form-group">
+                  <label for="pipe-query-input"><strong>Câu hỏi kiểm thử cho Agent 1:</strong></label>
+                  <textarea
+                    id="pipe-query-input"
+                    class="pipe-textarea"
+                    rows="3"
+                    placeholder="Nhập câu hỏi nghiên cứu bất kỳ, ví dụ: 'What is LoRA and how does it reduce memory?' hoặc 'So sánh sự khác nhau giữa LoRA và QLoRA...'"
+                  >What is LoRA and how does it reduce memory?</textarea>
+                </div>
+
+                <!-- Câu hỏi mẫu gợi ý -->
+                <div class="pipe-chips-row">
+                  <span class="pipe-chips-label">Câu hỏi mẫu:</span>
+                  <button type="button" class="pipe-chip" data-query="What is LoRA and how does it reduce memory?">⚡ Acronym/Từ khóa (LoRA)</button>
+                  <button type="button" class="pipe-chip" data-query="So sánh sự khác nhau giữa LoRA và QLoRA về chi phí tính toán và bộ nhớ VRAM">⚖️ So sánh (LoRA vs QLoRA)</button>
+                  <button type="button" class="pipe-chip" data-query="Tại sao cơ chế Attention Is All You Need lại giúp tăng tốc độ huấn luyện song song?">🔬 Nguyên lý (Why Attention?)</button>
+                  <button type="button" class="pipe-chip" data-query="mấy cái thứ về transformer">🔍 Truy vấn mơ hồ</button>
+                </div>
+
+                <!-- Tùy chọn nâng cao -->
+                <div class="pipe-options-row">
+                  <label class="pipe-checkbox-label">
+                    <input type="checkbox" id="pipe-mock-gap" />
+                    <span>Giả lập vòng thử lại (Retry Round 1) kèm khoảng trống bằng chứng (Evidence Gap)</span>
+                  </label>
+                  <button type="button" class="pipe-refresh-status-btn" id="pipe-btn-refresh-status" title="Kiểm tra lại kết nối các chế độ">
+                    🔄 Làm mới trạng thái
+                  </button>
+                </div>
+
+                <!-- Nút chạy chính -->
+                <div class="pipe-action-row">
+                  <button type="button" class="primary-button pipe-submit-btn" id="btn-pipe-execute">
+                    <svg><use href="#i-search" /></svg>
+                    <span>Chạy Thử Nghiệm Agent 1</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Khu vực hiển thị kết quả -->
+              <div class="pipeline-results-area" id="pipe-results-area">
+                <!-- Placeholder ban đầu -->
+                <div class="pipe-empty-state" id="pipe-empty-state">
+                  <div class="pipe-empty-icon">🔬</div>
+                  <h3>Chưa có kết quả chạy thử nghiệm</h3>
+                  <p>Chọn chế độ và nhấn <strong>"Chạy Thử Nghiệm Agent 1"</strong> để quan sát quá trình ra quyết định, phân rã câu hỏi và trích xuất tài liệu theo thời gian thực.</p>
+                </div>
+
+                <!-- Loading Spinner -->
+                <div class="pipe-loading-state" id="pipe-loading-state" hidden>
+                  <div class="pipe-spinner"></div>
+                  <h4>Agent 1 đang phân tích câu hỏi & truy xuất...</h4>
+                  <p id="pipe-loading-hint">Đang kiểm tra FTS5 và chạy thuật toán xếp hạng RRF</p>
+                </div>
+
+                <!-- Kết quả chi tiết sau khi chạy -->
+                <div class="pipe-output-container" id="pipe-output-container" hidden>
+                  <!-- Metrics Bar -->
+                  <div class="pipe-metrics-grid">
+                    <div class="pipe-metric-card">
+                      <span class="metric-label">Chiến lược Router</span>
+                      <strong class="metric-value metric-tool" id="res-tool-selected">BM25</strong>
+                    </div>
+                    <div class="pipe-metric-card">
+                      <span class="metric-label">Thời gian thực thi</span>
+                      <strong class="metric-value metric-latency" id="res-latency">0.45 ms</strong>
+                    </div>
+                    <div class="pipe-metric-card">
+                      <span class="metric-label">Chế độ đã dùng</span>
+                      <strong class="metric-value" id="res-mode-used">Local CPU</strong>
+                    </div>
+                    <div class="pipe-metric-card">
+                      <span class="metric-label">Tài liệu trích xuất</span>
+                      <strong class="metric-value" id="res-total-retrieved">5 chunks</strong>
+                    </div>
+                  </div>
+
+                  <!-- Thẻ 1: Suy luận Router & Tự phê bình -->
+                  <div class="pipe-result-box">
+                    <div class="result-box-header">
+                      <h4>🧠 1. Quyết định Điều phối & Tự phê bình (Router & Critique)</h4>
+                      <span class="pipe-critique-pill" id="res-critique-badge">Đạt yêu cầu</span>
+                    </div>
+                    <div class="result-box-body">
+                      <div class="pipe-field-group">
+                        <label>Lý do lựa chọn công cụ (Thought):</label>
+                        <blockquote id="res-router-thought">Đang phân tích...</blockquote>
+                      </div>
+                      <div class="pipe-field-group">
+                        <label>Đánh giá tự phê bình (Critique Reason):</label>
+                        <p id="res-critique-reason" class="pipe-critique-text">Đang đối soát...</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Thẻ 2: Phân rã Đa chiều Stanford STORM -->
+                  <div class="pipe-result-box">
+                    <div class="result-box-header">
+                      <h4>🌐 2. Phân rã Đa chiều (Stanford STORM Perspectives & Sub-queries)</h4>
+                      <span class="pipe-count-tag" id="res-perspectives-count">3 góc nhìn</span>
+                    </div>
+                    <div class="result-box-body">
+                      <div class="pipe-field-group">
+                        <label>Các góc nhìn học thuật (Perspectives):</label>
+                        <div id="res-perspectives-chips" class="pipe-perspectives-container"></div>
+                      </div>
+                      <div class="pipe-field-group">
+                        <label>Các câu truy vấn con chuyên biệt (Sub-queries):</label>
+                        <ul id="res-subqueries-list" class="pipe-subqueries-ul"></ul>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Thẻ 3: Tài liệu Trích xuất & Dung hợp RRF -->
+                  <div class="pipe-result-box">
+                    <div class="result-box-header">
+                      <h4>📚 3. Tài liệu Trích xuất & Điểm xếp hạng Dung hợp (Hybrid RRF)</h4>
+                      <span class="pipe-count-tag" id="res-docs-count">5 kết quả</span>
+                    </div>
+                    <div class="result-box-body">
+                      <div id="res-docs-list" class="pipe-docs-flow"></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           </section>
           <section id="view-history" class="view" hidden>

@@ -747,6 +747,175 @@ async def execute_research_stream(req: DirectResearchRequest):
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
+# ==================== PIPELINE / AGENT 1 PLAYGROUND ====================
+
+class Agent1PlaygroundRequest(BaseModel):
+    query: str
+    mode: str = "cpu"  # "cpu" | "api" | "model"
+    retry_count: int = 0
+    mock_evidence_gap: bool = False
+
+
+@app.get("/api/pipeline/agent1/status")
+async def get_agent1_pipeline_status():
+    """Checks live connectivity and availability for all 3 execution modes of Agent 1."""
+    # 1. CPU Mode
+    cpu_test = await test_local_cpu()
+    cpu_info = {
+        "mode": "cpu",
+        "name": "Local CPU",
+        "available": True,
+        "is_online": True,
+        "detail": "SQLite FTS5 C-Engine + Heuristic Router sẵn sàng 100% (Offline)." + (f" Ollama: {cpu_test.get('details')}" if cpu_test.get("is_online") else " (Ollama chưa bật)"),
+    }
+
+    # 2. API Mode
+    has_gemini = bool(settings.GEMINI_API_KEY and len(settings.GEMINI_API_KEY.strip()) > 5)
+    api_info = {
+        "mode": "api",
+        "name": "Cloud API (Gemini)",
+        "available": has_gemini,
+        "is_online": has_gemini,
+        "detail": f"Đã cấu hình key ({settings.DEFAULT_LLM_MODEL})" if has_gemini else "Chưa cấu hình GEMINI_API_KEY trong file .env.",
+    }
+
+    # 3. Model / Kaggle GPU Mode
+    remote_test = await test_remote_url()
+    model_online = remote_test.get("is_online", False)
+    model_info = {
+        "mode": "model",
+        "name": "Kaggle Dual T4 GPU",
+        "available": model_online,
+        "is_online": model_online,
+        "worker_url": settings.REMOTE_INFERENCE_URL or "",
+        "detail": remote_test.get("details", "Chưa kết nối Kaggle Worker"),
+    }
+
+    return {
+        "modes": {
+            "cpu": cpu_info,
+            "api": api_info,
+            "model": model_info,
+        },
+        "current_configured_mode": settings.get_agent_mode("retrieval"),
+    }
+
+
+@app.post("/api/pipeline/agent1/run")
+async def run_agent1_playground(req: Agent1PlaygroundRequest):
+    """Executes isolated Agent 1 (Retrieval & Router) pipeline with full observability."""
+    clean_query = req.query.strip()
+    if not clean_query:
+        raise HTTPException(status_code=400, detail="Câu hỏi không được để trống.")
+
+    selected_mode = req.mode.lower()
+    if selected_mode not in ("cpu", "api", "model"):
+        selected_mode = "cpu"
+
+    # Pre-flight health check for requested mode
+    if selected_mode == "model":
+        remote_test = await test_remote_url()
+        if not remote_test.get("is_online", False):
+            return {
+                "success": False,
+                "error_code": "MODE_INACTIVE",
+                "message": (
+                    "⚠️ Chế độ Kaggle GPU chưa được kích hoạt hoặc Worker đang offline!\n"
+                    f"Chi tiết: {remote_test.get('details', 'Chưa cấu hình REMOTE_INFERENCE_URL')}.\n"
+                    "👉 Vui lòng khởi động Notebook trên Kaggle và dán URL vào Cài đặt, hoặc chọn chế độ 'Local CPU' / 'Cloud API'."
+                ),
+                "mode": selected_mode,
+            }
+
+    elif selected_mode == "api":
+        if not settings.GEMINI_API_KEY or len(settings.GEMINI_API_KEY.strip()) < 5:
+            return {
+                "success": False,
+                "error_code": "MODE_INACTIVE",
+                "message": (
+                    "⚠️ Chế độ Cloud API chưa được kích hoạt!\n"
+                    "Chưa tìm thấy GEMINI_API_KEY hợp lệ trong file .env.\n"
+                    "👉 Vui lòng thêm GEMINI_API_KEY vào .env hoặc chuyển sang chế độ 'Local CPU'."
+                ),
+                "mode": selected_mode,
+            }
+
+    # Temporarily set the agent mode for retrieval to selected_mode
+    original_mode = settings.get_agent_mode("retrieval")
+    settings.set_agent_mode("retrieval", selected_mode)
+
+    try:
+        import time
+        from agents.agent1_retrieval.node import RetrievalAgent
+
+        agent = RetrievalAgent()
+
+        evidence_gaps = []
+        if req.mock_evidence_gap:
+            evidence_gaps.append({
+                "claim": f"Bằng chứng còn thiếu cho: {clean_query}",
+                "suggested_query": f"cơ sở phương pháp {clean_query}",
+            })
+
+        state = {
+            "query": clean_query,
+            "retry_count": req.retry_count,
+            "evidence_gaps": evidence_gaps,
+            "seen_chunks": [],
+        }
+
+        start_time = time.perf_counter()
+        result = await asyncio.to_thread(agent.run, state)
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
+
+        router_decision = result.get("router_decision", {})
+        sub_queries = result.get("sub_queries", [clean_query])
+        perspectives = result.get("perspectives", [])
+        retrieved_docs = result.get("retrieved_docs", [])
+        seen_chunks = result.get("seen_chunks", [])
+        no_new_evidence = result.get("no_new_evidence", False)
+
+        formatted_docs = []
+        for d in retrieved_docs:
+            formatted_docs.append({
+                "id": d.get("id", ""),
+                "doc_id": d.get("doc_id", "Tài liệu"),
+                "title": d.get("title", ""),
+                "page_no": d.get("page_no", 1),
+                "rrf_score": d.get("rrf_score", 0.0),
+                "context_hash": d.get("context_hash", ""),
+                "text": d.get("text", "")[:400],
+            })
+
+        return {
+            "success": True,
+            "mode_used": selected_mode,
+            "latency_ms": round(elapsed_ms, 2),
+            "router_decision": {
+                "tool_selected": router_decision.get("tool_selected", "bm25"),
+                "thought": router_decision.get("thought", ""),
+                "critique_is_relevant": router_decision.get("critique_is_relevant", True),
+                "critique_reason": router_decision.get("critique_reason", ""),
+            },
+            "perspectives": perspectives,
+            "sub_queries": sub_queries,
+            "retrieved_docs": formatted_docs,
+            "total_retrieved": len(retrieved_docs),
+            "total_seen": len(seen_chunks),
+            "no_new_evidence": no_new_evidence,
+        }
+
+    except Exception as e:
+        return {
+            "success": False,
+            "error_code": "EXECUTION_ERROR",
+            "message": f"Lỗi trong quá trình chạy Agent 1: {str(e)}",
+            "mode": selected_mode,
+        }
+    finally:
+        settings.set_agent_mode("retrieval", original_mode)
+
+
 
 # Mount static Web Workspace UI & Assets
 web_dir = os.path.join(settings.BASE_DIR, "web")

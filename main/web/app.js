@@ -32,6 +32,8 @@ async function initialize() {
     $("#workflow-profile").value = config.workflow_profile || "balanced";
     renderDocuments();
     $("#connection-label").textContent = "Backend đã kết nối";
+    initPipelineStudio();
+    checkPipelineStatus();
     const saved = localStorage.getItem("research-active-run");
     if (saved) {
       try {
@@ -835,7 +837,11 @@ function switchView(name) {
     history: "Lịch sử phiên",
     experiments: "Thực nghiệm",
     settings: "Cài đặt",
+    pipeline: "Quy trình",
   }[name] || "Cài đặt";
+  if (name === "pipeline") {
+    checkPipelineStatus();
+  }
   const menuWasOpen = $("#sidebar").classList.contains("open");
   setSidebarOpen(false);
   if (menuWasOpen) $("#main-content").focus({ preventScroll: true });
@@ -893,6 +899,8 @@ $$(".main-nav .nav-item").forEach((button) =>
       refreshDocuments().catch((error) => toast(error.message, true));
     if (button.dataset.view === "settings")
       renderSettingsView();
+    if (button.dataset.view === "pipeline")
+      checkPipelineStatus();
   }),
 );
 ["sidebar-upload", "library-upload", "dropzone"].forEach((id) =>
@@ -1589,6 +1597,246 @@ function setupRemoteWorkerListeners() {
     } finally {
       btn.disabled = false;
       btn.textContent = "Kiểm tra kết nối";
+    }
+  });
+}
+
+
+/* ==================== PIPELINE / AGENT 1 STUDIO LOGIC ==================== */
+
+let pipeSelectedMode = "cpu";
+let pipeModesStatus = {
+  cpu: { available: true, is_online: true },
+  api: { available: false, is_online: false },
+  model: { available: false, is_online: false },
+};
+
+function escapePipeHtml(text) {
+  const div = document.createElement("div");
+  div.textContent = text || "";
+  return div.innerHTML;
+}
+
+async function checkPipelineStatus() {
+  const cpuPill = $("#pipe-status-cpu");
+  const apiPill = $("#pipe-status-api");
+  const modelPill = $("#pipe-status-model");
+  if (!cpuPill) return;
+
+  try {
+    const data = await api("/pipeline/agent1/status");
+    if (data && data.modes) {
+      pipeModesStatus = data.modes;
+
+      // 1. CPU
+      cpuPill.textContent = "🟢 Sẵn sàng 100%";
+      cpuPill.className = "pipe-status-pill status-ready";
+
+      // 2. API
+      if (data.modes.api && data.modes.api.available) {
+        apiPill.textContent = "🟢 Đã cấu hình Key";
+        apiPill.className = "pipe-status-pill status-ready";
+      } else {
+        apiPill.textContent = "🔴 Chưa cấu hình Key";
+        apiPill.className = "pipe-status-pill status-offline";
+      }
+
+      // 3. Model
+      if (data.modes.model && data.modes.model.is_online) {
+        modelPill.textContent = "🟢 Worker Online";
+        modelPill.className = "pipe-status-pill status-ready";
+      } else {
+        modelPill.textContent = "🔴 Chưa kích hoạt";
+        modelPill.className = "pipe-status-pill status-offline";
+      }
+
+      updatePipeWarningBanner();
+    }
+  } catch (err) {
+    console.warn("Failed to check pipeline status:", err);
+  }
+}
+
+function updatePipeWarningBanner() {
+  const banner = $("#pipe-mode-warning-banner");
+  const title = $("#pipe-warning-title");
+  const desc = $("#pipe-warning-desc");
+  if (!banner) return;
+
+  const status = pipeModesStatus[pipeSelectedMode];
+  if (!status || !status.is_online) {
+    banner.hidden = false;
+    if (pipeSelectedMode === "model") {
+      title.textContent = "Chế độ Kaggle GPU chưa được kích hoạt!";
+      desc.textContent = "Worker GPU đang offline hoặc chưa cấu hình URL Cloudflare Tunnel trong Cài đặt. Hãy khởi động Notebook trên Kaggle hoặc chuyển sang Local CPU / Cloud API.";
+    } else if (pipeSelectedMode === "api") {
+      title.textContent = "Chế độ Cloud API chưa được kích hoạt!";
+      desc.textContent = "Chưa tìm thấy GEMINI_API_KEY trong file .env. Hãy cấu hình API Key hoặc chuyển sang chế độ Local CPU.";
+    } else {
+      banner.hidden = true;
+    }
+  } else {
+    banner.hidden = true;
+  }
+}
+
+function initPipelineStudio() {
+  // Mode selection buttons
+  $$(".pipe-mode-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      $$(".pipe-mode-btn").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      pipeSelectedMode = btn.dataset.mode;
+      updatePipeWarningBanner();
+    });
+  });
+
+  // Prompt chips
+  $$(".pipe-chip").forEach((chip) => {
+    chip.addEventListener("click", () => {
+      const q = chip.dataset.query;
+      if (q && $("#pipe-query-input")) {
+        $("#pipe-query-input").value = q;
+        $("#pipe-query-input").focus();
+      }
+    });
+  });
+
+  // Refresh status button
+  $("#pipe-btn-refresh-status")?.addEventListener("click", () => {
+    checkPipelineStatus();
+    toast("Đã kiểm tra lại kết nối các chế độ.");
+  });
+
+  // Go to settings button
+  $("#pipe-btn-goto-settings")?.addEventListener("click", () => {
+    switchView("settings");
+  });
+
+  // Execute Agent 1 button
+  $("#btn-pipe-execute")?.addEventListener("click", async () => {
+    const queryInput = $("#pipe-query-input");
+    const query = queryInput ? queryInput.value.trim() : "";
+    if (!query) {
+      alert("Vui lòng nhập câu hỏi kiểm thử cho Agent 1.");
+      return;
+    }
+
+    // Pre-flight check before execution
+    const modeStatus = pipeModesStatus[pipeSelectedMode];
+    if (pipeSelectedMode !== "cpu" && modeStatus && !modeStatus.is_online) {
+      updatePipeWarningBanner();
+      alert(`⚠️ Chế độ ${pipeSelectedMode === "model" ? "Kaggle GPU" : "Cloud API"} chưa được kích hoạt! Vui lòng chọn chế độ khác hoặc bật kết nối trong tab Cài đặt.`);
+      return;
+    }
+
+    const mockGap = $("#pipe-mock-gap")?.checked || false;
+
+    // Show loading
+    $("#pipe-empty-state").hidden = true;
+    $("#pipe-output-container").hidden = true;
+    $("#pipe-loading-state").hidden = false;
+    const btn = $("#btn-pipe-execute");
+    if (btn) btn.disabled = true;
+
+    try {
+      const res = await api("/pipeline/agent1/run", {
+        method: "POST",
+        body: JSON.stringify({
+          query: query,
+          mode: pipeSelectedMode,
+          mock_evidence_gap: mockGap,
+          retry_count: mockGap ? 1 : 0,
+        }),
+      });
+
+      $("#pipe-loading-state").hidden = true;
+
+      if (!res.success) {
+        $("#pipe-mode-warning-banner").hidden = false;
+        $("#pipe-warning-title").textContent = "Không thể thực thi";
+        $("#pipe-warning-desc").textContent = res.message || "Đã xảy ra lỗi khi chạy Agent 1.";
+        return;
+      }
+
+      // Populate Metrics
+      const tool = (res.router_decision?.tool_selected || "bm25").toUpperCase();
+      $("#res-tool-selected").textContent = tool;
+      $("#res-latency").textContent = `${res.latency_ms} ms`;
+      $("#res-mode-used").textContent = {
+        cpu: "Local CPU (FTS5)",
+        api: "Cloud API (Gemini)",
+        model: "Kaggle Dual T4",
+      }[res.mode_used] || res.mode_used;
+      $("#res-total-retrieved").textContent = `${res.total_retrieved} chunks`;
+
+      // Populate Router & Critique
+      $("#res-router-thought").textContent = res.router_decision?.thought || "Router xác định công cụ phù hợp với cấu trúc câu hỏi.";
+      const isRelevant = res.router_decision?.critique_is_relevant;
+      const critiqueBadge = $("#res-critique-badge");
+      if (critiqueBadge) {
+        critiqueBadge.textContent = isRelevant ? "✓ Đạt yêu cầu" : "⚠️ Cần bổ sung nguồn";
+        critiqueBadge.className = `pipe-critique-pill ${isRelevant ? "passed" : "failed"}`;
+      }
+      $("#res-critique-reason").textContent = res.router_decision?.critique_reason || "Ngữ cảnh trích xuất khớp với từ khóa truy vấn.";
+
+      // Populate STORM Perspectives
+      const perspCount = $("#res-perspectives-count");
+      if (perspCount) perspCount.textContent = `${(res.perspectives || []).length} góc nhìn`;
+      const perspContainer = $("#res-perspectives-chips");
+      if (perspContainer) {
+        perspContainer.innerHTML = "";
+        (res.perspectives || []).forEach((p) => {
+          const badge = document.createElement("span");
+          badge.className = "pipe-perspective-badge";
+          badge.textContent = p;
+          perspContainer.appendChild(badge);
+        });
+      }
+
+      // Populate Sub-queries
+      const subqList = $("#res-subqueries-list");
+      if (subqList) {
+        subqList.innerHTML = "";
+        (res.sub_queries || []).forEach((sq) => {
+          const li = document.createElement("li");
+          li.textContent = sq;
+          subqList.appendChild(li);
+        });
+      }
+
+      // Populate Retrieved Documents
+      const docsCount = $("#res-docs-count");
+      if (docsCount) docsCount.textContent = `${(res.retrieved_docs || []).length} kết quả`;
+      const docsContainer = $("#res-docs-list");
+      if (docsContainer) {
+        docsContainer.innerHTML = "";
+        (res.retrieved_docs || []).forEach((doc, idx) => {
+          const item = document.createElement("div");
+          item.className = "pipe-doc-item";
+          item.innerHTML = `
+            <div class="pipe-doc-header">
+              <div class="pipe-doc-title-row">
+                <span class="pipe-rank-badge">#${idx + 1}</span>
+                <span class="pipe-doc-id">${escapePipeHtml(doc.doc_id || doc.id)}</span>
+                <small>(Trang ${doc.page_no || 1})</small>
+              </div>
+              <span class="pipe-rrf-score">RRF: ${doc.rrf_score || 0}</span>
+            </div>
+            <p class="pipe-doc-snippet">${escapePipeHtml(doc.text || "")}</p>
+          `;
+          docsContainer.appendChild(item);
+        });
+      }
+
+      // Show output
+      $("#pipe-output-container").hidden = false;
+
+    } catch (err) {
+      $("#pipe-loading-state").hidden = true;
+      alert("Lỗi kết nối khi gọi Agent 1: " + err.message);
+    } finally {
+      if (btn) btn.disabled = false;
     }
   });
 }
