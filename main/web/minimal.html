@@ -575,6 +575,7 @@
           <button type="button" class="chip" data-q="So sánh hiệu năng và mức tiêu thụ bộ nhớ giữa LoRA và QLoRA">LoRA vs QLoRA</button>
           <button type="button" class="chip" data-q="Nguyên lý hoạt động của cơ chế Multi-Head Attention trong Transformer">Attention Mechanism</button>
           <button type="button" class="chip" data-q="Phương pháp thẩm định sự thật khoa học bằng SciFact và NLI">SciFact Verification</button>
+          <button type="button" class="chip" data-q="Mamba State Space Model architecture for sequence modeling" style="border-color: #93c5fd; background: #eff6ff; color: #1e40af;">🌐 Mamba Architecture (ArXiv Live)</button>
         </div>
 
         <div class="btn-row">
@@ -1013,12 +1014,25 @@
           div.style.borderRadius = '8px';
           div.style.background = '#ffffff';
 
+          const isArxivLive = doc.source === "arxiv_internet" || (doc.pdf_url && doc.pdf_url.startsWith("http"));
+          const pdfLinkHtml = isArxivLive ? `<a href="${doc.pdf_url}" target="_blank" style="color: #2563eb; font-weight: 600; text-decoration: underline; margin-left: 6px;">🔗 Tải file PDF từ ArXiv ↗</a>` : "";
+          const sourceBadge = isArxivLive 
+            ? `<span style="font-size: 0.74rem; font-weight: 600; padding: 2px 8px; border-radius: 4px; background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe;">🌐 Internet (ArXiv Live)</span>`
+            : `<span style="font-size: 0.74rem; font-weight: 600; padding: 2px 8px; border-radius: 4px; background: #f3f4f6; color: #374151;">📁 Kho nội bộ</span>`;
+
+          const paperTitleDisplay = doc.title && doc.title.length > 5 ? doc.title : meta.title;
+          const fileNameDisplay = doc.pdf_url && isArxivLive ? doc.pdf_url.split("/").pop() : meta.file;
+
           div.innerHTML = `
-            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 6px;">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 6px; flex-wrap: wrap; gap: 6px;">
               <div>
-                <strong style="font-size: 0.92rem; color: #111827; display: block;">📄 ${meta.title}</strong>
-                <div style="font-size: 0.78rem; color: #6b7280; margin-top: 2px;">
-                  📁 File PDF gốc: <code style="background: #f3f4f6; padding: 1px 5px; border-radius: 4px;">${meta.file}</code> &nbsp;•&nbsp; 📍 Vị trí: <strong>Trang ${doc.page_no || 1}</strong>
+                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 3px;">
+                  ${sourceBadge}
+                  <strong style="font-size: 0.92rem; color: #111827;">📄 ${paperTitleDisplay}</strong>
+                </div>
+                <div style="font-size: 0.78rem; color: #6b7280;">
+                  📁 File PDF: <code style="background: #f3f4f6; padding: 1px 5px; border-radius: 4px;">${fileNameDisplay}</code> &nbsp;•&nbsp; 📍 Vị trí: <strong>Trang ${doc.page_no || 1}</strong>
+                  ${pdfLinkHtml}
                 </div>
               </div>
               <span style="font-size: 0.74rem; font-weight: 600; padding: 3px 8px; border-radius: 6px; background: #f3f4f6; color: #374151;">

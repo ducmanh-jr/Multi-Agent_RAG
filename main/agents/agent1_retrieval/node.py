@@ -124,7 +124,18 @@ class RetrievalAgent(BaseAgent):
             if matches:
                 ranked_runs.append(matches)
 
-        # 4. Hybrid Reciprocal Rank Fusion
+        # 4. Fallback to ArXiv Internet Search if local corpus has no matches
+        if not ranked_runs:
+            try:
+                from agents.agent1_retrieval.tools.arxiv_search import search_arxiv
+                arxiv_docs = search_arxiv(query, max_results=self.settings.TOP_K_RERANK)
+                if arxiv_docs:
+                    ranked_runs.append(arxiv_docs)
+                    self.fts5_searcher.fit(arxiv_docs)
+            except Exception as e:
+                self.logger.warning(f"ArXiv live search error: {e}")
+
+        # 5. Hybrid Reciprocal Rank Fusion
         fused_docs = reciprocal_rank_fusion(
             ranked_runs if ranked_runs else [[{"text": query, "id": "fallback"}]],
             top_n=self.settings.TOP_K_RERANK,

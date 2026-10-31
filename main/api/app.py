@@ -917,6 +917,18 @@ YÊU CẦU TRẢ VỀ JSON:
                 if m:
                     ranked_runs.append(m)
 
+            # Tự động truy xuất song song bài báo mới nhất trên Internet qua ArXiv API
+            try:
+                from agents.agent1_retrieval.tools.arxiv_search import search_arxiv
+                arxiv_docs = await asyncio.to_thread(search_arxiv, clean_query, max_results=settings.TOP_K_RERANK)
+                if arxiv_docs:
+                    for _ in range(3):
+                        ranked_runs.append(arxiv_docs)
+                    agent.fts5_searcher.fit(arxiv_docs)
+                    critique_reason = "[ArXiv Live] Đã tự động kết nối Internet và tìm thấy các bài báo mới nhất trên ArXiv."
+            except Exception as ex:
+                print("ArXiv search error:", ex)
+
             from agents.agent1_retrieval.tools.hybrid import reciprocal_rank_fusion
             if ranked_runs:
                 retrieved_docs = reciprocal_rank_fusion(ranked_runs, top_n=settings.TOP_K_RERANK)
@@ -990,14 +1002,17 @@ YÊU CẦU TRẢ VỀ JSON:
         formatted_docs = []
         for d in retrieved_docs:
             is_fb = (d.get("id") == "fallback" or d.get("doc_id") == "fallback")
+            doc_title = d.get("title") or d.get("doc_id", "Bài báo khoa học")
             formatted_docs.append({
                 "id": d.get("id", ""),
                 "doc_id": "Truy vấn dự phòng (Chưa có trong kho tài liệu)" if is_fb else d.get("doc_id", "Tài liệu"),
-                "title": "Tài liệu dự phòng (Không tìm thấy bài báo liên quan)" if is_fb else d.get("title", d.get("doc_id", "Bài báo")),
+                "title": "Tài liệu dự phòng (Không tìm thấy bài báo liên quan)" if is_fb else doc_title,
                 "page_no": d.get("page_no", 1),
                 "rrf_score": d.get("rrf_score", 0.0),
                 "context_hash": d.get("context_hash", ""),
                 "text": d.get("text", ""),
+                "source": d.get("source", "local_corpus"),
+                "pdf_url": d.get("pdf_url") or d.get("url", ""),
                 "is_fallback": is_fb,
             })
 
