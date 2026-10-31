@@ -865,44 +865,154 @@ async def run_agent1_playground(req: Agent1PlaygroundRequest):
         }
 
         start_time = time.perf_counter()
-        result = await asyncio.to_thread(agent.run, state)
-        elapsed_ms = (time.perf_counter() - start_time) * 1000
+        
+        # Chế độ 1: Cloud API (Gemini) -> Thực hiện 1 lệnh duy nhất hỏi Gemini cả Router Thought, Perspectives và Sub-queries
+        if selected_mode == "api":
+            from utils.llm_client import llm_client
+            api_prompt = f"""Bạn là Router & Stanford STORM Decomposer chuyên nghiệp trong hệ thống Retrieval Agent.
+Nhiệm vụ: Phân tích câu hỏi: "{clean_query}"
+1. Chọn 1 công cụ tối ưu trong tập [bm25, dense, hyde, rewrite, decompose].
+2. Viết suy luận (thought) tự nhiên, chi tiết bằng tiếng Việt giải thích vì sao câu hỏi này phù hợp với công cụ đó.
+3. Đưa ra 2-3 góc nhìn học thuật (perspectives) và 2-3 câu truy vấn con (sub_queries) phù hợp.
+4. Đưa ra phán quyết tự phê bình (critique_is_relevant) và lý do (critique_reason).
 
-        router_decision = result.get("router_decision", {})
-        sub_queries = result.get("sub_queries", [clean_query])
-        perspectives = result.get("perspectives", [])
-        retrieved_docs = result.get("retrieved_docs", [])
-        seen_chunks = result.get("seen_chunks", [])
-        no_new_evidence = result.get("no_new_evidence", False)
+YÊU CẦU TRẢ VỀ JSON:
+{{
+  "tool_selected": "dense",
+  "thought": "Lời giải thích tự nhiên của AI...",
+  "perspectives": ["Góc nhìn 1", "Góc nhìn 2"],
+  "sub_queries": ["{clean_query}", "truy vấn mở rộng 1"],
+  "critique_is_relevant": true,
+  "critique_reason": "Đánh giá mức độ khớp của bằng chứng đối với câu hỏi."
+}}"""
+            try:
+                llm_data = await asyncio.to_thread(llm_client.generate_json, api_prompt, agent="retrieval")
+                tool_choice = str(llm_data.get("tool_selected", "dense")).lower()
+                custom_thought = f"[Cloud AI - Gemini 3 Flash] {llm_data.get('thought', 'Đã phân tích ngữ nghĩa câu hỏi qua Google Gemini.')}"
+                perspectives = llm_data.get("perspectives", ["Tổng quan chuyên sâu qua AI", "Góc nhìn phân tích ngữ nghĩa"])
+                sub_queries = llm_data.get("sub_queries", [clean_query])
+                is_rel = llm_data.get("critique_is_relevant", True)
+                critique_reason = llm_data.get("critique_reason", "Ngữ cảnh được AI đánh giá phù hợp.")
+            except Exception as e:
+                tool_choice = "dense"
+                custom_thought = f"[Cloud AI Fallback] {str(e)[:100]}"
+                perspectives = ["Phân tích tổng quan qua AI"]
+                sub_queries = [clean_query]
+                is_rel = True
+                critique_reason = "Hoàn tất đối soát."
+
+            router_decision = {
+                "tool_selected": tool_choice,
+                "thought": custom_thought,
+                "critique_is_relevant": is_rel,
+                "critique_reason": critique_reason,
+            }
+
+            # Truy xuất trực tiếp FTS5 cho các sub_queries
+            ranked_runs = []
+            for sq in sub_queries:
+                m = agent.fts5_searcher.search(sq, top_k=settings.MAX_RETRIEVED_CHUNKS)
+                if not m:
+                    m = agent.bm25_fallback.search(sq, top_k=settings.MAX_RETRIEVED_CHUNKS)
+                if m:
+                    ranked_runs.append(m)
+
+            from agents.agent1_retrieval.tools.hybrid import reciprocal_rank_fusion
+            if ranked_runs:
+                retrieved_docs = reciprocal_rank_fusion(ranked_runs, top_n=settings.TOP_K_RERANK)
+            else:
+                retrieved_docs = [{"text": clean_query, "id": "fallback", "doc_id": "fallback", "title": "Không tìm thấy trong kho tài liệu", "page_no": 1}]
+
+            seen_chunks = retrieved_docs
+            no_new_evidence = False
+
+        # Chế độ 2: Local CPU -> Chạy Heuristic luật tất định nội bộ của máy tính (0 ms, 0 gọi internet)
+        elif selected_mode == "cpu":
+            from agents.agent1_retrieval.tools.router import select_tool, make_decision
+            tool_choice = select_tool(clean_query)
+            rule_thought = f"[Local CPU Rule-Based] Phân tích cú pháp không cần mạng: phát hiện câu hỏi thuộc dạng '{tool_choice}'. Tối ưu cho vi xử lý laptop ThinkBook."
+            
+            sub_queries = [clean_query]
+            if tool_choice == "decompose":
+                perspectives = ["Góc nhìn so sánh vế 1", "Góc nhìn so sánh vế 2"]
+                sub_queries = [clean_query, f"chi tiết {clean_query}"]
+            elif tool_choice == "hyde":
+                perspectives = ["Nguyên lý hoạt động chuyên sâu (HyDE)"]
+                sub_queries = [clean_query, f"nguyên lý {clean_query}"]
+            else:
+                perspectives = ["Tra cứu từ khóa trọng tâm (CPU FTS5)"]
+
+            ranked_runs = []
+            for sq in sub_queries:
+                m = agent.fts5_searcher.search(sq, top_k=settings.MAX_RETRIEVED_CHUNKS)
+                if not m:
+                    m = agent.bm25_fallback.search(sq, top_k=settings.MAX_RETRIEVED_CHUNKS)
+                if m:
+                    ranked_runs.append(m)
+
+            from agents.agent1_retrieval.tools.hybrid import reciprocal_rank_fusion
+            if ranked_runs:
+                retrieved_docs = reciprocal_rank_fusion(ranked_runs, top_n=settings.TOP_K_RERANK)
+                is_rel = True
+                critique_reason = "[Local Rule] Đã tìm thấy tài liệu trong kho FTS5."
+            else:
+                retrieved_docs = [{"text": clean_query, "id": "fallback", "doc_id": "fallback", "title": "Không tìm thấy trong kho tài liệu", "page_no": 1}]
+                is_rel = False
+                critique_reason = "[Local Rule] Không có bài báo nào trong kho FTS5 khớp với từ khóa này."
+
+            router_decision = {
+                "tool_selected": tool_choice,
+                "thought": rule_thought,
+                "critique_is_relevant": is_rel,
+                "critique_reason": critique_reason,
+            }
+            seen_chunks = retrieved_docs
+            no_new_evidence = False
+
+        # Chế độ 3: Kaggle GPU -> Gọi mô hình Qwen2.5-7B LoRA từ Kaggle
+        else:
+            result = await asyncio.to_thread(agent.run, state)
+            base_decision = result.get("router_decision", {})
+            router_decision = {
+                "tool_selected": base_decision.get("tool_selected", "dense"),
+                "thought": f"[Kaggle T4 LoRA] {base_decision.get('thought', 'Suy luận từ mô hình Qwen2.5-7B fine-tuned.')}",
+                "critique_is_relevant": base_decision.get("critique_is_relevant", True),
+                "critique_reason": base_decision.get("critique_reason", ""),
+            }
+            sub_queries = result.get("sub_queries", [clean_query])
+            perspectives = result.get("perspectives", [])
+            retrieved_docs = result.get("retrieved_docs", [])
+            seen_chunks = result.get("seen_chunks", [])
+            no_new_evidence = result.get("no_new_evidence", False)
+
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
 
         formatted_docs = []
         for d in retrieved_docs:
+            is_fb = (d.get("id") == "fallback" or d.get("doc_id") == "fallback")
             formatted_docs.append({
                 "id": d.get("id", ""),
-                "doc_id": d.get("doc_id", "Tài liệu"),
-                "title": d.get("title", ""),
+                "doc_id": "Truy vấn dự phòng (Chưa có trong kho tài liệu)" if is_fb else d.get("doc_id", "Tài liệu"),
+                "title": "Tài liệu dự phòng (Không tìm thấy bài báo liên quan)" if is_fb else d.get("title", d.get("doc_id", "Bài báo")),
                 "page_no": d.get("page_no", 1),
                 "rrf_score": d.get("rrf_score", 0.0),
                 "context_hash": d.get("context_hash", ""),
-                "text": d.get("text", "")[:400],
+                "text": d.get("text", ""),
+                "is_fallback": is_fb,
             })
 
         return {
             "success": True,
             "mode_used": selected_mode,
             "latency_ms": round(elapsed_ms, 2),
-            "router_decision": {
-                "tool_selected": router_decision.get("tool_selected", "bm25"),
-                "thought": router_decision.get("thought", ""),
-                "critique_is_relevant": router_decision.get("critique_is_relevant", True),
-                "critique_reason": router_decision.get("critique_reason", ""),
-            },
+            "router_decision": router_decision,
             "perspectives": perspectives,
             "sub_queries": sub_queries,
             "retrieved_docs": formatted_docs,
             "total_retrieved": len(retrieved_docs),
             "total_seen": len(seen_chunks),
             "no_new_evidence": no_new_evidence,
+            "has_fallback_only": all(d["is_fallback"] for d in formatted_docs) if formatted_docs else True,
         }
 
     except Exception as e:

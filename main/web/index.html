@@ -1511,6 +1511,47 @@ RA_EMBEDDING_MODEL=intfloat/multilingual-e5-small</pre>
         <span id="upload-step-index">Lập chỉ mục</span>
       </div>
     </section>
+        <!-- DIALOG INSPECT DOCUMENT CHUNK -->
+    <dialog id="pipe-doc-dialog" class="pipe-doc-dialog" aria-labelledby="pipe-doc-dialog-title">
+      <div class="pipe-dialog-header">
+        <div class="pipe-dialog-title-wrapper">
+          <span class="pipe-rank-badge" id="modal-doc-rank">#1</span>
+          <div>
+            <h3 id="pipe-doc-dialog-title">Chi tiết đoạn trích tài liệu</h3>
+            <span class="pipe-doc-meta" id="modal-doc-meta">doc_id · Trang 1 · RRF: 0.05</span>
+          </div>
+        </div>
+        <button type="button" class="icon-button close-dialog" id="btn-close-doc-dialog" aria-label="Đóng">✕</button>
+      </div>
+
+      <div class="pipe-dialog-body">
+        <div id="modal-fallback-alert" class="modal-fallback-alert" hidden>
+          <div class="alert-icon">💡</div>
+          <div>
+            <strong>Truy vấn dự phòng (Fallback Query Chunk)</strong>
+            <p>Kho dữ liệu nghiên cứu AI/ML hiện tại chưa chứa bài báo phù hợp với chủ đề này. Hệ thống đã sử dụng chính câu hỏi của bạn làm chunk dự phòng để luồng suy luận không bị gián đoạn. Bạn có thể tải thêm tệp PDF vào <strong>Kho tài liệu</strong> để tra cứu thêm.</p>
+          </div>
+        </div>
+
+        <div class="pipe-modal-field">
+          <label>Mã Hash Bằng chứng (Context Hash):</label>
+          <code id="modal-context-hash">N/A</code>
+        </div>
+
+        <div class="pipe-modal-field">
+          <label>Nội dung toàn văn đoạn trích (Full Content Chunk):</label>
+          <div class="pipe-full-text-container">
+            <pre id="modal-full-text"></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="pipe-dialog-footer">
+        <button type="button" class="secondary-button" id="btn-copy-doc-text">📋 Sao chép nội dung</button>
+        <button type="button" class="primary-button" id="btn-close-doc-dialog-2">Đóng</button>
+      </div>
+    </dialog>
+
     <div
       id="toast-region"
       class="toast-region"

@@ -1805,7 +1805,7 @@ function initPipelineStudio() {
         });
       }
 
-      // Populate Retrieved Documents
+      // Populate Retrieved Documents with Click-to-View Modal
       const docsCount = $("#res-docs-count");
       if (docsCount) docsCount.textContent = `${(res.retrieved_docs || []).length} kết quả`;
       const docsContainer = $("#res-docs-list");
@@ -1813,18 +1813,32 @@ function initPipelineStudio() {
         docsContainer.innerHTML = "";
         (res.retrieved_docs || []).forEach((doc, idx) => {
           const item = document.createElement("div");
-          item.className = "pipe-doc-item";
+          const isFallback = Boolean(doc.is_fallback);
+          item.className = `pipe-doc-item ${isFallback ? "is-fallback" : ""}`;
+          item.title = "Nhấn để xem toàn bộ nội dung tài liệu này";
+
+          const fallbackTag = isFallback ? '<span class="pipe-doc-fallback-tag">⚠️ Truy vấn dự phòng</span>' : '<span class="pipe-doc-fallback-tag" style="background:#e0f2fe;color:#0369a1;">📄 Bài báo ArXiv</span>';
+
           item.innerHTML = `
             <div class="pipe-doc-header">
               <div class="pipe-doc-title-row">
                 <span class="pipe-rank-badge">#${idx + 1}</span>
                 <span class="pipe-doc-id">${escapePipeHtml(doc.doc_id || doc.id)}</span>
+                ${fallbackTag}
                 <small>(Trang ${doc.page_no || 1})</small>
               </div>
               <span class="pipe-rrf-score">RRF: ${doc.rrf_score || 0}</span>
             </div>
-            <p class="pipe-doc-snippet">${escapePipeHtml(doc.text || "")}</p>
+            <p class="pipe-doc-snippet">${escapePipeHtml((doc.text || "").slice(0, 240))}${(doc.text || "").length > 240 ? "..." : ""}</p>
+            <div class="pipe-click-hint">
+              <span>🔍 Nhấn để xem toàn văn & đối soát bằng chứng ➔</span>
+            </div>
           `;
+
+          item.addEventListener("click", () => {
+            openPipeDocModal(doc, idx + 1);
+          });
+
           docsContainer.appendChild(item);
         });
       }
@@ -1839,4 +1853,41 @@ function initPipelineStudio() {
       if (btn) btn.disabled = false;
     }
   });
+}
+
+
+function openPipeDocModal(doc, rank) {
+  const dialog = $("#pipe-doc-dialog");
+  if (!dialog) return;
+
+  $("#modal-doc-rank").textContent = `#${rank}`;
+  $("#pipe-doc-dialog-title").textContent = doc.title || doc.doc_id || "Đoạn trích tài liệu";
+  $("#modal-doc-meta").textContent = `${doc.doc_id || "N/A"} · Trang ${doc.page_no || 1} · Điểm RRF: ${doc.rrf_score || 0}`;
+  $("#modal-context-hash").textContent = doc.context_hash || "N/A";
+  $("#modal-full-text").textContent = doc.text || "(Trống)";
+
+  const fallbackAlert = $("#modal-fallback-alert");
+  if (fallbackAlert) {
+    fallbackAlert.hidden = !Boolean(doc.is_fallback);
+  }
+
+  // Close handlers
+  const closeBtn1 = $("#btn-close-doc-dialog");
+  const closeBtn2 = $("#btn-close-doc-dialog-2");
+  const copyBtn = $("#btn-copy-doc-text");
+
+  if (closeBtn1) closeBtn1.onclick = () => dialog.close();
+  if (closeBtn2) closeBtn2.onclick = () => dialog.close();
+  if (copyBtn) {
+    copyBtn.onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(doc.text || "");
+        toast("Đã sao chép toàn bộ nội dung tài liệu!");
+      } catch {
+        toast("Không thể tự động sao chép.");
+      }
+    };
+  }
+
+  dialog.showModal();
 }
