@@ -1302,6 +1302,74 @@
                       <div id="res-docs-list" class="pipe-docs-flow"></div>
                     </div>
                   </div>
+
+                  <!-- Thẻ 4: Toàn bộ các loại Đầu ra của Agent 1 (Output State chuyển giao cho Agent 2) -->
+                  <div class="pipe-result-box">
+                    <div class="result-box-header">
+                      <h4>📦 4. Đầu ra của Agent 1 (Chuyển giao cho Agent 2 & Trạng thái LangGraph)</h4>
+                      <div class="pipe-header-actions">
+                        <button type="button" class="pipe-mini-btn" id="btn-copy-agent1-payload">📋 Sao chép JSON State</button>
+                      </div>
+                    </div>
+                    <div class="result-box-body">
+                      <p class="pipe-output-note">
+                        Đây là <strong>toàn bộ gói dữ liệu đầu ra chuẩn hóa (Output State)</strong> mà Agent 1 đóng gói để chuyển giao trực tiếp cho <strong>Agent 2 (Reader Agent)</strong> và cập nhật vào bộ điều phối LangGraph:
+                      </p>
+
+                      <!-- Bảng tóm tắt các loại đầu ra -->
+                      <div class="pipe-outputs-summary-table">
+                        <div class="out-row">
+                          <span class="out-key"><code>retrieved_docs</code></span>
+                          <span class="out-type">list[dict]</span>
+                          <span class="out-desc" id="out-docs-summary">Tập tài liệu trích xuất đã qua ranker RRF để Reader đọc & phân tích</span>
+                        </div>
+                        <div class="out-row">
+                          <span class="out-key"><code>sub_queries</code></span>
+                          <span class="out-type">list[str]</span>
+                          <span class="out-desc" id="out-subqueries-summary">Các câu truy vấn con thành phần</span>
+                        </div>
+                        <div class="out-row">
+                          <span class="out-key"><code>perspectives</code></span>
+                          <span class="out-type">list[str]</span>
+                          <span class="out-desc" id="out-perspectives-summary">Góc nhìn nghiên cứu đa chiều (STORM)</span>
+                        </div>
+                        <div class="out-row">
+                          <span class="out-key"><code>retrieval_strategy</code></span>
+                          <span class="out-type">str</span>
+                          <span class="out-desc" id="out-strategy-summary">Chiến lược trích xuất kết hợp</span>
+                        </div>
+                        <div class="out-row">
+                          <span class="out-key"><code>router_decision</code></span>
+                          <span class="out-type">dict</span>
+                          <span class="out-desc" id="out-decision-summary">Quyết định điều phối + Lý do Thought + Tự phê bình</span>
+                        </div>
+                        <div class="out-row">
+                          <span class="out-key"><code>seen_chunks</code></span>
+                          <span class="out-type">list[dict]</span>
+                          <span class="out-desc" id="out-seen-summary">Kho lưu trữ chunk tích lũy toàn cục qua các vòng lặp</span>
+                        </div>
+                        <div class="out-row">
+                          <span class="out-key"><code>no_new_evidence</code></span>
+                          <span class="out-type">bool</span>
+                          <span class="out-desc" id="out-early-stop-summary">Cờ Early Stopping (Dừng sớm khi không có thêm bằng chứng mới)</span>
+                        </div>
+                        <div class="out-row">
+                          <span class="out-key"><code>reasoning_trace</code></span>
+                          <span class="out-type">list[dict]</span>
+                          <span class="out-desc">Nhật ký truy vết lý luận kiểm toán (Audit Trail)</span>
+                        </div>
+                      </div>
+
+                      <!-- Xem chi tiết JSON raw State -->
+                      <div class="pipe-json-viewer-wrapper">
+                        <div class="pipe-json-header">
+                          <span>DỮ LIỆU ĐẦU RA JSON THỰC TẾ (LANGGRAPH STATE DICTIONARY):</span>
+                          <span class="pipe-json-badge">JSON Format</span>
+                        </div>
+                        <pre class="pipe-json-code" id="res-agent1-raw-json">Đang chuẩn bị dữ liệu...</pre>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>

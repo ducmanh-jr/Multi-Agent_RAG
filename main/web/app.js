@@ -1843,6 +1843,43 @@ function initPipelineStudio() {
         });
       }
 
+      // Populate Section 4: All Agent 1 Outputs Summary & JSON Payload
+      const strategyText = res.retrieval_strategy || `${res.router_decision?.tool_selected || "dense"}_hybrid_rrf`;
+      $("#out-strategy-summary").textContent = strategyText;
+      $("#out-docs-summary").textContent = `${res.total_retrieved || 0} tài liệu đã trích xuất & ranker RRF`;
+      $("#out-subqueries-summary").textContent = `${(res.sub_queries || []).length} truy vấn con`;
+      $("#out-perspectives-summary").textContent = `${(res.perspectives || []).length} góc nhìn học thuật`;
+      $("#out-decision-summary").textContent = `Tool: ${(res.router_decision?.tool_selected || "").toUpperCase()} | Phê bình: ${res.router_decision?.critique_is_relevant ? "Đạt" : "Cần bổ sung"}`;
+      $("#out-seen-summary").textContent = `Tổng tích lũy: ${res.total_seen || res.total_retrieved || 0} chunks (Tránh mất dấu bằng chứng)`;
+      $("#out-early-stop-summary").textContent = `${res.no_new_evidence ? "True (Dừng sớm)" : "False (Bằng chứng mới được ghi nhận)"}`;
+
+      // Populate Raw JSON State Block
+      const rawJsonPre = $("#res-agent1-raw-json");
+      const statePayload = res.agent1_state_payload || {
+        sub_queries: res.sub_queries,
+        perspectives: res.perspectives,
+        retrieved_docs: res.retrieved_docs,
+        retrieval_strategy: strategyText,
+        router_decision: res.router_decision,
+        no_new_evidence: res.no_new_evidence,
+      };
+      if (rawJsonPre) {
+        rawJsonPre.textContent = JSON.stringify(statePayload, null, 2);
+      }
+
+      // Wire copy JSON State button
+      const copyPayloadBtn = $("#btn-copy-agent1-payload");
+      if (copyPayloadBtn) {
+        copyPayloadBtn.onclick = async () => {
+          try {
+            await navigator.clipboard.writeText(JSON.stringify(statePayload, null, 2));
+            toast("Đã sao chép toàn bộ gói State Payload của Agent 1!");
+          } catch {
+            toast("Không thể sao chép dữ liệu.");
+          }
+        };
+      }
+
       // Show output
       $("#pipe-output-container").hidden = false;
 

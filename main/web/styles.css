@@ -4681,3 +4681,120 @@ a {
   color: #0f5132;
   margin-top: 8px;
 }
+
+/* Section 4: Agent 1 Output Payload & Summary */
+.pipe-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pipe-mini-btn {
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 4px 10px;
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  color: #334155;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.pipe-mini-btn:hover {
+  background: #e2e8f0;
+  color: #0f172a;
+  border-color: #94a3b8;
+}
+
+.pipe-output-note {
+  margin: 0 0 14px;
+  font-size: 0.88rem;
+  color: #475569;
+  line-height: 1.5;
+}
+
+.pipe-outputs-summary-table {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 16px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 10px 14px;
+}
+
+.out-row {
+  display: grid;
+  grid-template-columns: 180px 100px 1fr;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px dashed #e2e8f0;
+  font-size: 0.84rem;
+}
+
+.out-row:last-child {
+  border-bottom: none;
+}
+
+.out-key code {
+  background: #e2e8f0;
+  color: #0f172a;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 600;
+  font-family: var(--mono);
+  font-size: 0.82rem;
+}
+
+.out-type {
+  color: #64748b;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+}
+
+.out-desc {
+  color: #1e293b;
+}
+
+.pipe-json-viewer-wrapper {
+  background: #0f172a;
+  border: 1px solid #1e293b;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.pipe-json-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 14px;
+  background: #1e293b;
+  color: #94a3b8;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+.pipe-json-badge {
+  background: #334155;
+  color: #f8fafc;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+}
+
+.pipe-json-code {
+  margin: 0;
+  padding: 14px;
+  max-height: 320px;
+  overflow-y: auto;
+  color: #38bdf8;
+  background: #0f172a;
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+}

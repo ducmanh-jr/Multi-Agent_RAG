@@ -1001,10 +1001,48 @@ YÊU CẦU TRẢ VỀ JSON:
                 "is_fallback": is_fb,
             })
 
+        retrieval_strategy = f"{router_decision.get('tool_selected', 'dense')}_hybrid_rrf"
+        reasoning_trace = [
+            {
+                "agent": "RetrievalAgent",
+                "action": "hybrid_retrieval_completed",
+                "details": {
+                    "tool_selected": router_decision.get("tool_selected"),
+                    "router_thought": router_decision.get("thought"),
+                    "sub_queries": sub_queries,
+                    "fused_count": len(retrieved_docs),
+                    "total_seen": len(seen_chunks),
+                    "new_chunks_added": len(retrieved_docs),
+                    "no_new_evidence": no_new_evidence,
+                }
+            }
+        ]
+
+        # Gói State hoàn chỉnh mà Agent 1 bàn giao cho Agent 2 (Reader) trong LangGraph
+        agent1_state_payload = {
+            "sub_queries": sub_queries,
+            "perspectives": perspectives,
+            "retrieved_docs": [
+                {
+                    "doc_id": d.get("doc_id"),
+                    "page_no": d.get("page_no"),
+                    "rrf_score": d.get("rrf_score"),
+                    "context_hash": d.get("context_hash"),
+                    "snippet": d.get("text", "")[:160] + ("..." if len(d.get("text", "")) > 160 else ""),
+                } for d in formatted_docs
+            ],
+            "seen_chunks_count": len(seen_chunks),
+            "retrieval_strategy": retrieval_strategy,
+            "router_decision": router_decision,
+            "no_new_evidence": no_new_evidence,
+            "reasoning_trace": reasoning_trace,
+        }
+
         return {
             "success": True,
             "mode_used": selected_mode,
             "latency_ms": round(elapsed_ms, 2),
+            "retrieval_strategy": retrieval_strategy,
             "router_decision": router_decision,
             "perspectives": perspectives,
             "sub_queries": sub_queries,
@@ -1012,6 +1050,8 @@ YÊU CẦU TRẢ VỀ JSON:
             "total_retrieved": len(retrieved_docs),
             "total_seen": len(seen_chunks),
             "no_new_evidence": no_new_evidence,
+            "reasoning_trace": reasoning_trace,
+            "agent1_state_payload": agent1_state_payload,
             "has_fallback_only": all(d["is_fallback"] for d in formatted_docs) if formatted_docs else True,
         }
 
