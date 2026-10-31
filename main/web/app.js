@@ -1604,7 +1604,7 @@ function setupRemoteWorkerListeners() {
 
 /* ==================== PIPELINE / AGENT 1 STUDIO LOGIC ==================== */
 
-let pipeSelectedMode = "cpu";
+let pipeSelectedMode = "api";
 let pipeModesStatus = {
   cpu: { available: true, is_online: true },
   api: { available: false, is_online: false },
@@ -1682,7 +1682,8 @@ function updatePipeWarningBanner() {
 
 function initPipelineStudio() {
   initAgentStepper();
-  // Mode selection buttons
+
+  // Mode selection buttons (Cloud API, Kaggle GPU, and Baseline Local CPU)
   $$(".pipe-mode-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
       $$(".pipe-mode-btn").forEach((b) => b.classList.remove("active"));
@@ -1691,6 +1692,48 @@ function initPipelineStudio() {
       updatePipeWarningBanner();
     });
   });
+
+  // Toggle button for Baseline Local CPU
+  const toggleBaselineBtn = $("#pipe-toggle-baseline-btn");
+  const baselineContainer = $("#pipe-baseline-container");
+  const baselineIcon = $("#pipe-baseline-toggle-icon");
+  if (toggleBaselineBtn && baselineContainer) {
+    toggleBaselineBtn.addEventListener("click", () => {
+      const isHidden = baselineContainer.hasAttribute("hidden");
+      if (isHidden) {
+        baselineContainer.removeAttribute("hidden");
+        toggleBaselineBtn.setAttribute("aria-expanded", "true");
+        if (baselineIcon) baselineIcon.textContent = "▲";
+      } else {
+        baselineContainer.setAttribute("hidden", "");
+        toggleBaselineBtn.setAttribute("aria-expanded", "false");
+        if (baselineIcon) baselineIcon.textContent = "▼";
+      }
+    });
+  }
+
+  // Guide Dialog (Tìm hiểu cách hoạt động của Agent 1)
+  const guideBtn = $("#pipe-btn-learn-agent1");
+  const guideDialog = $("#pipe-agent1-guide-dialog");
+  const guideCloseBtn = $("#pipe-guide-close-btn");
+  const guideConfirmBtn = $("#pipe-guide-confirm-btn");
+
+  if (guideBtn && guideDialog) {
+    guideBtn.addEventListener("click", () => {
+      guideDialog.showModal();
+    });
+    guideCloseBtn?.addEventListener("click", () => {
+      guideDialog.close();
+    });
+    guideConfirmBtn?.addEventListener("click", () => {
+      guideDialog.close();
+    });
+    guideDialog.addEventListener("click", (e) => {
+      if (e.target === guideDialog) {
+        guideDialog.close();
+      }
+    });
+  }
 
   // Prompt chips
   $$(".pipe-chip").forEach((chip) => {

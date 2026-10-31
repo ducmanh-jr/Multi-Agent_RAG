@@ -1148,6 +1148,17 @@
             </div>
 
             <div id="pipe-agent1-panel" class="pipe-agent-panel active">
+              <!-- Thanh điều hướng đầu Panel với nút Tìm hiểu đặt cao góc phải -->
+              <div class="pipe-panel-top-bar">
+                <div class="pipe-panel-badge-wrap">
+                  <span class="pipe-step-badge">MẮT XÍCH 1</span>
+                  <span class="pipe-panel-subtitle">Điều phối Truy xuất (Query Router) & Phân rã Đa chiều (Stanford STORM)</span>
+                </div>
+                <button type="button" class="pipe-learn-guide-btn" id="pipe-btn-learn-agent1">
+                  <span class="pipe-learn-icon">📖</span> Tìm hiểu cách hoạt động của Agent 1
+                </button>
+              </div>
+
               <div class="pipeline-studio-layout">
               <!-- Cột điều khiển & Form nhập -->
               <div class="pipeline-control-card">
@@ -1156,23 +1167,17 @@
                   <p>Hệ thống tự động kiểm tra trạng thái sống của từng chế độ trước khi chạy.</p>
                 </div>
 
-                <!-- Bộ chọn 3 chế độ -->
+                <!-- Bộ chọn chế độ AI chính (Cloud API & Kaggle GPU) -->
                 <div class="pipe-modes-wrapper">
+                  <div class="pipe-mode-label-row">
+                    <span class="pipe-mode-section-title">Chế độ AI Thực thi (Khuyên dùng):</span>
+                  </div>
                   <div class="pipe-mode-btn-group" role="radiogroup" aria-label="Chế độ Agent 1">
-                    <button type="button" class="pipe-mode-btn active" data-mode="cpu" id="pipe-btn-cpu">
-                      <div class="pipe-mode-icon">💻</div>
-                      <div class="pipe-mode-info">
-                        <strong>Local CPU</strong>
-                        <small>FTS5 C-Engine + Heuristic</small>
-                      </div>
-                      <span class="pipe-status-pill status-ready" id="pipe-status-cpu">🟢 Sẵn sàng</span>
-                    </button>
-
-                    <button type="button" class="pipe-mode-btn" data-mode="api" id="pipe-btn-api">
+                    <button type="button" class="pipe-mode-btn active" data-mode="api" id="pipe-btn-api">
                       <div class="pipe-mode-icon">☁️</div>
                       <div class="pipe-mode-info">
                         <strong>Cloud API</strong>
-                        <small>Google Gemini Flash</small>
+                        <small>Google Gemini Flash (Đa chiều)</small>
                       </div>
                       <span class="pipe-status-pill status-checking" id="pipe-status-api">Đang kiểm tra...</span>
                     </button>
@@ -1181,10 +1186,32 @@
                       <div class="pipe-mode-icon">🚀</div>
                       <div class="pipe-mode-info">
                         <strong>Kaggle GPU</strong>
-                        <small>Qwen2.5-7B LoRA</small>
+                        <small>Qwen2.5-7B LoRA (Dual T4)</small>
                       </div>
                       <span class="pipe-status-pill status-checking" id="pipe-status-model">Đang kiểm tra...</span>
                     </button>
+                  </div>
+
+                  <!-- Nút nhấn để mở tùy chọn thêm: Chế độ Cơ sở (Local CPU) -->
+                  <div class="pipe-baseline-wrapper">
+                    <button type="button" class="pipe-toggle-baseline-btn" id="pipe-toggle-baseline-btn" aria-expanded="false">
+                      <span>⚙️ Tùy chọn thêm: Chế độ Cơ sở (Local CPU Baseline)</span>
+                      <span class="pipe-toggle-icon" id="pipe-baseline-toggle-icon">▼</span>
+                    </button>
+
+                    <div id="pipe-baseline-container" class="pipe-baseline-container" hidden>
+                      <div class="pipe-baseline-intro">
+                        <small>💡 <strong>Chế độ Baseline đối chứng:</strong> Dùng logic Heuristic và C-Engine FTS5 thuần túy trên máy tính (0ms, offline 100%). Thích hợp để làm đường chuẩn so sánh thực nghiệm hoặc chạy khẩn cấp khi mất mạng.</small>
+                      </div>
+                      <button type="button" class="pipe-mode-btn pipe-mode-btn-baseline" data-mode="cpu" id="pipe-btn-cpu">
+                        <div class="pipe-mode-icon">💻</div>
+                        <div class="pipe-mode-info">
+                          <strong>Local CPU (Baseline Heuristic)</strong>
+                          <small>FTS5 C-Engine + Quy tắc đối chứng</small>
+                        </div>
+                        <span class="pipe-status-pill status-ready" id="pipe-status-cpu">🟢 Sẵn sàng 100%</span>
+                      </button>
+                    </div>
                   </div>
                 </div>
 
@@ -1797,5 +1824,125 @@ RA_EMBEDDING_MODEL=intfloat/multilingual-e5-small</pre>
       role="status"
       aria-live="polite"
     ></div>
+  
+    <!-- Dialog Hướng dẫn Chi tiết: Cách hoạt động của Agent 1 & 3 Mô hình Thực thi -->
+    <dialog id="pipe-agent1-guide-dialog" class="pipe-guide-dialog">
+      <div class="pipe-guide-header">
+        <div class="pipe-guide-title-wrap">
+          <div class="pipe-guide-badge">KIẾN TRÚC HỆ THỐNG</div>
+          <h2>📖 Cách Hoạt Động Của Agent 1 (Retrieval & Router) & 3 Chế Độ Thực Thi</h2>
+        </div>
+        <button type="button" class="pipe-dialog-close" id="pipe-guide-close-btn" aria-label="Đóng">&times;</button>
+      </div>
+
+      <div class="pipe-guide-body">
+        <!-- Phần 1: Nguyên lý hoạt động của Agent 1 -->
+        <section class="pipe-guide-section">
+          <h3 class="pipe-guide-section-title">🎯 1. Nguyên lý & 4 Bước Hoạt động của Agent 1</h3>
+          <p class="pipe-guide-p">
+            Trong kiến trúc Multi-Agent RAG, <strong>Agent 1 (Retrieval & Router Agent)</strong> đóng vai trò là "Người trinh sát thông tin". 
+            Thay vì chỉ tìm kiếm từ khóa thô sơ, Agent 1 thực hiện chuỗi suy luận 4 giai đoạn khép kín:
+          </p>
+
+          <div class="pipe-guide-steps-grid">
+            <div class="pipe-guide-step-card">
+              <div class="step-card-num">Bước 1</div>
+              <h4>Điều phối Chiến lược (Query Routing)</h4>
+              <p>Phân tích cú pháp và ngữ nghĩa câu hỏi để tự động kích hoạt 1 trong 5 công cụ tối ưu: <code>dense</code> (ngữ nghĩa sâu), <code>bm25</code> (từ khóa chính xác), <code>hyde</code> (giả thuyết lý thuyết), <code>decompose</code> (phân rã so sánh đa vế), hoặc <code>rewrite</code> (viết lại câu hỏi).</p>
+            </div>
+
+            <div class="pipe-guide-step-card">
+              <div class="step-card-num">Bước 2</div>
+              <h4>Phân rã Đa chiều (Stanford STORM)</h4>
+              <p>Mô phỏng phương pháp Stanford STORM: tự động mở rộng câu hỏi thành 2-4 góc nhìn học thuật chuyên biệt (Cơ sở lý thuyết, Thực nghiệm, So sánh đối chuẩn, Giới hạn) và sinh các truy vấn con (Sub-queries) nhằm bao quát toàn diện tri thức.</p>
+            </div>
+
+            <div class="pipe-guide-step-card">
+              <div class="step-card-num">Bước 3</div>
+              <h4>Truy xuất Dung hợp (Hybrid RRF)</h4>
+              <p>Kết hợp đồng thời sức mạnh của Lexical Search (FTS5 BM25 khớp từ khóa) và Dense Semantic Search. Dùng thuật toán dung hợp Reciprocal Rank Fusion: <code>RRF = &sum; 1/(60 + rank)</code> để xếp hạng khách quan, triệt tiêu thiên vị.</p>
+            </div>
+
+            <div class="pipe-guide-step-card">
+              <div class="step-card-num">Bước 4</div>
+              <h4>Tự phê bình & Hồi quy (Evidence Gap)</h4>
+              <p>Tác tử tự đánh giá xem các tài liệu trích xuất đã trả lời đầy đủ câu hỏi chưa (Self-Critique). Nếu phát hiện thiếu hụt bằng chứng (Evidence Gap), tác tử sẽ kích hoạt vòng lặp hồi quy (Retry Round) để thu thập thêm.</p>
+            </div>
+          </div>
+        </section>
+
+        <!-- Phần 2: So sánh 3 Chế độ Thực thi -->
+        <section class="pipe-guide-section">
+          <h3 class="pipe-guide-section-title">⚖️ 2. Bản chất & So sánh 3 Chế độ Thực thi</h3>
+          <p class="pipe-guide-p">Hệ thống hỗ trợ linh hoạt 3 tầng thực thi từ nghiên cứu chuyên sâu, đám mây đến dự phòng cơ sở:</p>
+
+          <div class="pipe-guide-table-responsive">
+            <table class="pipe-guide-comparison-table">
+              <thead>
+                <tr>
+                  <th>Đặc tính</th>
+                  <th>💻 Local CPU (Baseline Cơ sở)</th>
+                  <th>☁️ Cloud API (Google Gemini)</th>
+                  <th>🚀 Kaggle GPU (Qwen2.5-7B LoRA)</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Công nghệ cốt lõi</strong></td>
+                  <td>C-Engine SQLite FTS5 + Luật Heuristic</td>
+                  <td>Google Gemini Flash (Cloud AI)</td>
+                  <td>Qwen2.5-7B Instruct + LoRA Adapters</td>
+                </tr>
+                <tr>
+                  <td><strong>Bản chất xử lý</strong></td>
+                  <td>Khớp mẫu từ khóa & quy tắc cứng tất định</td>
+                  <td>Mô hình ngôn ngữ lớn đa năng toàn cầu</td>
+                  <td>Mô hình chuyên biệt tinh chỉnh cho bài toán khoa học</td>
+                </tr>
+                <tr>
+                  <td><strong>Khả năng hiểu ngữ nghĩa</strong></td>
+                  <td>Thô sơ, chỉ khớp từ khóa chính xác</td>
+                  <td>Rất thông minh, hiểu sâu sắc ngữ cảnh tự nhiên</td>
+                  <td>Chuyên sâu học thuật, bám sát bộ dữ liệu huấn luyện</td>
+                </tr>
+                <tr>
+                  <td><strong>Thời gian phản hồi</strong></td>
+                  <td>⚡ Siêu tốc (~0.4ms - 5ms)</td>
+                  <td>⏳ Nhanh (~2s - 4s)</td>
+                  <td>⏳ Ổn định (~3s - 7s trên GPU)</td>
+                </tr>
+                <tr>
+                  <td><strong>Mục đích sử dụng</strong></td>
+                  <td><strong>Làm đường chuẩn (Baseline)</strong> đối chứng thực nghiệm và chạy offline khẩn cấp khi mất mạng.</td>
+                  <td><strong>Trải nghiệm nhanh</strong> tư duy đa chiều của AI mà không cần khởi động phần cứng GPU.</td>
+                  <td><strong>Tự chủ AI 100%</strong>, bảo mật dữ liệu, tận dụng tối đa 32GB VRAM Dual T4 trên Kaggle.</td>
+                </tr>
+                <tr>
+                  <td><strong>Yêu cầu môi trường</strong></td>
+                  <td>Không cần mạng, không cần GPU, luôn sẵn sàng 100%.</td>
+                  <td>Cần kết nối Internet & có Gemini API Key.</td>
+                  <td>Cần mở Notebook trên Kaggle và kết nối Cloudflare Tunnel.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- Phần 3: Gói State bàn giao cho Agent 2 -->
+        <section class="pipe-guide-section">
+          <h3 class="pipe-guide-section-title">📦 3. Gói Dữ Liệu Bàn Giao (LangGraph State Handoff)</h3>
+          <p class="pipe-guide-p">
+            Sau khi hoàn tất, Agent 1 đóng gói 8 trường dữ liệu vào <code>AgentState</code> và bàn giao cho <strong>Agent 2 (Reader & Document Parser)</strong>:
+            <code>retrieved_docs</code> (tài liệu kèm điểm RRF), <code>sub_queries</code> (truy vấn chuyên biệt), <code>perspectives</code> (góc nhìn học thuật), 
+            <code>router_decision</code> (lý do chọn công cụ và đánh giá tự phê bình), <code>seen_chunks</code> (tránh trùng lặp ở vòng sau).
+          </p>
+        </section>
+      </div>
+
+      <div class="pipe-guide-footer">
+        <button type="button" class="primary-button" id="pipe-guide-confirm-btn">Đã hiểu, quay lại thử nghiệm</button>
+      </div>
+    </dialog>
+
   </body>
 </html>
