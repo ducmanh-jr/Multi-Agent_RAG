@@ -1,3 +1,10 @@
+import os
+import sys
+from pathlib import Path
+_main_dir = str(Path(__file__).resolve().parent / "main")
+if _main_dir not in sys.path:
+    sys.path.insert(0, _main_dir)
+
 import argparse
 import json
 import sys

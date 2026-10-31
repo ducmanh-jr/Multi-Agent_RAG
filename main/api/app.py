@@ -85,10 +85,13 @@ def auth_status():
 
 def update_env_file(key: str, value: str):
     """Safely updates or adds a key-value pair in .env file without destroying other variables."""
-    env_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    env_path = os.path.join(env_dir, ".env")
-    if not os.path.exists(env_path):
-        env_path = os.path.abspath(".env")
+    curr_dir = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        os.path.join(os.path.dirname(os.path.dirname(curr_dir)), ".env"),
+        os.path.join(os.path.dirname(curr_dir), ".env"),
+        os.path.abspath(".env")
+    ]
+    env_path = next((p for p in candidates if os.path.exists(p)), candidates[0])
     if os.path.exists(env_path):
         with open(env_path, "r", encoding="utf-8") as f:
             lines = f.readlines()

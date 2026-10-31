@@ -10,10 +10,14 @@ import os
 from dataclasses import dataclass, field
 from dotenv import load_dotenv
 
-_project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_env_path = os.path.join(_project_root, ".env")
-if os.path.exists(_env_path):
-    load_dotenv(_env_path)
+_core_dir = os.path.dirname(os.path.abspath(__file__))
+_main_dir = os.path.dirname(_core_dir)
+_root_dir = os.path.dirname(_main_dir)
+
+for _candidate in [os.path.join(_root_dir, ".env"), os.path.join(_main_dir, ".env")]:
+    if os.path.exists(_candidate):
+        load_dotenv(_candidate)
+        break
 else:
     load_dotenv()
 

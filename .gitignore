@@ -48,3 +48,16 @@ Thumbs.db
 !weights/
 !weights/agent1_router/
 !weights/agent1_router/*
+
+# Whitelist fine-tuned Agent 1 LoRA model in main/weights
+!main/weights/
+!main/weights/agent1_router/
+!main/weights/agent1_router/*
+
+# Runtime Uploads & Artifacts in main
+main/uploads/*
+!main/uploads/.gitkeep
+main/artifacts/*
+!main/artifacts/.gitkeep
+main/data/*.db
+main/data/*.sqlite*

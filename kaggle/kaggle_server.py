@@ -35,6 +35,9 @@ _loaded_adapters: list[str] = []
 def find_adapter_path(sub_path: str) -> Optional[str]:
     """Search common Kaggle and local paths for fine-tuned weights."""
     candidates = [
+        Path("/kaggle/working/Multi-Agent_RAG/main/weights") / sub_path,
+        Path.cwd() / "main" / "weights" / sub_path,
+        Path("./main/weights") / sub_path,
         Path("/kaggle/working/Multi-Agent_RAG/weights") / sub_path,
         Path.cwd() / "weights" / sub_path,
         Path("./weights") / sub_path,
