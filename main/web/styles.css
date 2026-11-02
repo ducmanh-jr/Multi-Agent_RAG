@@ -2412,7 +2412,7 @@ kbd {
   color: var(--agent-color);
 }
 .agent-node.completed .agent-icon::after {
-  content: "✓";
+  content: "[v]";
   display: grid;
   place-items: center;
   position: absolute;

@@ -21,7 +21,7 @@ from core.graph import build_research_rag_graph
 from core.config import settings
 
 
-def run_cli(query: str, pdf: str = None, test_retry: bool = False):
+def run_cli(query: str, pdf: str = None, test_retry: bool = False, mode: str = None):
     if test_retry:
         query = f"[test_retry] {query}"
 
@@ -32,7 +32,7 @@ def run_cli(query: str, pdf: str = None, test_retry: bool = False):
     print(f"File PDF kèm theo: {pdf}")
     print("=" * 60 + "\n")
 
-    app = build_research_rag_graph()
+    app = build_research_rag_graph(mode=mode)
 
     initial_state = {
         "query": query,
@@ -59,8 +59,8 @@ def run_cli(query: str, pdf: str = None, test_retry: bool = False):
 def run_server(host: str = "0.0.0.0", port: int = 8000):
     import uvicorn
     print("\n" + "=" * 60)
-    print(f"🚀 KHỞI ĐỘNG WEB WORKSPACE & FASTAPI SERVER TẠI:")
-    print(f"👉 http://localhost:{port}")
+    print(f"KHỞI ĐỘNG WEB WORKSPACE & FASTAPI SERVER TẠI:")
+    print(f"http://localhost:{port}")
     print(f"Chế độ thực thi: {settings.EXECUTION_MODE.upper()}")
     print("=" * 60 + "\n")
     uvicorn.run("api.app:app", host=host, port=port, reload=True)
@@ -73,12 +73,13 @@ def main():
     parser.add_argument("--test-retry", action="store_true", help="Kích hoạt kiểm thử vòng lặp retry 3 lần và escalation")
     parser.add_argument("--serve", action="store_true", help="Khởi động máy chủ Web Workspace UI trên localhost:8000")
     parser.add_argument("--port", type=int, default=8000, help="Cổng chạy server (mặc định 8000)")
+    parser.add_argument("--mode", type=str, default=None, choices=["gemini", "cpu_min", "cpu_max", "kaggle_fn", "kaggle_max"], help="Chế độ thực thi 5 agent (gemini, cpu_min, cpu_max, kaggle_fn, kaggle_max)")
     args = parser.parse_args()
 
     if args.serve:
         run_server(port=args.port)
     else:
-        run_cli(query=args.query, pdf=args.pdf, test_retry=args.test_retry)
+        run_cli(query=args.query, pdf=args.pdf, test_retry=args.test_retry, mode=args.mode)
 
 
 if __name__ == "__main__":

@@ -146,7 +146,7 @@ export function renderEvents(events, status, result = null) {
   const backBtn = $("#back-research");
   if (backBtn) {
     if (status === "completed") {
-      backBtn.innerHTML = '<span>📄 Xem Báo Cáo Kết Quả</span>';
+      backBtn.innerHTML = '<span>Xem Báo Cáo Kết Quả</span>';
       backBtn.className = "primary-button";
     } else {
       backBtn.textContent = "Về câu hỏi";

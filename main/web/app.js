@@ -1255,7 +1255,7 @@ function setupUXEnhancements() {
       state.config = cfg;
       renderConfig();
       updateModeButtons("local_api");
-      toast("Đã chuyển sang chế độ ⚡ Gemini API (1-2s)");
+      toast("Đã chuyển sang chế độ Gemini API (1-2s)");
     } catch (err) {
       toast(err.message, true);
     }
@@ -1267,7 +1267,7 @@ function setupUXEnhancements() {
       state.config = cfg;
       renderConfig();
       updateModeButtons("kaggle_gpu");
-      toast("Đã chuyển sang chế độ 🚀 Kaggle Dual T4 GPU");
+      toast("Đã chuyển sang chế độ Kaggle Dual T4 GPU");
     } catch (err) {
       toast(err.message, true);
     }
@@ -1322,29 +1322,29 @@ function renderSettingsView() {
   // Render Per-Agent Modes
   const agentDescriptions = {
     retrieval: {
-      api: "⚡ Gemini API (Decomposition)",
-      cpu: "💻 CPU Router (BM25 + Regex/0.5B)",
-      model: "🚀 Qwen-7B Router LoRA (Kaggle T4)",
+      api: "Gemini API (Decomposition)",
+      cpu: "CPU Router (BM25 + Regex/0.5B)",
+      model: "Qwen-7B Router LoRA (Kaggle T4)",
     },
     reader: {
-      api: "⚡ PyMuPDF & Gemini Guardrail",
-      cpu: "💻 PyMuPDF CPU Layout Engine",
-      model: "🚀 LayoutLMv3 DocLayNet (Segmentation)",
+      api: "PyMuPDF & Gemini Guardrail",
+      cpu: "PyMuPDF CPU Layout Engine",
+      model: "LayoutLMv3 DocLayNet (Segmentation)",
     },
     summarizer: {
-      api: "⚡ Gemini API (Generator & Critic)",
-      cpu: "💻 Local Qwen-1.5B (Ollama CPU)",
-      model: "🚀 Generator-Critic LoRA (Dual T4)",
+      api: "Gemini API (Generator & Critic)",
+      cpu: "Local Qwen-1.5B (Ollama CPU)",
+      model: "Generator-Critic LoRA (Dual T4)",
     },
     factchecker: {
-      api: "⚡ Gemini NLI & Numeric Verifier",
-      cpu: "💻 Local Rule & Numeric Verifier (CPU)",
-      model: "🚀 Qwen-3B SciFact (GPU 1)",
+      api: "Gemini NLI & Numeric Verifier",
+      cpu: "Local Rule & Numeric Verifier (CPU)",
+      model: "Qwen-3B SciFact (GPU 1)",
     },
     writer: {
-      api: "⚡ Gemini API (Academic Synthesis)",
-      cpu: "💻 Local Qwen-3B (Ollama CPU)",
-      model: "🚀 Qwen2.5-7B Instruct (GPU 0)",
+      api: "Gemini API (Academic Synthesis)",
+      cpu: "Local Qwen-3B (Ollama CPU)",
+      model: "Qwen2.5-7B Instruct (GPU 0)",
     },
   };
 
@@ -1372,7 +1372,7 @@ function setupSettingsListeners() {
         state.config = updated;
         renderConfig();
         renderSettingsView();
-        const modeLabel = newMode === "local_api" ? "⚡ Google Gemini API" : "🚀 Kaggle Dual T4 GPU";
+        const modeLabel = newMode === "local_api" ? "Google Gemini API" : "Kaggle Dual T4 GPU";
         toast(`Đã chuyển thành công sang ${modeLabel}`);
       } catch (err) {
         toast(err.message, true);
@@ -1410,7 +1410,7 @@ function setupSettingsListeners() {
         });
         state.config = res.config;
         renderSettingsView();
-        const modeTitle = mode === "api" ? "⚡ Cloud API" : "🚀 Model / LoRA";
+        const modeTitle = mode === "api" ? "Cloud API" : "Model / LoRA";
         toast(`Đã chuyển ${agent.toUpperCase()} sang ${modeTitle} (Tự động ghi vào .env)!`);
       } catch (err) {
         toast(err.message, true);
@@ -1440,7 +1440,7 @@ function setupSettingsListeners() {
       summarizer: "cpu",
       factchecker: "cpu",
       writer: "cpu",
-    }, "💻 Toàn bộ CPU (Máy tính cá nhân)");
+    }, "Toàn bộ CPU (Máy tính cá nhân)");
   });
 
   $("#preset-all-api")?.addEventListener("click", () => {
@@ -1450,7 +1450,7 @@ function setupSettingsListeners() {
       summarizer: "api",
       factchecker: "api",
       writer: "api",
-    }, "⚡ Toàn bộ API (Gemini Cloud)");
+    }, "Toàn bộ API (Gemini Cloud)");
   });
 
   $("#preset-all-model")?.addEventListener("click", () => {
@@ -1460,7 +1460,7 @@ function setupSettingsListeners() {
       summarizer: "model",
       factchecker: "model",
       writer: "model",
-    }, "🚀 Toàn bộ Model (Kaggle Dual T4)");
+    }, "Toàn bộ Model (Kaggle Dual T4)");
   });
 
   $("#preset-hybrid")?.addEventListener("click", () => {
@@ -1470,7 +1470,7 @@ function setupSettingsListeners() {
       summarizer: "model",
       factchecker: "model",
       writer: "api",
-    }, "⚖️ Hybrid Tối ưu (Router & Generator Model, Reader & Writer API)");
+    }, "Hybrid Tối ưu (Router & Generator Model, Reader & Writer API)");
   });
 }
 
@@ -1484,14 +1484,14 @@ async function checkLocalCpuStatus() {
   try {
     const res = await api("/config/local-cpu/test");
     if (res.is_online) {
-      badge.textContent = `🟢 ${res.details}`;
+      badge.textContent = `[Online] ${res.details}`;
       badge.className = "tunnel-status-badge online";
     } else {
-      badge.textContent = `⚪ Chưa bật (${res.details})`;
+      badge.textContent = `[Chưa bật] (${res.details})`;
       badge.className = "tunnel-status-badge offline";
     }
   } catch (err) {
-    badge.textContent = "⚪ Offline";
+    badge.textContent = "[Offline]";
     badge.className = "tunnel-status-badge offline";
   }
 }
@@ -1504,14 +1504,14 @@ async function checkTunnelStatus() {
   try {
     const res = await api("/config/remote-url/test");
     if (res.is_online) {
-      badge.textContent = `🟢 ${res.details}`;
+      badge.textContent = `[Online] ${res.details}`;
       badge.className = "tunnel-status-badge online";
     } else {
-      badge.textContent = `🔴 Offline - ${res.details}`;
+      badge.textContent = `[Offline] - ${res.details}`;
       badge.className = "tunnel-status-badge offline";
     }
   } catch (err) {
-    badge.textContent = "🔴 Không phản hồi";
+    badge.textContent = "[Không phản hồi]";
     badge.className = "tunnel-status-badge offline";
   }
 }
