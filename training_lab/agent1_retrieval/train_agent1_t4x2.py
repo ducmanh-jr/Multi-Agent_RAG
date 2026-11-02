@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+import os
 import sys
+
+# Khóa 1 GPU duy nhất cho tiến trình đơn để tránh lỗi SFTTrainer nn.DataParallel:
+if "CUDA_VISIBLE_DEVICES" not in os.environ:
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+
 import argparse
 from pathlib import Path
 
