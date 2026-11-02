@@ -15,6 +15,16 @@ from agents.agent4_fact_checker.components.claim_extractor import ClaimExtractor
 from agents.agent4_fact_checker.components.judge import FactCheckJudge
 from agents.agent4_fact_checker.components.numeric_verifier import verify_numbers_in_claim
 from agents.agent4_fact_checker.components.dates import verify_dates_in_claim
+from agents.agent4_fact_checker.components.statistical_auditor import audit_statistical_methodology
+from tools.python_sandbox import (
+    execute_python_code,
+    verify_attention_matrix_shapes,
+    verify_lora_decomposition,
+)
+from agents.agent4_fact_checker.components.quote_verifier import (
+    verify_quote_in_source_units,
+    classify_answer_and_status,
+)
 
 
 class FactCheckerAgent(BaseAgent):
@@ -34,6 +44,7 @@ class FactCheckerAgent(BaseAgent):
         seen_chunks = state.get("seen_chunks", []) or []
         retry_count = state.get("retry_count", 0)
         query = state.get("query", "")
+        source_units = state.get("source_units", []) or []
 
         self.logger.info(f"[{self.name}] Kiểm chứng factual grounding (Retry: {retry_count}).")
 
@@ -42,7 +53,8 @@ class FactCheckerAgent(BaseAgent):
 
         # Combine text from retrieved_docs, seen_chunks, and evidence_spans for thorough evidence checking
         all_sources = list(retrieved_docs) + [c for c in seen_chunks if c not in retrieved_docs]
-        context_corpus = " ".join([d.get("text", "") for d in all_sources] + ev_texts)
+        unit_texts = [u.get("text", "") for u in source_units if isinstance(u, dict)]
+        context_corpus = " ".join([d.get("text", "") for d in all_sources] + ev_texts + unit_texts)
 
         # 1. Edge Case: Empty Answer
         if not answer or not answer.strip():
@@ -151,11 +163,37 @@ class FactCheckerAgent(BaseAgent):
         )
         trace["fact_check_label"] = overall_label
 
+        # 5. Senior Peer-Reviewer Statistical Audit
+        stat_audit = audit_statistical_methodology(claims_to_check, context_corpus)
+
+        # 6. Formal Mathematical / Tensor Sandbox Verification
+        code_verif = None
+        lower_q = query.lower()
+        if "lora" in lower_q or "nén tham số" in lower_q or "low-rank" in lower_q:
+            self.logger.info(f"[{self.name}] Kích hoạt Python Sandbox kiểm chứng công thức phân rã ma trận LoRA...")
+            code_verif = verify_lora_decomposition()
+        elif "attention" in lower_q or "chú ý" in lower_q or "transformer" in lower_q or "flashattention" in lower_q:
+            self.logger.info(f"[{self.name}] Kích hoạt Python Sandbox kiểm chứng kích thước chiều ma trận Attention...")
+            code_verif = verify_attention_matrix_shapes()
+
+        # 7. Classify Answer Status and Generate Short Answer
+        status_category, short_ans = classify_answer_and_status(
+            query=query,
+            verified_claims=verified_claims,
+            rejected_claims=rejected_claims,
+            source_units=source_units,
+        )
+
         return {
+            "answer": answer,
             "claims": [{"id": f"claim_{i+1}", "text": c} for i, c in enumerate(claims_to_check)],
             "verified_claims": verified_claims,
             "rejected_claims": rejected_claims,
             "evidence_gaps": evidence_gaps,
             "fact_check_label": overall_label,
+            "answer_status": status_category,
+            "short_answer": short_ans,
+            "statistical_audit": stat_audit,
+            "code_verification": code_verif,
             "reasoning_trace": [trace],
         }

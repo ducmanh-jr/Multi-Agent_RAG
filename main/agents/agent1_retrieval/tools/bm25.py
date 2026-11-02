@@ -56,11 +56,16 @@ class SimpleBM25:
             )
 
     def search(self, query: str, top_k: int = 5) -> list[dict[str, Any]]:
-        """Retrieve top_k documents matching query."""
+        """Retrieve top_k documents matching query with cross-lingual expansion."""
         if self.corpus_size == 0:
             return []
 
         q_tokens = self.tokenize(query)
+        try:
+            from utils.bilingual import expand_bilingual_tokens
+            q_tokens = list(expand_bilingual_tokens(query, set(q_tokens)))
+        except Exception:
+            pass
         scores: list[float] = [0.0] * self.corpus_size
 
         for i, freqs in enumerate(self.doc_freqs):

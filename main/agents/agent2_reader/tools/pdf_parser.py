@@ -13,6 +13,22 @@ import os
 from typing import Any
 from core.state import SourceUnit
 from utils.logger import logger
+import re
+
+def is_boilerplate(text: str) -> bool:
+    t = text.lower().strip()
+    if "quyền riêng tư" in t and ("cookie" in t or "chúng tôi sử dụng" in t):
+        return True
+    if t in ["từ chối", "đồng ý tất cả", "từ chối\nđồng ý tất cả", "từ chối đồng ý tất cả"]:
+        return True
+    if t.startswith("http://") or t.startswith("https://"):
+        return True
+    if re.fullmatch(r"\d+/\d+", t):
+        return True
+    if re.fullmatch(r"\d{1,2}:\d{2}\s+\d{1,2}/\d{1,2}/\d{2,4}", t):
+        return True
+    return False
+
 
 
 def sort_blocks_column_aware(blocks: list[tuple], page_width: float) -> list[tuple]:
@@ -152,7 +168,7 @@ def parse_pdf_document(file_path: str) -> tuple[dict[str, Any], list[SourceUnit]
 
             for b in sorted_blocks:
                 text = b[4].strip()
-                if not text:
+                if not text or is_boilerplate(text):
                     continue
 
                 bbox = [round(b[0], 2), round(b[1], 2), round(b[2], 2), round(b[3], 2)]
@@ -183,8 +199,9 @@ def parse_pdf_document(file_path: str) -> tuple[dict[str, Any], list[SourceUnit]
                     "text_preview": text[:80],
                 })
 
+        total_pages = len(doc)
         doc.close()
-        logger.info(f"PyMuPDF parsed {len(source_units)} units across {len(doc)} pages with column sorting.")
+        logger.info(f"PyMuPDF parsed {len(source_units)} units across {total_pages} pages with column sorting.")
 
     except ImportError:
         logger.warning("PyMuPDF (fitz) is not installed. Using raw text fallback parser.")

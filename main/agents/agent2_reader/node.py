@@ -35,24 +35,25 @@ class ReaderAgent(BaseAgent):
             document_schema = schema
             source_units.extend([u.to_dict() for u in units])
 
-        # 2. Also map retrieved chunks into uniform SourceUnits
-        curr_offset = sum(len(u.get("text", "")) for u in source_units)
-        for i, doc in enumerate(retrieved_docs):
-            text = doc.get("text", "")
-            if not text:
-                continue
-            doc_id = doc.get("doc_id") or doc.get("id") or f"retrieved_{i}"
-            page_no = doc.get("page_no", 1)
+        # 2. Also map retrieved chunks into uniform SourceUnits (only if no direct PDF provided)
+        if not pdf_path:
+            curr_offset = sum(len(u.get("text", "")) for u in source_units)
+            for i, doc in enumerate(retrieved_docs):
+                text = doc.get("text", "")
+                if not text:
+                    continue
+                doc_id = doc.get("doc_id") or doc.get("id") or f"retrieved_{i}"
+                page_no = doc.get("page_no", 1)
 
-            unit = SourceUnit(
-                id=f"{doc_id}_unit_{i}",
-                text=text,
-                doc_id=doc_id,
-                page_no=page_no,
-                character_offset=curr_offset,
-            )
-            source_units.append(unit.to_dict())
-            curr_offset += len(text) + 1
+                unit = SourceUnit(
+                    id=f"{doc_id}_unit_{i}",
+                    text=text,
+                    doc_id=doc_id,
+                    page_no=page_no,
+                    character_offset=curr_offset,
+                )
+                source_units.append(unit.to_dict())
+                curr_offset += len(text) + 1
 
         if not document_schema:
             document_schema = {

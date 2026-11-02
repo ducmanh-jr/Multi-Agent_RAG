@@ -25,16 +25,30 @@ class WriterAgent(BaseAgent):
         verified_claims = state.get("verified_claims", []) or []
         rejected_claims = state.get("rejected_claims", []) or []
         retrieved_docs = state.get("retrieved_docs", []) or []
+        answer = state.get("answer", "")
 
         self.logger.info(
             f"WriterAgent compiling final report: {len(verified_claims)} verified claims, {len(rejected_claims)} rejected."
         )
+
+        answer_status = state.get("answer_status")
+        short_answer = state.get("short_answer")
+        evidence_spans = state.get("evidence_spans", []) or []
+
+        statistical_audit = state.get("statistical_audit")
+        code_verification = state.get("code_verification")
 
         final_report, report_data = build_academic_report(
             query=query,
             verified_claims=verified_claims,
             rejected_claims=rejected_claims,
             retrieved_docs=retrieved_docs,
+            answer=answer,
+            answer_status=answer_status,
+            short_answer=short_answer,
+            evidence_spans=evidence_spans,
+            statistical_audit=statistical_audit,
+            code_verification=code_verification,
         )
 
         trace = self.log_action(
@@ -49,6 +63,5 @@ class WriterAgent(BaseAgent):
         return {
             "final_report": final_report,
             "written_report_data": report_data,
-            "confidence": "high" if len(verified_claims) > len(rejected_claims) else "low",
             "reasoning_trace": [trace],
         }

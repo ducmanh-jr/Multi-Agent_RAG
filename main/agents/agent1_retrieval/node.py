@@ -46,36 +46,13 @@ class RetrievalAgent(BaseAgent):
             except Exception as e:
                 self.logger.warning(f"Could not load corpus from {corpus_path}: {e}")
 
-        # Fallback sample academic corpus if empty
-        if not docs:
-            docs = [
-                {
-                    "id": "doc_1",
-                    "doc_id": "transformer_vaswani_2017",
-                    "title": "Attention Is All You Need",
-                    "text": "The dominant sequence transduction models are based on complex recurrent or convolutional neural networks that include an encoder and a decoder. The Transformer allows for significantly more parallelization and can reach a new state of the art in translation quality after being trained for as little as twelve hours on eight P100 GPUs.",
-                    "page_no": 1,
-                },
-                {
-                    "id": "doc_2",
-                    "doc_id": "qasper_dasigi_2021",
-                    "title": "A Dataset of Information-Seeking Questions and Answers Anchored in Research Papers",
-                    "text": "QASPER consists of 5,049 questions over 1,585 NLP papers. Each question is sought by an NLP practitioner who has not read the paper, and answered by a reader who has. Dense retrieval with BGE-large achieves a Hit@5 of 40.97% and Recall@5 of 27.07% over the dev benchmark.",
-                    "page_no": 1,
-                },
-                {
-                    "id": "doc_3",
-                    "doc_id": "scifact_wadden_2020",
-                    "title": "Fact or Fiction: Verifying Scientific Claims",
-                    "text": "SciFact is a dataset for verifying scientific claims using evidence from the scientific literature. Models must retrieve abstract rationales and predict whether the evidence supports or contradicts the given claim. Atomic verification with Qwen-3B improves classification consistency.",
-                    "page_no": 1,
-                },
-            ]
-
-        self.fts5_searcher.fit(docs)
-        self.bm25_fallback.fit(docs)
-        self._corpus_loaded = True
-        self.logger.info(f"RetrievalAgent: Indexed {len(docs)} documents into C-Speed FTS5 engine.")
+        if docs:
+            self.fts5_searcher.fit(docs)
+            self.bm25_fallback.fit(docs)
+            self._corpus_loaded = True
+            self.logger.info(f"RetrievalAgent: Indexed {len(docs)} documents into C-Speed FTS5 engine.")
+        else:
+            self.logger.info("RetrievalAgent: Kho dữ liệu trống. Đang chờ tài liệu từ người dùng hoặc Scout Agent.")
 
     def run(self, state: AgentState) -> dict[str, Any]:
         query = state.get("query", "")
