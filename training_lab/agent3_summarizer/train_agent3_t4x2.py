@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-CLI Entrypoint for Agent 3 (Summarizer: Generator SFT+DPO & Critic SFT) on Kaggle Dual T4.
-Delegates to modular package `src/` (`config`, `data_loader`, `model_builder`, `trainer`, `evaluator`).
+CLI Entrypoint for Agent 3 (Summarizer: Generator SFT+RPO/DPO & Critic SFT) on Kaggle Dual T4.
 """
 
+import sys
 import argparse
+from pathlib import Path
+
+# Ensure local package `src` is always on sys.path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 from src.config import Agent3TrainingConfig
 from src.trainer import train_generator_sft_and_dpo, train_critic_sft
 from src.evaluator import evaluate_generator_and_critic

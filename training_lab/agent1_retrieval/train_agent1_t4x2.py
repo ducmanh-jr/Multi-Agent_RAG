@@ -2,10 +2,15 @@
 # -*- coding: utf-8 -*-
 """
 CLI Entrypoint for Agent 1 (Retrieval Router) Fine-Tuning on Kaggle Dual T4 (2 x 16GB VRAM).
-Delegates to modular package `src/` (`config`, `data_loader`, `model_builder`, `trainer`, `evaluator`).
 """
 
+import sys
 import argparse
+from pathlib import Path
+
+# Ensure local package `src` is always on sys.path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 from src.config import Agent1TrainingConfig
 from src.trainer import run_router_sft_training
 from src.evaluator import evaluate_router_adapter
@@ -13,7 +18,7 @@ from src.evaluator import evaluate_router_adapter
 
 def main():
     parser = argparse.ArgumentParser(description="Fine-tune Agent 1 Retrieval Router on Kaggle T4x2")
-    parser.add_argument("--epochs", type=int, default=4, help="Number of SFT training epochs")
+    parser.add_argument("--epochs", type=int, default=3, help="Number of SFT training epochs")
     parser.add_argument("--lr", type=float, default=1.5e-4, help="Peak learning rate")
     parser.add_argument("--lora-r", type=int, default=64, help="LoRA/DoRA rank r")
     parser.add_argument("--eval-only", action="store_true", help="Run post-training evaluation after SFT")

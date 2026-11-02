@@ -2,10 +2,15 @@
 # -*- coding: utf-8 -*-
 """
 CLI Entrypoint for Agent 2 (Document Reader - LayoutLMv3) Fine-Tuning on Kaggle Dual T4.
-Delegates to modular package `src/` (`config`, `data_loader`, `model_builder`, `trainer`, `evaluator`).
 """
 
+import sys
 import argparse
+from pathlib import Path
+
+# Ensure local package `src` is always on sys.path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 from src.config import Agent2TrainingConfig
 from src.trainer import run_reader_training
 from src.evaluator import evaluate_layout_parser
