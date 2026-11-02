@@ -1,27 +1,30 @@
 """
-Unified LLM & Remote Inference Client.
+Unified LLM & Remote Inference Client (L3-L4 Agentic Upgrade).
 Supports:
-  1. Google Gemini API (gemini-2.5-flash / gemini-1.5-flash) via lightweight HTTP requests.
-  2. DeepSeek / OpenAI-compatible endpoint.
-  3. Remote Kaggle Dual-GPU worker forwarding (when EXECUTION_MODE == "kaggle_gpu").
+  1. Google Gemini API (gemini-2.5-flash / gemini-1.5-flash) with quota tracking & batch JSON.
+  2. Local AMD Radeon 780M Vulkan / AVX-512 via Ollama (qwen2.5:1.5b for CPU Min, qwen2.5:7b-instruct / qwen3:8b for CPU Max).
+  3. Remote Kaggle Multi-LoRA Specialist Worker (/api/router, /api/summarize/generator, /api/summarize/critic, /api/factcheck, /generate) with canonical adapter mapping.
+  4. Remote Kaggle Max 32B Reasoning Worker (Qwen/Qwen3-32B-AWQ or QwQ-32B-AWQ on Dual T4 TP=2) with dynamic /think and /no_think control.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
-import hashlib
 from typing import Any, Optional
 import httpx
 
 from core.config import settings
-from core.db import get_cached_llm, set_cached_llm
+from core.db import get_cached_llm, log_api_usage, set_cached_llm
+from core.schemas import canonical_adapter_name
+from utils.local_vulkan_setup import probe_ollama_models
 from utils.logger import logger
 
 
 class UnifiedLLMClient:
-    """Client for generating completions, structured JSON, and routing remote inference."""
+    """Client for generating completions, structured JSON, and routing remote/local inference."""
 
     def __init__(self):
         self.settings = settings
@@ -37,10 +40,10 @@ class UnifiedLLMClient:
         agent: Optional[str] = None,
     ) -> str:
         """Main generation entry point with Semantic SQLite Cache and multi-tier fallback."""
-        # 0. Check persistent SQLite Cache
-        cache_key_str = f"{prompt}___{system_instruction or ''}___{json_mode}"
-        if agent:
-            cache_key_str += f"___{agent}"
+        target_mode = self.settings.get_agent_mode(agent) if agent else self.settings.EXECUTION_MODE
+        target_mode = (target_mode or "cpu_max").lower()
+
+        cache_key_str = f"{target_mode}___{prompt}___{system_instruction or ''}___{json_mode}___{agent or ''}"
         cache_key = hashlib.sha256(cache_key_str.encode("utf-8")).hexdigest()
         cached = get_cached_llm(cache_key)
         if cached:
@@ -48,12 +51,11 @@ class UnifiedLLMClient:
             return cached
 
         response_text = ""
+        is_cpu_mode = target_mode in ["cpu", "cpu_min", "cpu_max", "local_cpu"]
 
-        # Check per-agent execution mode: 'api' | 'model' | 'cpu'
-        target_mode = self.settings.get_agent_mode(agent) if agent else ("model" if self.settings.EXECUTION_MODE == "kaggle_gpu" else "api")
-
-        # 0. Forward to Local CPU if mode is 'cpu'
-        if target_mode == "cpu":
+        # 0. Pure Local CPU / Radeon 780M Vulkan execution (100% Offline - ZERO Cloud API calls)
+        if is_cpu_mode:
+            model_tier = "1.5b" if target_mode == "cpu_min" else "7b"
             try:
                 response_text = self._call_local_cpu(
                     prompt=prompt,
@@ -62,13 +64,27 @@ class UnifiedLLMClient:
                     max_tokens=max_tokens,
                     json_mode=json_mode,
                     agent=agent,
+                    model_tier=model_tier,
                 )
             except Exception as e:
-                logger.warning(f"Local CPU inference for agent '{agent}' failed ({e}), falling back to Gemini API...")
+                logger.info(
+                    f"[CPU Mode: {target_mode}] Local Ollama server is offline ({e}). "
+                    f"Using pure in-memory CPU extractive processing (100% offline, zero cloud API calls)."
+                )
+                response_text = self._mock_fallback(prompt, json_mode)
 
-        # 1. Forward to Kaggle if mode is 'model' and URL configured
-        elif target_mode == "model" and self.settings.REMOTE_INFERENCE_URL:
+            if response_text:
+                set_cached_llm(cache_key, prompt, response_text)
+            return response_text
+
+        # 1. Remote Kaggle Worker (Explicit Kaggle FN or Kaggle Max mode)
+        elif target_mode in ["model", "kaggle", "kaggle_fn", "kaggle_max", "kaggle_gpu"]:
+            if not self.settings.REMOTE_INFERENCE_URL:
+                raise RuntimeError(
+                    f"Kaggle mode '{target_mode}' requires REMOTE_INFERENCE_URL to be set in environment or settings."
+                )
             try:
+                canon_adapter = canonical_adapter_name(agent)
                 response_text = self._call_remote_kaggle(
                     task="generate",
                     payload={
@@ -77,14 +93,19 @@ class UnifiedLLMClient:
                         "temperature": temperature,
                         "max_tokens": max_tokens,
                         "json_mode": json_mode,
-                        "adapter": agent,
+                        "adapter": canon_adapter,
+                        "mode": target_mode,
                     },
                 )
             except Exception as e:
-                logger.warning(f"Kaggle remote for agent '{agent}' failed ({e}), falling back to local Gemini API...")
+                logger.error(f"Kaggle remote for agent '{agent}' failed ({e}). Remote GPU unavailable.")
+                raise
+            if response_text:
+                set_cached_llm(cache_key, prompt, response_text)
+            return response_text
 
-        # 2. Try Gemini API
-        if not response_text and self.settings.GEMINI_API_KEY:
+        # 2. Cloud Foundation Model (Explicit 'gemini' or 'api' mode)
+        if self.settings.GEMINI_API_KEY:
             try:
                 response_text = self._call_gemini(
                     prompt, system_instruction, temperature, max_tokens, json_mode
@@ -92,7 +113,7 @@ class UnifiedLLMClient:
             except Exception as e:
                 logger.warning(f"Gemini API call failed: {e}. Trying fallback provider...")
 
-        # 3. Try DeepSeek / OpenAI-compatible API
+        # 3. Fallback to DeepSeek / OpenAI-compatible API if Gemini fails
         if not response_text and (self.settings.DEEPSEEK_API_KEY or self.settings.OPENAI_API_KEY):
             try:
                 response_text = self._call_openai_compatible(
@@ -101,12 +122,11 @@ class UnifiedLLMClient:
             except Exception as e:
                 logger.error(f"Fallback OpenAI/DeepSeek API failed: {e}")
 
-        # 4. Deterministic Mock fallback if no API key is available
+        # 4. Fallback if cloud APIs fail
         if not response_text:
-            logger.warning("No live API keys configured! Returning heuristic deterministic response.")
+            logger.warning("Cloud APIs unreachable! Returning heuristic deterministic response.")
             response_text = self._mock_fallback(prompt, json_mode)
 
-        # Cache response before returning
         if response_text:
             set_cached_llm(cache_key, prompt, response_text)
 
@@ -129,16 +149,117 @@ class UnifiedLLMClient:
         )
         return self._clean_and_parse_json(response)
 
+    def call_kaggle_specialist(
+        self,
+        endpoint: str,
+        payload: dict[str, Any],
+        fallback_prompt: str = "",
+        fallback_system: str = "",
+        adapter: str = "generator",
+    ) -> dict[str, Any]:
+        """
+        Calls dedicated training_lab endpoints on Kaggle Multi-LoRA Worker:
+          - /api/router
+          - /api/summarize/generator
+          - /api/summarize/critic
+          - /api/factcheck
+        And automatically falls back to /generate or /api/generate with canonical adapter name!
+        """
+        base_url = (self.settings.REMOTE_INFERENCE_URL or "").rstrip("/")
+        if not base_url:
+            raise RuntimeError("Chưa kết nối được hãy kết nối lại. (REMOTE_INFERENCE_URL trống)")
+
+        canon_adapter = canonical_adapter_name(adapter)
+        clean_ep = endpoint.lstrip("/")
+        try:
+            url = f"{base_url}/{clean_ep}"
+            resp = self.http_client.post(url, json=payload, timeout=max(self.settings.REMOTE_TIMEOUT_SECONDS, 45))
+            if resp.status_code == 200:
+                data = resp.json()
+                if isinstance(data, dict):
+                    return data
+        except Exception as exc:
+            logger.info(f"[Kaggle Specialist] Dedicated endpoint /{clean_ep} fallback to /generate ({exc})")
+
+        # Fallback to /generate with canonical adapter name ('router', 'generator', 'critic')
+        raw_out = self._call_remote_kaggle(
+            task="generate",
+            payload={
+                "prompt": fallback_prompt or json.dumps(payload, ensure_ascii=False),
+                "system_instruction": fallback_system,
+                "temperature": 0.1,
+                "max_tokens": 1536,
+                "json_mode": True,
+                "adapter": canon_adapter,
+            },
+        )
+        if isinstance(raw_out, dict):
+            return raw_out
+        return self._clean_and_parse_json(str(raw_out))
+
+    def call_kaggle_max_32b(
+        self,
+        prompt: str,
+        system_instruction: Optional[str] = None,
+        enable_thinking: bool = True,
+        temperature: float = 0.2,
+        max_tokens: int = 2048,
+        json_mode: bool = False,
+    ) -> dict[str, Any]:
+        """
+        Calls Kaggle Max 32B Reasoning Model (Qwen/Qwen3-32B-AWQ or QwQ-32B-AWQ on Dual T4 TP=2).
+        Controls thinking budget via /think (for deep synthesis/verification) vs /no_think (for fast tool calls).
+        Returns {"text": ..., "thinking": ..., "parsed": ...}.
+        """
+        base_url = (self.settings.REMOTE_INFERENCE_URL or "").rstrip("/")
+        if not base_url:
+            raise RuntimeError("Chưa kết nối được hãy kết nối lại. (REMOTE_INFERENCE_URL trống)")
+
+        think_prefix = "/think\n" if enable_thinking else "/no_think\n"
+        decorated_prompt = f"{think_prefix}{prompt}"
+
+        raw_response = self._call_remote_kaggle(
+            task="generate",
+            payload={
+                "prompt": decorated_prompt,
+                "system_instruction": system_instruction,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "json_mode": json_mode,
+                "enable_thinking": enable_thinking,
+                "mode": "kaggle_max",
+                "adapter": "none",
+            },
+        )
+        raw_str = raw_response if isinstance(raw_response, str) else json.dumps(raw_response, ensure_ascii=False)
+        thinking = ""
+        think_match = re.search(r"<think>(.*?)</think>", raw_str, flags=re.DOTALL)
+        if think_match:
+            thinking = think_match.group(1).strip()
+            raw_str = re.sub(r"<think>.*?</think>", "", raw_str, flags=re.DOTALL).strip()
+
+        parsed = self._clean_and_parse_json(raw_str) if json_mode else {}
+        return {
+            "text": raw_str,
+            "thinking": thinking,
+            "parsed": parsed,
+        }
+
     def _call_gemini(
         self,
         prompt: str,
-        system_instruction: Optional[str],
-        temperature: float,
-        max_tokens: int,
-        json_mode: bool,
+        system_instruction: Optional[str] = None,
+        temperature: float = 0.2,
+        max_tokens: int = 2048,
+        json_mode: bool = False,
     ) -> str:
         """Call Gemini REST API directly with automatic multi-model fallback."""
-        candidate_models = [self.settings.DEFAULT_LLM_MODEL, self.settings.FALLBACK_LLM_MODEL]
+        candidate_models = [
+            self.settings.DEFAULT_LLM_MODEL,
+            self.settings.FALLBACK_LLM_MODEL,
+            "gemini-2.5-flash",
+            "gemini-1.5-flash",
+        ]
         last_error = None
 
         for model in candidate_models:
@@ -166,10 +287,22 @@ class UnifiedLLMClient:
             }
 
             try:
-                resp = self.http_client.post(url, json=payload, headers={"Content-Type": "application/json"}, timeout=30.0)
+                resp = self.http_client.post(
+                    url,
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
+                    timeout=35.0,
+                )
                 if resp.status_code == 200:
+                    log_api_usage("gemini", model, "generateContent")
                     data = resp.json()
-                    return data["candidates"][0]["content"]["parts"][0]["text"]
+                    cands = data.get("candidates", [])
+                    if cands:
+                        content = cands[0].get("content", {})
+                        parts = content.get("parts", [])
+                        if parts and "text" in parts[0]:
+                            return parts[0]["text"]
+                    logger.warning(f"Gemini response has no text parts: {data}")
                 elif resp.status_code in [429, 503]:
                     logger.warning(f"Gemini model {model} hit rate limit / HTTP {resp.status_code}. Trying next model...")
                     continue
@@ -235,44 +368,54 @@ class UnifiedLLMClient:
         max_tokens: int = 2048,
         json_mode: bool = False,
         agent: Optional[str] = None,
+        model_tier: str = "7b",
     ) -> str:
-        """Call local CPU inference (e.g. Ollama or OpenAI-compatible local server like Llama.cpp)."""
+        """
+        Call local inference on Lenovo ThinkBook 14 G8+ AHP (Radeon 780M Vulkan / AVX-512)
+        via Ollama or OpenAI-compatible server.
+        Automatically picks 1.5B for CPU Min and 7B/8B for CPU Max when installed.
+        """
         base_url = (self.settings.LOCAL_CPU_URL or "http://localhost:11434").rstrip("/")
-        model_name = self.settings.LOCAL_CPU_MODEL or "qwen2.5:1.5b"
+        ollama_probe = probe_ollama_models(base_url=base_url)
+        if not ollama_probe["online"]:
+            raise ConnectionError("Ollama local server not running on port 11434")
+
+        if model_tier == "1.5b":
+            model_name = ollama_probe.get("cpu_min_model") or self.settings.LOCAL_CPU_MODEL or "qwen2.5:1.5b"
+        else:
+            model_name = ollama_probe.get("cpu_max_model") or "qwen2.5:7b-instruct"
 
         messages = []
         if system_instruction:
             messages.append({"role": "system", "content": system_instruction})
         messages.append({"role": "user", "content": prompt})
 
-        # 1. Try Ollama native endpoint (/api/chat)
+        # 1. Try Ollama native endpoint (/api/chat) with Vulkan / Flash-Attention options
         ollama_url = f"{base_url}/api/chat"
-        payload = {
+        payload: dict[str, Any] = {
             "model": model_name,
             "messages": messages,
             "stream": False,
             "options": {
                 "temperature": temperature,
                 "num_predict": max_tokens,
+                "num_ctx": 4096,
             },
         }
         if json_mode:
             payload["format"] = "json"
 
-        try:
-            resp = self.http_client.post(ollama_url, json=payload, timeout=60.0)
-            if resp.status_code == 200:
-                data = resp.json()
-                content = data.get("message", {}).get("content", "")
-                if content:
-                    logger.info(f"Local CPU [Ollama {model_name}] generated response ({len(content)} chars)")
-                    return content
-        except Exception:
-            pass
+        resp = self.http_client.post(ollama_url, json=payload, timeout=75.0)
+        if resp.status_code == 200:
+            data = resp.json()
+            content = data.get("message", {}).get("content", "")
+            if content:
+                logger.info(f"Local Radeon 780M Vulkan [Ollama {model_name}] generated response ({len(content)} chars)")
+                return content
 
-        # 2. Try OpenAI-compatible endpoint (/v1/chat/completions)
+        # 2. Fallback to OpenAI-compatible endpoint (/v1/chat/completions)
         compat_url = f"{base_url}/v1/chat/completions"
-        compat_payload = {
+        compat_payload: dict[str, Any] = {
             "model": model_name,
             "messages": messages,
             "temperature": temperature,
@@ -281,27 +424,96 @@ class UnifiedLLMClient:
         if json_mode:
             compat_payload["response_format"] = {"type": "json_object"}
 
-        resp = self.http_client.post(compat_url, json=compat_payload, timeout=60.0)
+        resp = self.http_client.post(compat_url, json=compat_payload, timeout=75.0)
         resp.raise_for_status()
         data = resp.json()
         return data["choices"][0]["message"]["content"]
 
     def _call_remote_kaggle(self, task: str, payload: dict[str, Any]) -> Any:
-        """Send task to remote Kaggle GPU server."""
-        url = f"{self.settings.REMOTE_INFERENCE_URL}/api/{task}"
-        resp = self.http_client.post(url, json=payload, timeout=self.settings.REMOTE_TIMEOUT_SECONDS)
-        resp.raise_for_status()
-        result = resp.json()
-        return result.get("output", result)
+        """
+        Send task to remote Kaggle GPU server.
+        Supports:
+          1. /generate (FastAPI server in kaggle_worker.ipynb)
+          2. /api/{task} (Unified API router)
+          3. /v1/chat/completions (vLLM Dual T4 server for Qwen3-32B-AWQ / QwQ-32B-AWQ)
+        """
+        base_url = self.settings.REMOTE_INFERENCE_URL.rstrip("/")
+        timeout = max(float(self.settings.REMOTE_TIMEOUT_SECONDS), 45.0)
+
+        # Normalize adapter name so 'generator_qlora' -> 'generator', 'critic_qlora' -> 'critic', etc.
+        if "adapter" in payload and payload["adapter"] not in (None, "none"):
+            payload["adapter"] = canonical_adapter_name(str(payload["adapter"]))
+
+        # 1. Try /generate (primary endpoint in kaggle_worker.ipynb)
+        if task == "generate":
+            for ep in [f"{base_url}/generate", f"{base_url}/api/generate"]:
+                try:
+                    resp = self.http_client.post(ep, json=payload, timeout=timeout)
+                    if resp.status_code == 200:
+                        result = resp.json()
+                        if isinstance(result, dict):
+                            return (
+                                result.get("text")
+                                or result.get("output")
+                                or result.get("response")
+                                or json.dumps(result, ensure_ascii=False)
+                            )
+                        return str(result)
+                except Exception:
+                    pass
+        else:
+            try:
+                url = f"{base_url}/api/{task}"
+                resp = self.http_client.post(url, json=payload, timeout=timeout)
+                if resp.status_code == 200:
+                    result = resp.json()
+                    return result.get("output", result)
+            except Exception:
+                pass
+
+        # 2. Try direct vLLM OpenAI-compatible endpoint (/v1/chat/completions) for 32B AWQ
+        v1_url = f"{base_url}/v1/chat/completions"
+        messages = []
+        if payload.get("system_instruction"):
+            messages.append({"role": "system", "content": payload["system_instruction"]})
+        messages.append({"role": "user", "content": payload.get("prompt", "")})
+
+        candidate_models = [
+            payload.get("model"),
+            "Qwen/Qwen3-32B-AWQ",
+            "Qwen/QwQ-32B-AWQ",
+            "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B-AWQ",
+        ]
+        for model_id in candidate_models:
+            if not model_id:
+                continue
+            v1_payload: dict[str, Any] = {
+                "model": model_id,
+                "messages": messages,
+                "temperature": payload.get("temperature", 0.2),
+                "max_tokens": payload.get("max_tokens", 2048),
+            }
+            if payload.get("json_mode"):
+                v1_payload["response_format"] = {"type": "json_object"}
+            try:
+                resp = self.http_client.post(v1_url, json=v1_payload, timeout=timeout)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    return data["choices"][0]["message"]["content"]
+            except Exception:
+                continue
+
+        raise RuntimeError(f"Không thể kết nối tới Kaggle GPU Worker tại {base_url}.")
 
     def _clean_and_parse_json(self, raw_text: str) -> dict[str, Any]:
-        """Strip markdown fences and parse valid JSON."""
-        cleaned = re.sub(r"^```json\s*", "", raw_text.strip(), flags=re.MULTILINE)
+        """Strip <think> blocks and markdown fences, then parse valid JSON."""
+        no_think = re.sub(r"<think>.*?</think>", "", (raw_text or "").strip(), flags=re.DOTALL)
+        cleaned = re.sub(r"^```json\s*", "", no_think.strip(), flags=re.MULTILINE)
+        cleaned = re.sub(r"^```\s*", "", cleaned.strip(), flags=re.MULTILINE)
         cleaned = re.sub(r"```$", "", cleaned.strip(), flags=re.MULTILINE)
         try:
             return json.loads(cleaned)
         except json.JSONDecodeError:
-            # Fallback regex extraction of first {...} block
             match = re.search(r"\{.*\}", cleaned, re.DOTALL)
             if match:
                 try:
@@ -311,80 +523,242 @@ class UnifiedLLMClient:
             return {"raw_text": raw_text, "error": "Failed to parse JSON response"}
 
     def _mock_fallback(self, prompt: str, json_mode: bool) -> str:
-        """Context-aware offline fallback when API keys are unreachable."""
-        # Extract the user question specifically, not the document context
-        match = re.search(r'Câu hỏi nghiên cứu:\s*["\']?(.*?)["\']?\s*\n', prompt)
-        user_query = match.group(1).lower() if match else prompt[:120].lower()
+        """Context-aware dynamic offline fallback when API keys are unreachable or local mode.
+        Produces clean, truthful, academic summaries and handles negative/unanswered quantitative queries.
+        """
+        match = re.search(r"""(?:Câu hỏi nghiên cứu|Câu hỏi):\s*["']?(.*?)["']?\s*(?:\n|$)""", prompt, re.DOTALL)
+        user_query = match.group(1).strip() if match else prompt[:120].strip()
 
-        has_lora = "lora" in user_query or "qlora" in user_query
-        has_trans = "transformer" in user_query or "attention" in user_query
-        
-        if json_mode:
-            if has_lora:
-                return json.dumps({
-                    "answer": "Phương pháp LoRA đóng băng trọng số mô hình gốc và chèn ma trận rank thấp để giảm tham số huấn luyện. QLoRA tối ưu sâu hơn bằng cách lượng tử hóa mô hình về dạng NF4 4-bit, giúp tiết kiệm bộ nhớ GPU đáng kể.",
-                    "evidence_spans": [
-                        {
-                            "quote": "LoRA freezes the pre-trained model weights and injects trainable rank decomposition matrices.",
-                            "unit_id": "hu_et_al_2021_lora_unit_0",
-                            "doc_id": "hu_et_al_2021_lora",
-                            "page_no": 1
-                        },
-                        {
-                            "quote": "QLoRA is an efficient finetuning approach that reduces memory usage enough to finetune a 65B parameter model on a single 48GB GPU.",
-                            "unit_id": "dettmers_et_al_2023_qlora_unit_1",
-                            "doc_id": "dettmers_et_al_2023_qlora",
-                            "page_no": 1
-                        }
-                    ],
-                    "claims": [
-                        {
-                            "id": "claim_1",
-                            "text": "LoRA đóng băng trọng số gốc và tiêm ma trận rank thấp có thể huấn luyện.",
-                            "evidence_unit_id": "hu_et_al_2021_lora_unit_0"
-                        },
-                        {
-                            "id": "claim_2",
-                            "text": "QLoRA giảm sử dụng bộ nhớ cho phép tinh chỉnh mô hình 65B trên GPU đơn lẻ.",
-                            "evidence_unit_id": "dettmers_et_al_2023_qlora_unit_1"
-                        }
-                    ],
-                    "approved_claim_ids": ["claim_1", "claim_2"],
-                    "perspectives": ["Cơ chế phân rã rank thấp của LoRA", "Kỹ thuật lượng tử hóa 4-bit của QLoRA"],
-                    "sub_queries": ["LoRA low rank decomposition", "QLoRA 4-bit NF4 quantization"]
-                }, ensure_ascii=False)
-            elif has_trans:
-                return json.dumps({
-                    "answer": "Kiến trúc Transformer dựa trên cơ chế Self-Attention đạt hiệu năng cao trên các bài toán NLP và cho phép xử lý song song vượt trội.",
-                    "evidence_spans": [
-                        {
-                            "quote": "The dominant sequence transduction models are based on complex recurrent or convolutional neural networks that include an encoder and a decoder.",
-                            "unit_id": "vaswani_et_al_2017_unit_0",
-                            "doc_id": "vaswani_et_al_2017",
-                            "page_no": 1
-                        }
-                    ],
-                    "claims": [
-                        {
-                            "id": "claim_1",
-                            "text": "Kiến trúc Transformer thay thế mạng tuần hoàn bằng cơ chế Self-Attention.",
-                            "evidence_unit_id": "vaswani_et_al_2017_unit_0"
-                        }
-                    ],
-                    "approved_claim_ids": ["claim_1"],
-                    "perspectives": ["Kiến trúc Transformer Encoder-Decoder"],
-                    "sub_queries": ["Transformer self-attention mechanism"]
-                }, ensure_ascii=False)
-            else:
-                return json.dumps({
-                    "answer": "Chưa thể tổng hợp câu trả lời do không tìm thấy bằng chứng liên quan trong tài liệu đã chọn.",
+        prompt_content = prompt
+        cut_markers = [
+            "YÊU CẦU TRẢ VỀ",
+            "Yêu cầu trả về",
+            "OUTPUT FORMAT",
+            "FORMAT REQUIREMENTS",
+            "Trả về JSON",
+            "ĐỊNH DẠNG JSON",
+        ]
+        for marker in cut_markers:
+            if marker in prompt_content:
+                prompt_content = prompt_content.split(marker)[0]
+
+        unit_pattern = re.compile(
+            r"\[Unit ID:\s*([^\|]+)\s*\|\s*Doc:\s*([^\|]+)\s*\|\s*Trang:\s*(\d+)\]:?\s*(.*?)(?=\n\s*\[Unit ID:|\Z)",
+            re.DOTALL,
+        )
+        units = []
+        for m in unit_pattern.finditer(prompt_content):
+            uid = m.group(1).strip()
+            doc = m.group(2).strip()
+            page = int(m.group(3).strip())
+            body = m.group(4).strip()
+            if body:
+                units.append({"id": uid, "doc_id": doc, "page_no": page, "text": body})
+
+        def clean_doc_title(name: str) -> str:
+            s = re.sub(r"^(?:gemini|doc)_corpus_[a-f0-9]+_", "", name, flags=re.IGNORECASE)
+            s = re.sub(r"^(?:gemini|doc)_corpus_[a-f0-9]+", "", s, flags=re.IGNORECASE)
+            s = re.sub(r"^(?:gemini|doc)_[a-f0-9]+_", "", s, flags=re.IGNORECASE)
+            s = re.sub(r"^(?:gemini|doc)_[a-f0-9]+", "", s, flags=re.IGNORECASE)
+            s = re.sub(r"^(?:gemini|doc)_", "", s, flags=re.IGNORECASE)
+            s = re.sub(r"\.(?:pdf|md|txt)$", "", s, flags=re.IGNORECASE)
+            clean = s.replace("_", " ").strip()
+            return clean if clean else "Tài liệu nghiên cứu"
+
+        def is_complete_sentence(s: str) -> bool:
+            s_clean = s.strip()
+            if len(s_clean) < 30:
+                return False
+            if s_clean[-1] not in '.!?:\u201c\u201d':
+                return False
+            last_tokens = re.findall(r"\w+", s_clean)
+            last_word = last_tokens[-1].lower() if last_tokens else ""
+            dangling_words = {
+                "được", "là", "và", "của", "đã", "cho", "nhưng", "bởi", "ở", "vào",
+                "ra", "tại", "với", "về", "trong", "để", "có", "sau", "trước", "khi",
+                "mà", "theo", "các", "những", "thì", "do", "bị", "rằng", "gồm", "như",
+            }
+            if last_word in dangling_words:
+                return False
+            if not (s_clean[0].isupper() or s_clean[0].isdigit() or s_clean[0] in '\u201c\u201d\'['):
+                return False
+            return True
+
+        def is_metadata_or_header(line: str) -> bool:
+            l = line.strip()
+            if not l or len(l) < 20:
+                return True
+            if l.startswith("#") or l.startswith("---") or l.startswith("==="):
+                return True
+            bad_phrases = [
+                "Tác giả", "Năm xuất bản", "Nguồn công bố", "Liên kết tham chiếu",
+                "Quyền riêng tư", "Cookie", "Ảnh:", "Theo tư liệu", "http://", "https://",
+                "YÊU CẦU TRẢ VỀ", "ĐỊNH DẠNG JSON", "markdown bên ngoài",
+                "Tóm tắt nội dung nghiên cứu", "Bối cảnh và Giá trị khoa học",
+            ]
+            for phrase in bad_phrases:
+                if phrase.lower() in l.lower():
+                    return True
+            return False
+
+        def has_quantity_for_entity(sentence: str, query: str) -> bool:
+            s = re.sub(r"\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b", "", sentence)
+            s = re.sub(r"\b(?:ngày|tháng|năm|số)\s+\d+[\w-]*\b", "", s, flags=re.IGNORECASE)
+            s = re.sub(r"\b(19\d\d|20\d\d)\b", "", s)
+
+            num_match = re.search(r"\b\d+(?:[.,]\d+)?\b", s)
+            if not num_match:
+                return False
+
+            m = re.search(r"bao nhiêu\s+([\w\s]+)", query, re.IGNORECASE)
+            target = m.group(1).strip().split()[0] if m else ""
+            if target and target.lower() in sentence.lower():
+                return bool(
+                    re.search(r"\b\d+\s*(?:nghìn|triệu|vạn|" + re.escape(target) + r")", s, re.IGNORECASE)
+                    or re.search(re.escape(target) + r"[\w\s]{1,30}\b\d+", s, re.IGNORECASE)
+                )
+            return True
+
+        if not units:
+            return json.dumps(
+                {
+                    "answer": f"Không tìm thấy dữ liệu liên quan đến câu hỏi '{user_query}' trong tài liệu ngữ cảnh.",
                     "evidence_spans": [],
                     "claims": [],
                     "approved_claim_ids": [],
-                    "perspectives": ["Truy vấn mở rộng"],
-                    "sub_queries": []
-                }, ensure_ascii=False)
-        return "Chưa thể tổng hợp câu trả lời do thiếu bằng chứng trong kho tài liệu."
+                    "perspectives": ["Yêu cầu cung cấp tài liệu"],
+                    "sub_queries": [user_query],
+                },
+                ensure_ascii=False,
+            )
+
+        stop_words = {
+            "và", "của", "cho", "với", "như", "thế", "nào", "được", "khi", "là", "gì",
+            "ở", "đâu", "các", "những", "này", "đó", "ra", "vào", "từ", "về", "trong", "để", "có",
+        }
+        query_tokens = set(re.findall(r"\w+", user_query.lower())) - stop_words
+        try:
+            from utils.bilingual import expand_bilingual_tokens
+            query_tokens = expand_bilingual_tokens(user_query, query_tokens)
+        except Exception:
+            pass
+        is_general_summary = any(
+            w in user_query.lower()
+            for w in ["tóm tắt", "đóng góp", "phương pháp", "nội dung", "tài liệu này", "tổng quan", "summary", "overview", "chính"]
+        )
+        is_numeric_query = any(
+            w in user_query.lower() for w in ["bao nhiêu", "mấy", "số lượng", "định lượng", "tổng số", "tỷ lệ"]
+        )
+
+        candidates = []
+        for u in units:
+            raw_paras = [p.strip() for p in re.split(r"[\r\n]+", u["text"]) if len(p.strip()) > 20]
+            for p in raw_paras:
+                if is_metadata_or_header(p):
+                    continue
+                sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", p) if len(s.strip()) > 20]
+                if not sentences:
+                    sentences = [p]
+                for idx_s, s in enumerate(sentences):
+                    if is_metadata_or_header(s) or not is_complete_sentence(s):
+                        continue
+                    s_tokens = set(re.findall(r"\w+", s.lower())) - stop_words
+                    overlap = len(query_tokens & s_tokens)
+                    has_quant = has_quantity_for_entity(s, user_query)
+
+                    if is_general_summary:
+                        richness = 3 if 60 <= len(s) <= 350 else 1
+                        score = overlap * 2 + richness
+                    elif is_numeric_query:
+                        score = overlap * 2 + (6 if has_quant else 0)
+                    else:
+                        score = overlap
+
+                    # Expand ±1 neighboring sentence for richer context window
+                    window_sents = [s]
+                    if idx_s + 1 < len(sentences) and is_complete_sentence(sentences[idx_s + 1]):
+                        window_sents.append(sentences[idx_s + 1])
+                    window_text = " ".join(window_sents)
+                    candidates.append((score, window_text, u, has_quant))
+
+        candidates.sort(key=lambda x: x[0], reverse=True)
+
+        selected = []
+        seen = set()
+        for score, s, u, has_quant in candidates:
+            norm_s = re.sub(r"\s+", " ", s.lower().strip())[:90]
+            if (score > 0 or is_general_summary) and norm_s not in seen:
+                seen.add(norm_s)
+                selected.append((s, u, has_quant))
+                if len(selected) >= 4:
+                    break
+
+        if not selected:
+            return json.dumps(
+                {
+                    "answer": f"Tài liệu đã chọn không chứa nội dung trả lời cho câu hỏi: '{user_query}'.",
+                    "evidence_spans": [],
+                    "claims": [],
+                    "approved_claim_ids": [],
+                    "perspectives": ["Tìm kiếm bổ sung"],
+                    "sub_queries": [user_query],
+                },
+                ensure_ascii=False,
+            )
+
+        evidence_spans = []
+        claims = []
+        summary_bullets = []
+
+        for idx, (quote, u, has_quant) in enumerate(selected):
+            cl_id = f"claim_{idx + 1}"
+            evidence_spans.append(
+                {
+                    "quote": quote,
+                    "unit_id": u["id"],
+                    "doc_id": u["doc_id"],
+                    "page_no": u["page_no"],
+                }
+            )
+            claims.append(
+                {
+                    "id": cl_id,
+                    "text": quote,
+                    "evidence_unit_id": u["id"],
+                }
+            )
+            summary_bullets.append(f"• {quote} [{idx + 1}] (Trang {u['page_no']})")
+
+        clean_doc_names = list(dict.fromkeys(clean_doc_title(u["doc_id"]) for _, u, _ in selected))
+        doc_header = f"Dựa trên tài liệu đã chọn (**{', '.join(clean_doc_names)}**):"
+
+        any_quantity = any(has_quant for _, _, has_quant in selected)
+        if is_numeric_query and not any_quantity:
+            answer_text = (
+                f"{doc_header}\n\n"
+                f"⚠️ **Tài liệu nguồn không cung cấp số lượng hoặc con số cụ thể** cho câu hỏi: *\"{user_query}\"*.\n\n"
+                f"Văn bản nguồn chỉ đề cập đến nội dung liên quan sau:\n\n"
+                + "\n\n".join(summary_bullets)
+            )
+        elif is_general_summary:
+            answer_text = (
+                f"Dưới đây là tóm tắt các phát hiện và nội dung khoa học trọng tâm từ (**{', '.join(clean_doc_names)}**):\n\n"
+                + "\n\n".join(summary_bullets)
+            )
+        else:
+            answer_text = f"{doc_header}\n\n" + "\n\n".join(summary_bullets)
+
+        return json.dumps(
+            {
+                "answer": answer_text,
+                "evidence_spans": evidence_spans,
+                "claims": claims,
+                "approved_claim_ids": [c["id"] for c in claims],
+                "perspectives": ["Phân tích nội dung văn bản gốc"],
+                "sub_queries": [user_query],
+            },
+            ensure_ascii=False,
+        )
 
 
 llm_client = UnifiedLLMClient()
