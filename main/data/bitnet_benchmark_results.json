@@ -1,0 +1,203 @@
+{
+  "cpu_min": [
+    {
+      "id": "Q1",
+      "title": "Cốt lõi lý thuyết / Giá trị trọng số ternary",
+      "query": "Giá trị trọng số (ternary weights) mà BitNet b1.58 sử dụng là gì và nó khác gì so với 1-bit BitNet gốc?",
+      "mode": "cpu_min",
+      "latency_seconds": 4.185,
+      "fact_check_label": "support",
+      "verified_claims_count": 5,
+      "rejected_claims_count": 0,
+      "keyword_matches": [
+        "-1",
+        "0",
+        "1",
+        "ternary"
+      ],
+      "keyword_match_rate": 0.8,
+      "answer_preview": "Dựa trên tài liệu nghiên cứu liên quan đến 'Giá trị trọng số (ternary weights) mà BitNet b1.58 sử dụng là gì và nó khác gì so với 1-bit BitNet gốc?':\n\n- **Luận điểm trọng tâm**: BitNet b1.58 is based on the BitNet architecture, which is a Transformer that replaces nn.Linear with\nBitLinear. It is trained from scratch, with 1.58-bit weights and 8-bit",
+      "full_answer": "Dựa trên tài liệu nghiên cứu liên quan đến 'Giá trị trọng số (ternary weights) mà BitNet b1.58 sử dụng là gì và nó khác gì so với 1-bit BitNet gốc?':\n\n- **Luận điểm trọng tâm**: BitNet b1.58 is based on the BitNet architecture, which is a Transformer that replaces nn.Linear with\nBitLinear. It is trained from scratch, with 1.58-bit weights and 8-bit activations. Compared to the\noriginal BitNet, it introduces some modifications that we summarize below....\n- **Thông tin bổ trợ**: In this work, we introduce a significant 1-bit LLM variant called BitNet b1.58, where every parameter\nis ternary, taking on values of {-1, 0, 1}. We have added an additional value of 0 to the original 1-bit\nBitNet, resulting in 1.58 bits in the binar...\n",
+      "final_report": "# BÁO CÁO NGHIÊN CỨU KHOA HỌC (CPU MIN MODE)\n\n> **Chủ đề**: Giá trị trọng số (ternary weights) mà BitNet b1.58 sử dụng là gì và nó khác gì so với 1-bit BitNet gốc?\n\n## 1. Tóm Tắt Tổng Quan (Executive Summary)\nDựa trên tài liệu nghiên cứu liên quan đến 'Giá trị trọng số (ternary weights) mà BitNet b1.58 sử dụng là gì và nó khác gì so với 1-bit BitNet gốc?':\n\n- **Luận điểm trọng tâm**: BitNet b1.58 is based on the BitNet architecture, which is a Transformer that replaces nn.Linear with\nBitLinear. It is trained from scratch, with 1.58-bit weights and 8-bit activations. Compared to the\noriginal BitNet, it introduces some modifications that we summarize below....\n- **Thông tin bổ trợ**: In this work, we introduce a significant 1-bit LLM variant called BitNet b1.58, where every parameter\nis ternary, taking on values of {-1, 0, 1}. We have added an additional value of 0 to the original 1-bit\nBitNet, resulting in 1.58 bits in the binar...\n\n\n## 2. Các Luận Điểm Đã Được Đối Soát (Verified Findings)\n1. Dựa trên tài liệu nghiên cứu liên quan đến 'Giá trị trọng số (ternary weights) mà BitNet b1.58 sử dụng là gì và nó khác gì so với 1-bit BitNet gốc?': `[Kiểm chứng: Hợp lệ]`\n2. Luận điểm trọng tâm**: BitNet b1.58 is based on the BitNet architecture, which is a Transformer that replaces nn.Linear with `[Kiểm chứng: Hợp lệ]`\n3. BitLinear. It is trained from scratch, with 1.58-bit weights and 8-bit activations. Compared to the `[Kiểm chứng: Hợp lệ]`\n4. original BitNet, it introduces some modifications that we summarize below.... `[Kiểm chứng: Hợp lệ]`\n5. Thông tin bổ trợ**: In this work, we introduce a significant 1-bit LLM variant called BitNet b1.58, where every parameter `[Kiểm chứng: Hợp lệ]`\n\n## 3. Tài Liệu Tham Khảo (References)\n[1] arxiv_2305_lora. (Trích đoạn: doc_0)\n[2] arxiv_2309_qlora. (Trích đoạn: doc_4)\n[3] arxiv_2105_qasper. (Trích đoạn: doc_6)\n",
+      "reasoning_steps": 7,
+      "status": "SUCCESS"
+    },
+    {
+      "id": "Q2",
+      "title": "Số liệu thực nghiệm định lượng / Kích thước 70B",
+      "query": "Ở mô hình quy mô 70B (70 tỷ tham số), BitNet b1.58 đạt tốc độ nhanh hơn và tiết kiệm bộ nhớ GPU gấp bao nhiêu lần so với LLaMA?",
+      "mode": "cpu_min",
+      "latency_seconds": 4.158,
+      "fact_check_label": "support",
+      "verified_claims_count": 5,
+      "rejected_claims_count": 0,
+      "keyword_matches": [
+        "70b",
+        "memory"
+      ],
+      "keyword_match_rate": 0.4,
+      "answer_preview": "Dựa trên tài liệu nghiên cứu liên quan đến 'Ở mô hình quy mô 70B (70 tỷ tham số), BitNet b1.58 đạt tốc độ nhanh hơn và tiết kiệm bộ nhớ GPU gấp bao nhiêu lần so với LLaMA?':\n\n- **Luận điểm trọng tâm**: Throughput\nWe compare the throughput of BitNet b1.58 and LLaMA LLM with 70B parameters\non two 80GB A100 cards, using pipeline parallelism [HCB+19] s",
+      "full_answer": "Dựa trên tài liệu nghiên cứu liên quan đến 'Ở mô hình quy mô 70B (70 tỷ tham số), BitNet b1.58 đạt tốc độ nhanh hơn và tiết kiệm bộ nhớ GPU gấp bao nhiêu lần so với LLaMA?':\n\n- **Luận điểm trọng tâm**: Throughput\nWe compare the throughput of BitNet b1.58 and LLaMA LLM with 70B parameters\non two 80GB A100 cards, using pipeline parallelism [HCB+19] so that LLaMA LLM 70B could be\nrun on the devices. We increased the batch size until the GPU memory limit was reached, with a\nsequence length of 512. Tab...\n- **Thông tin bổ trợ**: Table 3: Comparison of the throughput between BitNet b1.58 70B and LLaMA LLM 70B....\n",
+      "final_report": "# BÁO CÁO NGHIÊN CỨU KHOA HỌC (CPU MIN MODE)\n\n> **Chủ đề**: Ở mô hình quy mô 70B (70 tỷ tham số), BitNet b1.58 đạt tốc độ nhanh hơn và tiết kiệm bộ nhớ GPU gấp bao nhiêu lần so với LLaMA?\n\n## 1. Tóm Tắt Tổng Quan (Executive Summary)\nDựa trên tài liệu nghiên cứu liên quan đến 'Ở mô hình quy mô 70B (70 tỷ tham số), BitNet b1.58 đạt tốc độ nhanh hơn và tiết kiệm bộ nhớ GPU gấp bao nhiêu lần so với LLaMA?':\n\n- **Luận điểm trọng tâm**: Throughput\nWe compare the throughput of BitNet b1.58 and LLaMA LLM with 70B parameters\non two 80GB A100 cards, using pipeline parallelism [HCB+19] so that LLaMA LLM 70B could be\nrun on the devices. We increased the batch size until the GPU memory limit was reached, with a\nsequence length of 512. Tab...\n- **Thông tin bổ trợ**: Table 3: Comparison of the throughput between BitNet b1.58 70B and LLaMA LLM 70B....\n\n\n## 2. Các Luận Điểm Đã Được Đối Soát (Verified Findings)\n1. Dựa trên tài liệu nghiên cứu liên quan đến 'Ở mô hình quy mô 70B (70 tỷ tham số), BitNet b1.58 đạt tốc độ nhanh hơn và tiết kiệm bộ nhớ GPU gấp bao nhiêu lần so với LLaMA?': `[Kiểm chứng: Hợp lệ]`\n2. Luận điểm trọng tâm**: Throughput `[Kiểm chứng: Hợp lệ]`\n3. We compare the throughput of BitNet b1.58 and LLaMA LLM with 70B parameters `[Kiểm chứng: Hợp lệ]`\n4. on two 80GB A100 cards, using pipeline parallelism [HCB+19] so that LLaMA LLM 70B could be `[Kiểm chứng: Hợp lệ]`\n5. run on the devices. We increased the batch size until the GPU memory limit was reached, with a `[Kiểm chứng: Hợp lệ]`\n\n## 3. Tài Liệu Tham Khảo (References)\n[1] arxiv_2309_qlora. (Trích đoạn: doc_4)\n[2] arxiv_2305_lora. (Trích đoạn: doc_0)\n",
+      "reasoning_steps": 7,
+      "status": "SUCCESS"
+    },
+    {
+      "id": "Q3",
+      "title": "Cơ chế tính toán phần cứng / Năng lượng",
+      "query": "BitNet b1.58 thay thế phép toán FP16 MACs bằng phép toán gì và điều này giúp tiết kiệm năng lượng nhân ma trận ra sao?",
+      "mode": "cpu_min",
+      "latency_seconds": 4.159,
+      "fact_check_label": "support",
+      "verified_claims_count": 5,
+      "rejected_claims_count": 0,
+      "keyword_matches": [
+        "energy",
+        "mac"
+      ],
+      "keyword_match_rate": 0.5,
+      "answer_preview": "Dựa trên tài liệu nghiên cứu liên quan đến 'BitNet b1.58 thay thế phép toán FP16 MACs bằng phép toán gì và điều này giúp tiết kiệm năng lượng nhân ma trận ra sao?':\n\n- **Luận điểm trọng tâm**: • 13B BitNet b1.58 is more efficient, in terms of latency, memory usage and energy consump-\ntion, than 3B FP16 LLM....\n- **Thông tin bổ trợ**: • 30B BitNet b",
+      "full_answer": "Dựa trên tài liệu nghiên cứu liên quan đến 'BitNet b1.58 thay thế phép toán FP16 MACs bằng phép toán gì và điều này giúp tiết kiệm năng lượng nhân ma trận ra sao?':\n\n- **Luận điểm trọng tâm**: • 13B BitNet b1.58 is more efficient, in terms of latency, memory usage and energy consump-\ntion, than 3B FP16 LLM....\n- **Thông tin bổ trợ**: • 30B BitNet b1.58 is more efficient, in terms of latency, memory usage and energy consump-\ntion, than 7B FP16 LLM....\n",
+      "final_report": "# BÁO CÁO NGHIÊN CỨU KHOA HỌC (CPU MIN MODE)\n\n> **Chủ đề**: BitNet b1.58 thay thế phép toán FP16 MACs bằng phép toán gì và điều này giúp tiết kiệm năng lượng nhân ma trận ra sao?\n\n## 1. Tóm Tắt Tổng Quan (Executive Summary)\nDựa trên tài liệu nghiên cứu liên quan đến 'BitNet b1.58 thay thế phép toán FP16 MACs bằng phép toán gì và điều này giúp tiết kiệm năng lượng nhân ma trận ra sao?':\n\n- **Luận điểm trọng tâm**: • 13B BitNet b1.58 is more efficient, in terms of latency, memory usage and energy consump-\ntion, than 3B FP16 LLM....\n- **Thông tin bổ trợ**: • 30B BitNet b1.58 is more efficient, in terms of latency, memory usage and energy consump-\ntion, than 7B FP16 LLM....\n\n\n## 2. Các Luận Điểm Đã Được Đối Soát (Verified Findings)\n1. Dựa trên tài liệu nghiên cứu liên quan đến 'BitNet b1.58 thay thế phép toán FP16 MACs bằng phép toán gì và điều này giúp tiết kiệm năng lượng nhân ma trận ra sao?': `[Kiểm chứng: Hợp lệ]`\n2. Luận điểm trọng tâm**: • 13B BitNet b1.58 is more efficient, in terms of latency, memory usage and energy consump `[Kiểm chứng: Hợp lệ]`\n3. tion, than 3B FP16 LLM.... `[Kiểm chứng: Hợp lệ]`\n4. Thông tin bổ trợ**: • 30B BitNet b1.58 is more efficient, in terms of latency, memory usage and energy consump `[Kiểm chứng: Hợp lệ]`\n5. tion, than 7B FP16 LLM.... `[Kiểm chứng: Hợp lệ]`\n\n## 3. Tài Liệu Tham Khảo (References)\n[1] arxiv_2004_scifact. (Trích đoạn: doc_7)\n[2] arxiv_2305_lora. (Trích đoạn: doc_0)\n[3] arxiv_1706_transformer. (Trích đoạn: doc_1)\n[4] arxiv_2105_qasper. (Trích đoạn: doc_6)\n[5] arxiv_2210_react. (Trích đoạn: doc_3)\n",
+      "reasoning_steps": 7,
+      "status": "SUCCESS"
+    },
+    {
+      "id": "Q4",
+      "title": "Công thức toán lượng tử hóa trọng số",
+      "query": "Công thức lượng tử hóa trọng số (weight quantization) của BitNet b1.58 sử dụng hàm gì và hệ số tỷ lệ gamma được tính như thế nào?",
+      "mode": "cpu_min",
+      "latency_seconds": 4.162,
+      "fact_check_label": "support",
+      "verified_claims_count": 5,
+      "rejected_claims_count": 0,
+      "keyword_matches": [
+        "gamma",
+        "round"
+      ],
+      "keyword_match_rate": 0.5,
+      "answer_preview": "Dựa trên tài liệu nghiên cứu liên quan đến 'Công thức lượng tử hóa trọng số (weight quantization) của BitNet b1.58 sử dụng hàm gì và hệ số tỷ lệ gamma được tính như thế nào?':\n\n- **Luận điểm trọng tâm**: Quantization Function.\nTo constrain the weights to -1, 0, or +1, we adopt an absmean quantization\nfunction. It first scales the weight matrix by i",
+      "full_answer": "Dựa trên tài liệu nghiên cứu liên quan đến 'Công thức lượng tử hóa trọng số (weight quantization) của BitNet b1.58 sử dụng hàm gì và hệ số tỷ lệ gamma được tính như thế nào?':\n\n- **Luận điểm trọng tâm**: Quantization Function.\nTo constrain the weights to -1, 0, or +1, we adopt an absmean quantization\nfunction. It first scales the weight matrix by its average absolute value, and then round each value to\nthe nearest integer among {-1, 0, +1}:...\n- **Thông tin bổ trợ**: [LTT+23] Ji Lin, Jiaming Tang, Haotian Tang, Shang Yang, Xingyu Dang, and Song Han. AWQ:\nactivation-aware weight quantization for LLM compression and acceleration. CoRR,\nabs/2306.00978, 2023....\n",
+      "final_report": "# BÁO CÁO NGHIÊN CỨU KHOA HỌC (CPU MIN MODE)\n\n> **Chủ đề**: Công thức lượng tử hóa trọng số (weight quantization) của BitNet b1.58 sử dụng hàm gì và hệ số tỷ lệ gamma được tính như thế nào?\n\n## 1. Tóm Tắt Tổng Quan (Executive Summary)\nDựa trên tài liệu nghiên cứu liên quan đến 'Công thức lượng tử hóa trọng số (weight quantization) của BitNet b1.58 sử dụng hàm gì và hệ số tỷ lệ gamma được tính như thế nào?':\n\n- **Luận điểm trọng tâm**: Quantization Function.\nTo constrain the weights to -1, 0, or +1, we adopt an absmean quantization\nfunction. It first scales the weight matrix by its average absolute value, and then round each value to\nthe nearest integer among {-1, 0, +1}:...\n- **Thông tin bổ trợ**: [LTT+23] Ji Lin, Jiaming Tang, Haotian Tang, Shang Yang, Xingyu Dang, and Song Han. AWQ:\nactivation-aware weight quantization for LLM compression and acceleration. CoRR,\nabs/2306.00978, 2023....\n\n\n## 2. Các Luận Điểm Đã Được Đối Soát (Verified Findings)\n1. Dựa trên tài liệu nghiên cứu liên quan đến 'Công thức lượng tử hóa trọng số (weight quantization) của BitNet b1.58 sử dụng hàm gì và hệ số tỷ lệ gamma được tính như thế nào?': `[Kiểm chứng: Hợp lệ]`\n2. Luận điểm trọng tâm**: Quantization Function. `[Kiểm chứng: Hợp lệ]`\n3. To constrain the weights to -1, 0, or +1, we adopt an absmean quantization `[Kiểm chứng: Hợp lệ]`\n4. function. It first scales the weight matrix by its average absolute value, and then round each value to `[Kiểm chứng: Hợp lệ]`\n5. the nearest integer among {-1, 0, +1}:... `[Kiểm chứng: Hợp lệ]`\n\n## 3. Tài Liệu Tham Khảo (References)\n[1] arxiv_2004_scifact. (Trích đoạn: doc_7)\n[2] arxiv_2305_lora. (Trích đoạn: doc_0)\n[3] arxiv_1706_transformer. (Trích đoạn: doc_1)\n[4] arxiv_2105_qasper. (Trích đoạn: doc_6)\n[5] arxiv_2210_react. (Trích đoạn: doc_3)\n",
+      "reasoning_steps": 7,
+      "status": "SUCCESS"
+    },
+    {
+      "id": "Q5_TRAP",
+      "title": "Bẫy ảo giác / Kiểm thử Fact-Check (FP4 & Attention)",
+      "query": "BitNet b1.58 có sử dụng định dạng FP4 để lượng tử hóa activation và loại bỏ hoàn toàn các lớp Attention không?",
+      "mode": "cpu_min",
+      "latency_seconds": 4.163,
+      "fact_check_label": "support",
+      "verified_claims_count": 5,
+      "rejected_claims_count": 0,
+      "keyword_matches": [
+        "không"
+      ],
+      "keyword_match_rate": 0.25,
+      "answer_preview": "Dựa trên tài liệu nghiên cứu liên quan đến 'BitNet b1.58 có sử dụng định dạng FP4 để lượng tử hóa activation và loại bỏ hoàn toàn các lớp Attention không?':\n\n- **Luận điểm trọng tâm**: [LTT+23] Ji Lin, Jiaming Tang, Haotian Tang, Shang Yang, Xingyu Dang, and Song Han. AWQ:\nactivation-aware weight quantization for LLM compression and acceleration. C",
+      "full_answer": "Dựa trên tài liệu nghiên cứu liên quan đến 'BitNet b1.58 có sử dụng định dạng FP4 để lượng tử hóa activation và loại bỏ hoàn toàn các lớp Attention không?':\n\n- **Luận điểm trọng tâm**: [LTT+23] Ji Lin, Jiaming Tang, Haotian Tang, Shang Yang, Xingyu Dang, and Song Han. AWQ:\nactivation-aware weight quantization for LLM compression and acceleration. CoRR,\nabs/2306.00978, 2023....\n- **Thông tin bổ trợ**: Table 4: Comparison of BitNet b1.58 with StableLM-3B with 2T tokens....\n",
+      "final_report": "# BÁO CÁO NGHIÊN CỨU KHOA HỌC (CPU MIN MODE)\n\n> **Chủ đề**: BitNet b1.58 có sử dụng định dạng FP4 để lượng tử hóa activation và loại bỏ hoàn toàn các lớp Attention không?\n\n## 1. Tóm Tắt Tổng Quan (Executive Summary)\nDựa trên tài liệu nghiên cứu liên quan đến 'BitNet b1.58 có sử dụng định dạng FP4 để lượng tử hóa activation và loại bỏ hoàn toàn các lớp Attention không?':\n\n- **Luận điểm trọng tâm**: [LTT+23] Ji Lin, Jiaming Tang, Haotian Tang, Shang Yang, Xingyu Dang, and Song Han. AWQ:\nactivation-aware weight quantization for LLM compression and acceleration. CoRR,\nabs/2306.00978, 2023....\n- **Thông tin bổ trợ**: Table 4: Comparison of BitNet b1.58 with StableLM-3B with 2T tokens....\n\n\n## 2. Các Luận Điểm Đã Được Đối Soát (Verified Findings)\n1. Dựa trên tài liệu nghiên cứu liên quan đến 'BitNet b1.58 có sử dụng định dạng FP4 để lượng tử hóa activation và loại bỏ hoàn toàn các lớp Attention không?': `[Kiểm chứng: Hợp lệ]`\n2. Luận điểm trọng tâm**: [LTT+23] Ji Lin, Jiaming Tang, Haotian Tang, Shang Yang, Xingyu Dang, and Song Han. AWQ: `[Kiểm chứng: Hợp lệ]`\n3. activation-aware weight quantization for LLM compression and acceleration. CoRR, `[Kiểm chứng: Hợp lệ]`\n4. abs/2306.00978, 2023.... `[Kiểm chứng: Hợp lệ]`\n5. Thông tin bổ trợ**: Table 4: Comparison of BitNet b1.58 with StableLM-3B with 2T tokens.... `[Kiểm chứng: Hợp lệ]`\n\n## 3. Tài Liệu Tham Khảo (References)\n[1] arxiv_1706_transformer. (Trích đoạn: doc_1)\n",
+      "reasoning_steps": 7,
+      "status": "SUCCESS"
+    }
+  ],
+  "cpu_max": [
+    {
+      "id": "Q1",
+      "title": "Cốt lõi lý thuyết / Giá trị trọng số ternary",
+      "query": "Giá trị trọng số (ternary weights) mà BitNet b1.58 sử dụng là gì và nó khác gì so với 1-bit BitNet gốc?",
+      "mode": "cpu_max",
+      "latency_seconds": 0.227,
+      "fact_check_label": "not_enough_info",
+      "verified_claims_count": 0,
+      "rejected_claims_count": 1,
+      "keyword_matches": [],
+      "keyword_match_rate": 0.0,
+      "answer_preview": "Chưa thể tổng hợp câu trả lời.",
+      "full_answer": "Chưa thể tổng hợp câu trả lời.",
+      "final_report": "# CẢNH BÁO ĐỘ TIN CẬY THẤP (LOW CONFIDENCE REPORT)\n\n> **Lưu ý:** Câu trả lời dưới đây chưa vượt qua được vòng kiểm chứng Fact-Check sau 3 lần thử lại.\n\n### Nội dung sơ bộ:\nChưa thể tổng hợp câu trả lời.\n\n### Khuyến nghị:\nCần cung cấp thêm tài liệu hoặc thu hẹp phạm vi câu hỏi.",
+      "reasoning_steps": 22,
+      "status": "SUCCESS"
+    },
+    {
+      "id": "Q2",
+      "title": "Số liệu thực nghiệm định lượng / Kích thước 70B",
+      "query": "Ở mô hình quy mô 70B (70 tỷ tham số), BitNet b1.58 đạt tốc độ nhanh hơn và tiết kiệm bộ nhớ GPU gấp bao nhiêu lần so với LLaMA?",
+      "mode": "cpu_max",
+      "latency_seconds": 0.06,
+      "fact_check_label": "support",
+      "verified_claims_count": 2,
+      "rejected_claims_count": 0,
+      "keyword_matches": [
+        "70b",
+        "latency",
+        "memory"
+      ],
+      "keyword_match_rate": 0.6,
+      "answer_preview": "Dựa trên tài liệu nghiên cứu về BitNet b1.58, mô hình này thể hiện hiệu suất vượt trội so với LLaMA LLM ở quy mô 70 tỷ tham số (70B) khi được thử nghiệm trên hai card đồ họa A100 80GB:\n\n- **Khả năng hỗ trợ Batch Size**: BitNet b1.58 70B có thể hỗ trợ kích thước batch (batch size) lớn gấp 11 lần so với LLaMA LLM 70B.\n- **Tốc độ xử lý (Throughput)**:",
+      "full_answer": "Dựa trên tài liệu nghiên cứu về BitNet b1.58, mô hình này thể hiện hiệu suất vượt trội so với LLaMA LLM ở quy mô 70 tỷ tham số (70B) khi được thử nghiệm trên hai card đồ họa A100 80GB:\n\n- **Khả năng hỗ trợ Batch Size**: BitNet b1.58 70B có thể hỗ trợ kích thước batch (batch size) lớn gấp 11 lần so với LLaMA LLM 70B.\n- **Tốc độ xử lý (Throughput)**: Nhờ khả năng tối ưu hóa bộ nhớ và tính toán, BitNet b1.58 70B đạt tốc độ xử lý (throughput) cao gấp 8,9 lần so với LLaMA LLM 70B.",
+      "final_report": "# Báo cáo Nghiên cứu: Ở mô hình quy mô 70B (70 tỷ tham số), BitNet b1.58 đạt tốc độ nhanh hơn và tiết kiệm bộ nhớ GPU gấp bao nhiêu lần so với LLaMA?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Dựa trên tài liệu nghiên cứu về BitNet b1.58, mô hình này thể hiện hiệu suất vượt trội so với LLaMA LLM ở quy mô 70 tỷ tham số (70B) khi được thử nghiệm trên hai card đồ họa A100 80GB:**\n\n---\n\n## 1. Tóm tắt Tổng quan (Executive Summary)\nDựa trên tài liệu nghiên cứu về BitNet b1.58, mô hình này thể hiện hiệu suất vượt trội so với LLaMA LLM ở quy mô 70 tỷ tham số (70B) khi được thử nghiệm trên hai card đồ họa A100 80GB:\n\n- **Khả năng hỗ trợ Batch Size**: BitNet b1.58 70B có thể hỗ trợ kích thước batch (batch size) lớn gấp 11 lần so với LLaMA LLM 70B.\n- **Tốc độ xử lý (Throughput)**: Nhờ khả năng tối ưu hóa bộ nhớ và tính toán, BitNet b1.58 70B đạt tốc độ xử lý (throughput) cao gấp 8,9 lần so với LLaMA LLM 70B.\n\n## 2. Kết quả Nghiên cứu & Luận điểm Đã Xác minh (Verified Findings)\n> *Không có nhận định nào vượt qua vòng kiểm chứng nghiêm ngặt do thiếu chứng cứ gốc.*\n\n## 3. Đánh giá Bình duyệt Chuyên sâu (Senior Peer-Review Audit)\n- **Kiểm toán phương pháp:** Đã kiểm tra tính nhất quán số liệu và không phát hiện mâu thuẫn nội tại.\n\n## 4. Ma trận So sánh Đa bài báo (Cross-Paper Benchmark Matrix)\n| Công Trình / Tài Liệu | Nguồn Trích Dẫn | Luận Điểm Xác Minh | Điểm Đột Phá | Giới Hạn Cần Mở Rộng |\n| :--- | :--- | :--- | :--- | :--- |\n| **Nghiên cứu #1...** (2024) | arXiv | Đã kiểm chứng trích đoạn số liệu | Tối ưu hóa hiệu năng theo bài toán | Phạm vi tập dữ liệu đối chuẩn |\n| **Nghiên cứu #2...** (2024) | arXiv | Đã kiểm chứng trích đoạn số liệu | Tối ưu hóa hiệu năng theo bài toán | Phạm vi tập dữ liệu đối chuẩn |\n| **Nghiên cứu #3...** (2024) | arXiv | Đã kiểm chứng trích đoạn số liệu | Tối ưu hóa hiệu năng theo bài toán | Phạm vi tập dữ liệu đối chuẩn |\n\n## 5. Radar Khoảng trống & Giả thuyết Nghiên cứu (Research Gap Radar)\n### [GAP-GEN-01]: Tối ưu Hóa Đa Mục tiêu cho Vấn đề: Ở mô hình quy mô 70B (70 tỷ tham số), BitNet b1.58 đạt tốc độ nhanh hơn và tiết kiệm bộ nhớ GPU gấp bao nhiêu lần so với LLaMA?\n- **Khoảng trống Nghiên cứu (Research Gap):** Các công trình hiện tại chủ yếu tập trung vào việc cải thiện độ chính xác đơn lẻ mà chưa giải quyết bài toán cân bằng giữa độ trễ suy luận thời gian thực và chi phí bộ nhớ trong môi trường hạn chế tài nguyên.\n- **Đề xuất Kiến trúc Mới (Novel Formulation):** Đề xuất khuôn khổ Pareto-optimal tích hợp bộ ước lượng chi phí phần cứng trực tiếp vào vòng lặp tối ưu hóa thuật toán.\n- **Giao thức Thực nghiệm Kiểm chứng (Verification Protocol):** Đo đạc đường cong Pareto Frontier đối chuẩn giữa độ trễ (latency ms) và độ chính xác (accuracy/F1) trên 3 tập benchmark tiêu chuẩn.\n\n### [GAP-GEN-02]: Mở rộng Khả năng Khái quát hóa Ngữ cảnh Siêu Dài (Cross-Domain Robustness)\n- **Khoảng trống Nghiên cứu (Research Gap):** Hiệu năng phương pháp có xu hướng suy giảm khi phân phối dữ liệu đầu vào dịch chuyển hoặc khi độ dài ngữ cảnh vượt quá phạm vi huấn luyện ban đầu.\n- **Đề xuất Kiến trúc Mới (Novel Formulation):** Tích hợp cơ chế nội suy vị trí thích ứng (adaptive positional interpolation) kết hợp kiểm soát độ trôi gradient.\n- **Giao thức Thực nghiệm Kiểm chứng (Verification Protocol):** Thử nghiệm stress-test trên bộ dữ liệu tổng hợp với độ nhiễu tăng dần từ 10% đến 50%.\n\n## 6. Danh mục Tài liệu Trích dẫn (Evidence References)\n[1] **2402.17764_BitNet_b158** (Trang 4). *\"Table 3 shows that BitNet b1.58 70B can support up to 11 times the batch size of LLaMA LLM, resulting an 8.9 times higher throughput....\"*\n[2] **arxiv_2309_qlora** (Trang 1). *\"QLoRA is an efficient finetuning approach that reduces memory usage enough to finetune a 65B parameter model on a single 48GB GPU while pres...\"*\n[3] **arxiv_2305_lora** (Trang 1). *\"Low-Rank Adaptation, or LoRA, freezes the pre-trained model weights and injects trainable rank decomposition matrices into each layer of the...\"*\n[4] **arxiv_2005_rag** (Trang 1). *\"Large pre-trained language models have been shown to store factual knowledge in their parameters, and achieve state-of-the-art results when...\"*\n",
+      "reasoning_steps": 7,
+      "status": "SUCCESS"
+    },
+    {
+      "id": "Q3",
+      "title": "Cơ chế tính toán phần cứng / Năng lượng",
+      "query": "BitNet b1.58 thay thế phép toán FP16 MACs bằng phép toán gì và điều này giúp tiết kiệm năng lượng nhân ma trận ra sao?",
+      "mode": "cpu_max",
+      "latency_seconds": 0.059,
+      "fact_check_label": "support",
+      "verified_claims_count": 3,
+      "rejected_claims_count": 0,
+      "keyword_matches": [
+        "addition",
+        "int8",
+        "energy",
+        "mac"
+      ],
+      "keyword_match_rate": 1.0,
+      "answer_preview": "Dựa trên tài liệu nghiên cứu về BitNet b1.58, dưới đây là tóm tắt về cách thức thay thế phép toán và hiệu quả năng lượng của mô hình này:\n\n- **Thay thế phép toán**: BitNet b1.58 thay thế các phép toán nhân ma trận truyền thống (vốn sử dụng phép nhân và cộng số thực dấu phẩy động FP16) bằng các phép toán cộng số nguyên (INT8). Trong khi các mô hình ",
+      "full_answer": "Dựa trên tài liệu nghiên cứu về BitNet b1.58, dưới đây là tóm tắt về cách thức thay thế phép toán và hiệu quả năng lượng của mô hình này:\n\n- **Thay thế phép toán**: BitNet b1.58 thay thế các phép toán nhân ma trận truyền thống (vốn sử dụng phép nhân và cộng số thực dấu phẩy động FP16) bằng các phép toán cộng số nguyên (INT8). Trong khi các mô hình ngôn ngữ lớn (LLM) thông thường dựa trên cả phép cộng và nhân FP16, thì phần lớn các phép tính trong BitNet b1.58 chỉ đơn thuần là phép cộng INT8.\n\n- **Tiết kiệm năng lượng**: Việc chuyển đổi sang phép cộng số nguyên giúp tiết kiệm đáng kể năng lượng tiêu thụ cho các phép toán nhân ma trận. Theo mô hình năng lượng được trích dẫn, BitNet b1.58 có thể tiết kiệm tới 71,4 lần năng lượng tiêu thụ cho các phép toán số học trong nhân ma trận trên các chip 7nm. Hiệu quả này càng trở nên rõ rệt khi quy mô mô hình tăng lên, do tỷ trọng của các lớp tuyến tính (nn.Linear) chiếm ưu thế trong tổng chi phí tính toán.",
+      "final_report": "# Báo cáo Nghiên cứu: BitNet b1.58 thay thế phép toán FP16 MACs bằng phép toán gì và điều này giúp tiết kiệm năng lượng nhân ma trận ra sao?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Dựa trên tài liệu nghiên cứu về BitNet b1.58, dưới đây là tóm tắt về cách thức thay thế phép toán và hiệu quả năng lượng của mô hình này:**\n\n---\n\n## 1. Tóm tắt Tổng quan (Executive Summary)\nDựa trên tài liệu nghiên cứu về BitNet b1.58, dưới đây là tóm tắt về cách thức thay thế phép toán và hiệu quả năng lượng của mô hình này:\n\n- **Thay thế phép toán**: BitNet b1.58 thay thế các phép toán nhân ma trận truyền thống (vốn sử dụng phép nhân và cộng số thực dấu phẩy động FP16) bằng các phép toán cộng số nguyên (INT8). Trong khi các mô hình ngôn ngữ lớn (LLM) thông thường dựa trên cả phép cộng và nhân FP16, thì phần lớn các phép tính trong BitNet b1.58 chỉ đơn thuần là phép cộng INT8.\n\n- **Tiết kiệm năng lượng**: Việc chuyển đổi sang phép cộng số nguyên giúp tiết kiệm đáng kể năng lượng tiêu thụ cho các phép toán nhân ma trận. Theo mô hình năng lượng được trích dẫn, BitNet b1.58 có thể tiết kiệm tới 71,4 lần năng lượng tiêu thụ cho các phép toán số học trong nhân ma trận trên các chip 7nm. Hiệu quả này càng trở nên rõ rệt khi quy mô mô hình tăng lên, do tỷ trọng của các lớp tuyến tính (nn.Linear) chiếm ưu thế trong tổng chi phí tính toán.\n\n## 2. Kết quả Nghiên cứu & Luận điểm Đã Xác minh (Verified Findings)\n> *Không có nhận định nào vượt qua vòng kiểm chứng nghiêm ngặt do thiếu chứng cứ gốc.*\n\n## 3. Đánh giá Bình duyệt Chuyên sâu (Senior Peer-Review Audit)\n- **Kiểm toán phương pháp:** Đã kiểm tra tính nhất quán số liệu và không phát hiện mâu thuẫn nội tại.\n\n## 4. Ma trận So sánh Đa bài báo (Cross-Paper Benchmark Matrix)\n| Công Trình / Tài Liệu | Nguồn Trích Dẫn | Luận Điểm Xác Minh | Điểm Đột Phá | Giới Hạn Cần Mở Rộng |\n| :--- | :--- | :--- | :--- | :--- |\n| **Nghiên cứu #1...** (2024) | arXiv | Đã kiểm chứng trích đoạn số liệu | Tối ưu hóa hiệu năng theo bài toán | Phạm vi tập dữ liệu đối chuẩn |\n| **Nghiên cứu #2...** (2024) | arXiv | Đã kiểm chứng trích đoạn số liệu | Tối ưu hóa hiệu năng theo bài toán | Phạm vi tập dữ liệu đối chuẩn |\n| **Nghiên cứu #3...** (2024) | arXiv | Đã kiểm chứng trích đoạn số liệu | Tối ưu hóa hiệu năng theo bài toán | Phạm vi tập dữ liệu đối chuẩn |\n\n## 5. Radar Khoảng trống & Giả thuyết Nghiên cứu (Research Gap Radar)\n### [GAP-GEN-01]: Tối ưu Hóa Đa Mục tiêu cho Vấn đề: BitNet b1.58 thay thế phép toán FP16 MACs bằng phép toán gì và điều này giúp tiết kiệm năng lượng nhân ma trận ra sao?\n- **Khoảng trống Nghiên cứu (Research Gap):** Các công trình hiện tại chủ yếu tập trung vào việc cải thiện độ chính xác đơn lẻ mà chưa giải quyết bài toán cân bằng giữa độ trễ suy luận thời gian thực và chi phí bộ nhớ trong môi trường hạn chế tài nguyên.\n- **Đề xuất Kiến trúc Mới (Novel Formulation):** Đề xuất khuôn khổ Pareto-optimal tích hợp bộ ước lượng chi phí phần cứng trực tiếp vào vòng lặp tối ưu hóa thuật toán.\n- **Giao thức Thực nghiệm Kiểm chứng (Verification Protocol):** Đo đạc đường cong Pareto Frontier đối chuẩn giữa độ trễ (latency ms) và độ chính xác (accuracy/F1) trên 3 tập benchmark tiêu chuẩn.\n\n### [GAP-GEN-02]: Mở rộng Khả năng Khái quát hóa Ngữ cảnh Siêu Dài (Cross-Domain Robustness)\n- **Khoảng trống Nghiên cứu (Research Gap):** Hiệu năng phương pháp có xu hướng suy giảm khi phân phối dữ liệu đầu vào dịch chuyển hoặc khi độ dài ngữ cảnh vượt quá phạm vi huấn luyện ban đầu.\n- **Đề xuất Kiến trúc Mới (Novel Formulation):** Tích hợp cơ chế nội suy vị trí thích ứng (adaptive positional interpolation) kết hợp kiểm soát độ trôi gradient.\n- **Giao thức Thực nghiệm Kiểm chứng (Verification Protocol):** Thử nghiệm stress-test trên bộ dữ liệu tổng hợp với độ nhiễu tăng dần từ 10% đến 50%.\n\n## 6. Danh mục Tài liệu Trích dẫn (Evidence References)\n[1] **2402.17764_BitNet_b158** (Trang 4). *\"The majority of BitNet b1.58 is INT8 addition calculation, while LLaMA LLM consists of both FP16 addition and FP16 multiplication....\"*\n[2] **2402.17764_BitNet_b158** (Trang 2). *\"In contrast, the matrix multiplication of BitNet only involves integer addition, which saves orders of energy cost for LLMs....\"*\n[3] **arxiv_2305_lora** (Trang 1). *\"Low-Rank Adaptation, or LoRA, freezes the pre-trained model weights and injects trainable rank decomposition matrices into each layer of the...\"*\n[4] **arxiv_1706_transformer** (Trang 1). *\"The dominant sequence transduction models are based on complex recurrent or convolutional neural networks that include an encoder and a deco...\"*\n[5] **arxiv_2210_react** (Trang 1). *\"While large language models (LLMs) have demonstrated impressive performance across various NLP tasks in few-shot and zero-shot settings, the...\"*\n[6] **arxiv_2105_qasper** (Trang 1). *\"QASPER consists of 5,049 questions over 1,585 NLP papers. Each question is sought by an NLP practitioner who has not read the paper, and ans...\"*\n[7] **arxiv_2004_scifact** (Trang 1). *\"SciFact is a dataset for verifying scientific claims using evidence from the scientific literature. Models must retrieve abstract rationales...\"*\n",
+      "reasoning_steps": 7,
+      "status": "SUCCESS"
+    },
+    {
+      "id": "Q4",
+      "title": "Công thức toán lượng tử hóa trọng số",
+      "query": "Công thức lượng tử hóa trọng số (weight quantization) của BitNet b1.58 sử dụng hàm gì và hệ số tỷ lệ gamma được tính như thế nào?",
+      "mode": "cpu_max",
+      "latency_seconds": 0.229,
+      "fact_check_label": "not_enough_info",
+      "verified_claims_count": 0,
+      "rejected_claims_count": 1,
+      "keyword_matches": [],
+      "keyword_match_rate": 0.0,
+      "answer_preview": "Chưa thể tổng hợp câu trả lời.",
+      "full_answer": "Chưa thể tổng hợp câu trả lời.",
+      "final_report": "# CẢNH BÁO ĐỘ TIN CẬY THẤP (LOW CONFIDENCE REPORT)\n\n> **Lưu ý:** Câu trả lời dưới đây chưa vượt qua được vòng kiểm chứng Fact-Check sau 3 lần thử lại.\n\n### Nội dung sơ bộ:\nChưa thể tổng hợp câu trả lời.\n\n### Khuyến nghị:\nCần cung cấp thêm tài liệu hoặc thu hẹp phạm vi câu hỏi.",
+      "reasoning_steps": 22,
+      "status": "SUCCESS"
+    },
+    {
+      "id": "Q5_TRAP",
+      "title": "Bẫy ảo giác / Kiểm thử Fact-Check (FP4 & Attention)",
+      "query": "BitNet b1.58 có sử dụng định dạng FP4 để lượng tử hóa activation và loại bỏ hoàn toàn các lớp Attention không?",
+      "mode": "cpu_max",
+      "latency_seconds": 0.06,
+      "fact_check_label": "support",
+      "verified_claims_count": 3,
+      "rejected_claims_count": 0,
+      "keyword_matches": [
+        "không"
+      ],
+      "keyword_match_rate": 0.25,
+      "answer_preview": "Dựa trên các tài liệu đã chọn (2402.17764_BitNet_b158):\n\n- Table 4: Comparison of BitNet b1.58 with StableLM-3B with 2T tokens. [1]\n\n- Table 1: Perplexity as well as the cost of BitNet b1.58 and LLaMA LLM. [2]\n\n- Table 3: Comparison of the throughput between BitNet b1.58 70B and LLaMA LLM 70B. [3]\n\n- Table 2: Zero-shot accuracy of BitNet b1.58 and ",
+      "full_answer": "Dựa trên các tài liệu đã chọn (2402.17764_BitNet_b158):\n\n- Table 4: Comparison of BitNet b1.58 with StableLM-3B with 2T tokens. [1]\n\n- Table 1: Perplexity as well as the cost of BitNet b1.58 and LLaMA LLM. [2]\n\n- Table 3: Comparison of the throughput between BitNet b1.58 70B and LLaMA LLM 70B. [3]\n\n- Table 2: Zero-shot accuracy of BitNet b1.58 and LLaMA LLM on the end tasks. [4]",
+      "final_report": "# Báo cáo Nghiên cứu: BitNet b1.58 có sử dụng định dạng FP4 để lượng tử hóa activation và loại bỏ hoàn toàn các lớp Attention không?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Dựa trên các tài liệu đã chọn (2402.17764_BitNet_b158):**\n\n---\n\n## 1. Tóm tắt Tổng quan (Executive Summary)\nDựa trên các tài liệu đã chọn (2402.17764_BitNet_b158):\n\n- Table 4: Comparison of BitNet b1.58 with StableLM-3B with 2T tokens. [1]\n\n- Table 1: Perplexity as well as the cost of BitNet b1.58 and LLaMA LLM. [2]\n\n- Table 3: Comparison of the throughput between BitNet b1.58 70B and LLaMA LLM 70B. [3]\n\n- Table 2: Zero-shot accuracy of BitNet b1.58 and LLaMA LLM on the end tasks. [4]\n\n## 2. Kết quả Nghiên cứu & Luận điểm Đã Xác minh (Verified Findings)\n> *Không có nhận định nào vượt qua vòng kiểm chứng nghiêm ngặt do thiếu chứng cứ gốc.*\n\n## 3. Đánh giá Bình duyệt Chuyên sâu (Senior Peer-Review Audit)\n- **Kiểm toán phương pháp:** Đã kiểm tra tính nhất quán số liệu và không phát hiện mâu thuẫn nội tại.\n\n## 4. Ma trận So sánh Đa bài báo (Cross-Paper Benchmark Matrix)\n| Phương Pháp / Công Trình | Cơ Chế Kỹ Thuật Cốt Lõi | Bộ Nhớ VRAM (HBM Traffic) | Độ Phức Tạp Tính Toán | Giới Hạn Đã Thừa Nhận |\n| :--- | :--- | :--- | :--- | :--- |\n| **Standard Attention** (Vaswani 2017) | Scaled Dot-Product toàn cục, ghi ma trận $N \\times N$ ra HBM | $\\mathcal{O}(N^2)$ — Nghẽn băng thông bộ nhớ | $\\mathcal{O}(N^2 \\cdot d)$ FLOPs | VRAM bùng nổ khi context vượt quá 4k/8k tokens |\n| **FlashAttention-1/2** (Dao et al.) | Tiling phân khối SRAM, Fused Softmax Online, không ghi $N \\times N$ | $\\mathcal{O}(N)$ — Giảm 5x-20x lượt truy cập HBM | $\\mathcal{O}(N^2 \\cdot d)$ FLOPs (IO-Aware) | Phụ thuộc sâu vào phần cứng GPU NVIDIA (SRAM size) |\n| **Low-Cost / Tiled Variant** (2025-2026) | Tối ưu hóa Fused Exponential & Phép nhân phần cứng bậc thấp | Giảm tiêu thụ năng lượng toán tử exp | Xấp xỉ số với sai số số học tối thiểu | Cần compiler hỗ trợ tập lệnh chuyên dụng |\n\n## 5. Radar Khoảng trống & Giả thuyết Nghiên cứu (Research Gap Radar)\n### [GAP-01]: Kiến trúc Fused FlashAttention Thích ứng Băng thông Đa Nền tảng (Adaptive Cross-Hardware Tile Attention)\n- **Khoảng trống Nghiên cứu (Research Gap):** Các công trình hiện hành tối ưu hóa bộ nhớ SRAM dựa trên kiến trúc phần cứng cố định của NVIDIA Hopper/Blackwell, nhưng thiếu tính tổng quát cho các NPU và kiến trúc bộ nhớ chia sẻ (Unified Memory).\n- **Đề xuất Kiến trúc Mới (Novel Formulation):** Thiết kế thuật toán phân khối ngói (Tiling) động tự thích ứng theo dung lượng L1/SRAM khả dụng tại runtime mà không cần biên dịch lại hạt nhân CUDA.\n- **Giao thức Thực nghiệm Kiểm chứng (Verification Protocol):** Đo kiểm độ trễ truy cập HBM, hiệu suất FLOPs và độ tiêu hao năng lượng trên đồng thời 3 nền tảng: NVIDIA GPU, AMD ROCm và Apple Silicon Unified Memory.\n\n### [GAP-02]: Kết hợp FlashAttention Tiling với Lượng tử hóa Trọng số Không Đẳng hướng (FP4/INT4 Asymmetric Attention)\n- **Khoảng trống Nghiên cứu (Research Gap):** Chưa có nghiên cứu hoàn chỉnh về việc duy trì độ ổn định số học của Online Softmax khi tích hợp trực tiếp phép lượng tử hóa 4-bit cực hạn vào SRAM ngói.\n- **Đề xuất Kiến trúc Mới (Novel Formulation):** Áp dụng cơ chế vi scaling (micro-scaling) trong từng block tính toán cục bộ trước khi thực hiện phép cộng dồn lũy thừa.\n- **Giao thức Thực nghiệm Kiểm chứng (Verification Protocol):** Đánh giá Perplexity (PPL) trên mô hình 70B với chiều dài ngữ cảnh 128k tokens và đo đạc băng thông bộ nhớ thực tế.\n\n## 6. Danh mục Tài liệu Trích dẫn (Evidence References)\n[1] **2402.17764_BitNet_b158** (Trang 5). *\"Table 4: Comparison of BitNet b1.58 with StableLM-3B with 2T tokens....\"*\n[2] **2402.17764_BitNet_b158** (Trang 3). *\"Table 1: Perplexity as well as the cost of BitNet b1.58 and LLaMA LLM....\"*\n[3] **2402.17764_BitNet_b158** (Trang 4). *\"Table 3: Comparison of the throughput between BitNet b1.58 70B and LLaMA LLM 70B....\"*\n[4] **arxiv_1706_transformer** (Trang 1). *\"The dominant sequence transduction models are based on complex recurrent or convolutional neural networks that include an encoder and a deco...\"*\n[5] **arxiv_2305_lora** (Trang 1). *\"Low-Rank Adaptation, or LoRA, freezes the pre-trained model weights and injects trainable rank decomposition matrices into each layer of the...\"*\n",
+      "reasoning_steps": 7,
+      "status": "SUCCESS"
+    }
+  ]
+}

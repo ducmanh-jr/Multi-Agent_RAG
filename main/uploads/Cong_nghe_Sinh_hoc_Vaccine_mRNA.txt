@@ -1,0 +1,1 @@
+Công nghệ vắc-xin mRNA đưa phân tử RNA thông tin tổng hợp mã hóa kháng nguyên protein gai Spike vào tế bào chất. Ribosome của vật chủ dịch mã chuỗi mRNA để tạo ra kháng nguyên vô hại, kích thích phản ứng miễn dịch thể dịch sinh kháng thể trung hòa và tế bào T nhớ mà không cần dùng đến virus sống.
