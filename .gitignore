@@ -19,6 +19,6 @@ main/*.db
 # Files strictly exceeding GitHub's 100MB single-file limit (Base Embedding & LayoutLMv3 480MB)
 main/models/multilingual-e5-small/model.safetensors
 **/layoutlmv3_doclaynet_model/model.safetensors
-training_lab/agent3_summarizer/Weights/
+training_lab/agent2_reader/weights/model.safetensors
 main/modes/kaggle_fn/weights/
 main/weights/

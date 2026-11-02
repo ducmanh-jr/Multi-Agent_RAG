@@ -1,27 +1,53 @@
-# 🧬 Phòng Thí Nghiệm Huấn Luyện Multi-LoRA & NLI (`training_lab/`)
+# 🧬 Phòng Thí Nghiệm Fine-Tune Phân Tách Theo Từng Agent (`training_lab/`)
 
-`training_lab/` là thư mục chuyên trách việc **sinh dữ liệu huấn luyện (SFT + DPO + Hard Negatives)** và **tinh chỉnh các bộ trọng số QLoRA / Cross-Encoder** cho hệ thống Multi-Agent RAG.
-
-Đặc biệt, thư mục này đã được tích hợp sẵn **Notebook tự động hóa hoàn toàn (`GitHub Clone + Google Drive Sync 2 chiều`)** để bạn không bao giờ phải tải hay upload dữ liệu/trọng số thủ công.
+Thư mục `training_lab/` đã được dọn sạch toàn bộ các file rác và chuẩn hóa theo cấu trúc **Mỗi Agent Một Thư Mục Độc Lập**, tối ưu hóa cực đại cho phần cứng **Kaggle Dual Tesla T4 (`2 × 16GB = 32GB VRAM`)**.
 
 ---
 
-## 🗂️ Cấu Trúc Thư Mục `training_lab/`
+## 📂 Cấu Trúc Phân Tách Từng Agent Trong `training_lab/`
 
-| Thư mục / Tệp | Chức năng chi tiết |
-| :--- | :--- |
-| **[`Train_Master_GitHub_Drive.ipynb`](Train_Master_GitHub_Drive.ipynb)** | **Notebook Huấn Luyện Chính (1-Click)**: Tự động `git clone` dự án từ GitHub, kết nối Google Drive (`drive.mount` hoặc `gdown`), chạy huấn luyện SFT + DPO cho cả 3 LoRA Adapters + NLI Verifier và tự động nén + sao lưu `weights_bundle_v2.zip` lên Google Drive. |
-| **[`kaggle_fn_v2/`](kaggle_fn_v2/)** | **Pipeline Huấn Luyện Thế Hệ Mới (v2)**:<br/>• `01_generate_sft_dpo_dataset.py`: Trích xuất 2,667 mẫu huấn luyện từ kho PDF.<br/>• `02_train_multilora_sft_dpo.py`: Huấn luyện QLoRA 4-bit NF4 (`r=32, alpha=64, DoRA`) với SFT + DPO ($\beta=0.1$).<br/>• `datasets/`: Chứa 5 tập dữ liệu `.jsonl` đã tạo sẵn. |
-| **[`weights_drive_bundle/`](weights_drive_bundle/)** | **Bộ Trọng Số QLoRA Chuẩn `float16` (Sẵn Sàng Sử Dụng)**:<br/>• `agent1_router/` (`77 MB`): Adapter phân tích ý định & tách truy vấn.<br/>• `generator_qlora/final/` (`77 MB`): Adapter tổng hợp câu trả lời có trích dẫn.<br/>• `critic_qlora/final/` (`19 MB`): Adapter tự phản biện phát hiện ảo giác.<br/>• `layoutlmv3_doclaynet_model/`: Cấu hình nhận diện bố cục PDF. |
-| `agent1_retrieval/` .. `agent4_factchecker/` | Lưu trữ các kịch bản huấn luyện riêng lẻ của từng Agent ở phiên bản v1. |
+```text
+training_lab/
+├── README.md                                      # Tài liệu tổng quan kiến trúc Fine-Tune T4x2
+├── Train_Master_T4x2.ipynb                        # Notebook tổng hợp (chạy cả 3 Agent trong 1 lần bấm)
+│
+├── agent1_retrieval/                              # [AGENT 1] RETRIEVAL ROUTER & SUPERVISOR PLANNER
+│   ├── README.md
+│   ├── Train_Agent1_Router_T4x2.ipynb             # Notebook riêng để train Agent 1 trên Kaggle T4x2
+│   ├── train_agent1_t4x2.py                       # Script QLoRA + DoRA (r=64, alpha=128, NEFTune)
+│   ├── dataset/router_sft.jsonl                   # 381 mẫu SFT phân tích độ phức tạp & tách truy vấn
+│   └── weights/                                   # Trọng số Agent 1 (adapter_model.safetensors - 77 MB)
+│
+├── agent2_reader/                                 # [AGENT 2] DOCUMENT LAYOUT & STRUCTURE READER
+│   ├── README.md
+│   └── weights/                                   # Cấu hình nhận diện bố cục PDF (LayoutLMv3 DocLayNet)
+│
+├── agent3_summarizer/                             # [AGENT 3] SUMMARIZER (GENERATOR SFT+DPO & CRITIC)
+│   ├── README.md
+│   ├── Train_Agent3_Summarizer_T4x2.ipynb         # Notebook riêng để train Agent 3 trên Kaggle T4x2
+│   ├── train_agent3_t4x2.py                       # Script 2 chặng: Generator (SFT + DPO) & Critic (Hard-Negatives)
+│   ├── dataset/
+│   │   ├── generator_sft.jsonl                    # 381 mẫu tổng hợp gắn trích dẫn [1], [2]
+│   │   ├── generator_dpo.jsonl                    # 381 cặp ưu tiên DPO (Chosen vs Rejected)
+│   │   └── critic_sft.jsonl                       # 762 mẫu tự phản biện có gài bẫy số liệu
+│   └── weights/
+│       ├── generator_qlora/                       # Trọng số Generator QLoRA (77 MB chuẩn FP16)
+│       └── critic_qlora/                          # Trọng số Critic QLoRA (19 MB chuẩn FP16)
+│
+└── agent4_fact_checker/                           # [AGENT 4] FACT-CHECKER (3-CLASS NLI VERIFIER)
+    ├── README.md
+    ├── Train_Agent4_FactChecker_T4x2.ipynb        # Notebook riêng để train Agent 4 trên Kaggle T4x2
+    ├── train_agent4_t4x2.py                       # Script huấn luyện Cross-Encoder NLI 3 nhãn
+    ├── dataset/nli_verifier.jsonl                 # 762 mẫu kiểm chứng mệnh đề (SUPPORT/CONTRADICT/NEI)
+    └── weights/                                   # Nơi lưu trọng số NLI Verifier sau khi huấn luyện
+```
 
 ---
 
-## 🚀 Quy Trình Huấn Luyện Tự Động (Không Cần Tải Thủ Công)
+## 🎯 Cách Chọn Notebook Để Đi Huấn Luyện
 
-1. Mở trực tiếp file **[`Train_Master_GitHub_Drive.ipynb`](Train_Master_GitHub_Drive.ipynb)** trên **Google Colab** (khuyên dùng nếu muốn tự động lưu thẳng vào Google Drive) hoặc **Kaggle GPU (T4 x2 / P100)**.
-2. Bấm **Run All (Chạy tất cả các ô)**:
-   - **Ô 1**: Tự động `git clone https://github.com/ducmanh-jr/Multi-Agent_RAG.git` để lấy toàn bộ code và 2,667 mẫu dữ liệu trong `training_lab/kaggle_fn_v2/datasets/`.
-   - **Ô 2**: Tự động mount Google Drive (`/content/drive/MyDrive/MultiAgent_RAG_Weights`) hoặc tải checkpoint qua `gdown`.
-   - **Ô 3 & 4**: Huấn luyện tuần tự `router` (SFT) $ightarrow$ `generator` (SFT + DPO $\beta=0.1$) $ightarrow$ `critic` (Hard-Negative SFT) $ightarrow$ `fact_checker_nli`.
-   - **Ô 5**: Tự động đóng gói `weights_bundle_v2.zip` và chép thẳng vào Google Drive của bạn.
+- **Muốn huấn luyện riêng từng Agent:** Vào thẳng thư mục của Agent đó và mở file `.ipynb` tương ứng:
+  - Agent 1: [`agent1_retrieval/Train_Agent1_Router_T4x2.ipynb`](agent1_retrieval/Train_Agent1_Router_T4x2.ipynb)
+  - Agent 3: [`agent3_summarizer/Train_Agent3_Summarizer_T4x2.ipynb`](agent3_summarizer/Train_Agent3_Summarizer_T4x2.ipynb)
+  - Agent 4: [`agent4_fact_checker/Train_Agent4_FactChecker_T4x2.ipynb`](agent4_fact_checker/Train_Agent4_FactChecker_T4x2.ipynb)
+- **Muốn chạy 1 mạch cả 3 Agent:** Mở [`Train_Master_T4x2.ipynb`](Train_Master_T4x2.ipynb) ở ngoài cùng.
