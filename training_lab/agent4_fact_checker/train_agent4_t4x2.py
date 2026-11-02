@@ -7,7 +7,28 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from src.config import Agent4TrainingConfig
 
+
+def sanitize_torchvision():
+    """Tự động vô hiệu hóa/gỡ bỏ torchvision nếu bị lỗi C++ operator 'torchvision::nms does not exist'."""
+    try:
+        import torchvision
+        _ = getattr(torchvision.ops, "nms", None)
+    except Exception:
+        import subprocess
+        subprocess.run([sys.executable, "-m", "pip", "uninstall", "-y", "torchvision"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        for k in list(sys.modules.keys()):
+            if "torchvision" in k:
+                del sys.modules[k]
+        try:
+            import transformers.utils.import_utils as tu
+            tu._torchvision_available = False
+            tu.is_torchvision_available = lambda: False
+        except Exception:
+            pass
+
+
 def main():
+    sanitize_torchvision()
     parser = argparse.ArgumentParser(description="Fine-tune Agent 4 NLI Verifier on Kaggle T4x2")
     parser.add_argument("--model-id", type=str, default="BAAI/bge-reranker-v2-m3")
     parser.add_argument("--epochs", type=int, default=4)
@@ -24,6 +45,7 @@ def main():
         learning_rate=args.lr,
     )
     run_factchecker_training(cfg)
+
 
 if __name__ == "__main__":
     main()
