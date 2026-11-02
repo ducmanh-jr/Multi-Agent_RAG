@@ -2,6 +2,7 @@
 """
 Model & PEFT QLoRA/DoRA Builder for Agent 1 (Retrieval Router) on Kaggle Dual T4.
 Loads `Qwen/Qwen2.5-7B-Instruct` in 4-bit NF4 (~4.8GB) on `cuda:0` for zero-latency, single-device execution.
+Ensures all trainable adapter parameters are strictly `torch.float16` for native Tesla T4 FP16 GradScaler support.
 """
 
 import torch
@@ -20,7 +21,7 @@ def get_dual_t4_device_map(max_mem: str = "14.5GiB"):
 
 
 def build_router_model_and_tokenizer(cfg: Agent1TrainingConfig):
-    """Initializes 4-bit NF4 Qwen2.5-7B-Instruct and attaches DoRA/QLoRA adapters."""
+    """Initializes 4-bit NF4 Qwen2.5-7B-Instruct and attaches DoRA/QLoRA adapters in pure FP16."""
     tokenizer = AutoTokenizer.from_pretrained(cfg.base_model_id, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -42,6 +43,7 @@ def build_router_model_and_tokenizer(cfg: Agent1TrainingConfig):
         attn_implementation=cfg.attn_implementation,
         trust_remote_code=True,
     )
+    model.config.torch_dtype = torch.float16
     model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
 
     peft_config = LoraConfig(
@@ -55,5 +57,11 @@ def build_router_model_and_tokenizer(cfg: Agent1TrainingConfig):
         task_type="CAUSAL_LM",
     )
     model = get_peft_model(model, peft_config)
+
+    # Đảm bảo 100% tham số trainable LoRA/DoRA ở định dạng FP16 (tránh lỗi GradScaler BFloat16 trên Tesla T4):
+    for param in model.parameters():
+        if param.requires_grad:
+            param.data = param.data.to(torch.float16)
+
     model.print_trainable_parameters()
     return model, tokenizer, peft_config
