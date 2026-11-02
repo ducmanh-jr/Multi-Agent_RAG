@@ -10,13 +10,15 @@ venv/
 .DS_Store
 Thumbs.db
 
-# Local Google Drive staging bundle
-kaggle/drive/
-drive/
+# Local SQLite runtime databases
 main/data/*.db
 main/data/*.sqlite*
+main/*.db
+*.zip
 
-# Files strictly exceeding GitHub's 100MB single-file limit
-# (Downloadable via Kaggle Dataset or HuggingFace model hub)
-training_lab/agent2_reader/layoutlmv3_doclaynet_model/model.safetensors
-training_lab/agent3_summarizer/Weights/generator_qlora/final/adapter_model.safetensors
+# Files strictly exceeding GitHub's 100MB single-file limit (Base Embedding & LayoutLMv3 480MB)
+main/models/multilingual-e5-small/model.safetensors
+**/layoutlmv3_doclaynet_model/model.safetensors
+training_lab/agent3_summarizer/Weights/
+main/modes/kaggle_fn/weights/
+main/weights/
