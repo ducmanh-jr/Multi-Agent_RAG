@@ -17,7 +17,7 @@ flowchart TD
 
     subgraph CB ["CẦU DAO TỰ ĐỘNG 3 TRẠNG THÁI (THREE-STATE CIRCUIT BREAKER)"]
         CLOSED["Trạng Thái CLOSED (Bình Thường)<br/>Định tuyến tới Kaggle GPU / Cloud API"]
-        OPEN["Trạng Thái OPEN (Ngắt Mạch Bảo Vệ)<br/>Phát hiện 3 lỗi liên tiếp -> Chặn gọi xa trong 60s"]
+        OPEN["Trạng Thái OPEN (Ngắt Mạch Bảo Vệ)<br/>Phát hiện 3 lỗi liên tiếp &rarr; Chặn gọi xa trong 60s"]
         HALF["Trạng Thái HALF-OPEN (Thăm Dò)<br/>Gửi 1 request kiểm tra sau khi hết thời gian chờ"]
         
         CLOSED -- "3 lỗi liên tiếp (Timeout > 15s hoặc HTTP 5xx)" --> OPEN
