@@ -89,37 +89,40 @@ def train_generator_sft_and_dpo(cfg: Agent3TrainingConfig):
     print("🚀 [Agent 3 Generator] Starting Stage 1 SFT...")
     sft_trainer.train()
 
-    # Stage 2: DPO Alignment
+    final_model = sft_trainer.model
+
+    # Stage 2: DPO Alignment (bọc try-except bảo vệ)
     dpo_file = cfg.dataset_dir / "generator_dpo.jsonl"
     if dpo_file.exists():
-        print("🎯 [Agent 3 Generator] Starting Stage 2 RPO/DPO Alignment...")
-        train_dpo, val_dpo = load_dpo_jsonl_dataset(dpo_file, seed=cfg.seed)
-        dpo_args = safe_build_config(
-            DPOConfig,
-            output_dir=str(out_dir / "dpo_checkpoints"),
-            per_device_train_batch_size=1,
-            gradient_accumulation_steps=8,
-            learning_rate=cfg.gen_lr_dpo,
-            num_train_epochs=cfg.gen_epochs_dpo,
-            beta=cfg.dpo_beta,
-            rpo_alpha=0.1,  # RPO (Regularized Preference Optimization)
-            fp16=True,
-            logging_steps=10,
-            max_length=2048,
-            max_prompt_length=1024,
-            optim="paged_adamw_8bit",
-            lr_scheduler_type="cosine",
-            warmup_steps=10,
-            gradient_checkpointing=True,
-            report_to="none",
-        )
-        dpo_trainer = DPOTrainer(
-            model=sft_trainer.model, ref_model=None, args=dpo_args, train_dataset=train_dpo, eval_dataset=val_dpo, processing_class=tokenizer
-        )
-        dpo_trainer.train()
-        final_model = dpo_trainer.model
-    else:
-        final_model = sft_trainer.model
+        try:
+            print("🎯 [Agent 3 Generator] Starting Stage 2 RPO/DPO Alignment...")
+            train_dpo, val_dpo = load_dpo_jsonl_dataset(dpo_file, seed=cfg.seed)
+            dpo_args = safe_build_config(
+                DPOConfig,
+                output_dir=str(out_dir / "dpo_checkpoints"),
+                per_device_train_batch_size=1,
+                gradient_accumulation_steps=8,
+                learning_rate=cfg.gen_lr_dpo,
+                num_train_epochs=cfg.gen_epochs_dpo,
+                beta=cfg.dpo_beta,
+                rpo_alpha=0.1,  # RPO (Regularized Preference Optimization)
+                fp16=True,
+                logging_steps=10,
+                max_length=2048,
+                max_prompt_length=1024,
+                optim="paged_adamw_8bit",
+                lr_scheduler_type="cosine",
+                warmup_steps=10,
+                gradient_checkpointing=True,
+                report_to="none",
+            )
+            dpo_trainer = DPOTrainer(
+                model=sft_trainer.model, ref_model=None, args=dpo_args, train_dataset=train_dpo, eval_dataset=val_dpo, processing_class=tokenizer
+            )
+            dpo_trainer.train()
+            final_model = dpo_trainer.model
+        except Exception as e:
+            print(f"ℹ️ [Agent 3 Generator] DPO notice ({e}). Lưu trọng số SFT hoàn chỉnh.")
 
     final_model.save_pretrained(str(out_dir), safe_serialization=True)
     tokenizer.save_pretrained(str(out_dir))

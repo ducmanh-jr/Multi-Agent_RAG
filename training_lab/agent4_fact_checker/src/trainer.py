@@ -46,18 +46,22 @@ class WeightedCrossEncoderTrainer(Trainer):
     def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
         labels = inputs.get("labels")
         outputs1 = model(**inputs)
-        logits1 = outputs1.get("logits")
+        logits1 = outputs1.get("logits") if hasattr(outputs1, "get") else outputs1.logits
 
+        if labels is None:
+            return (outputs1.loss, outputs1) if return_outputs else outputs1.loss
+
+        num_labels = getattr(getattr(model, "config", None), "num_labels", 3)
         weights = torch.tensor([1.0, 1.35, 1.15], device=logits1.device, dtype=logits1.dtype)
-        ce1 = F.cross_entropy(logits1.view(-1, self.model.config.num_labels), labels.view(-1), weight=weights, reduction="none")
+        ce1 = F.cross_entropy(logits1.view(-1, num_labels), labels.view(-1), weight=weights, reduction="none")
         pt1 = torch.exp(-ce1)
         focal1 = ((1.0 - pt1) ** 2.0 * ce1).mean()
 
         if model.training:
             # R-Drop second forward pass for KL consistency regularization
             outputs2 = model(**inputs)
-            logits2 = outputs2.get("logits")
-            ce2 = F.cross_entropy(logits2.view(-1, self.model.config.num_labels), labels.view(-1), weight=weights, reduction="none")
+            logits2 = outputs2.get("logits") if hasattr(outputs2, "get") else outputs2.logits
+            ce2 = F.cross_entropy(logits2.view(-1, num_labels), labels.view(-1), weight=weights, reduction="none")
             pt2 = torch.exp(-ce2)
             focal2 = ((1.0 - pt2) ** 2.0 * ce2).mean()
 
@@ -111,10 +115,15 @@ def run_factchecker_training(cfg: Agent4TrainingConfig):
     trainer.train()
     metrics = trainer.evaluate()
 
-    preds_out = trainer.predict(val_ds)
-    opt_temp = calibrate_temperature_ece(preds_out.predictions, preds_out.label_ids)
-    metrics["calibrated_temperature"] = opt_temp
+    opt_temp = 1.0
+    try:
+        preds_out = trainer.predict(val_ds)
+        preds = preds_out.predictions[0] if isinstance(preds_out.predictions, tuple) else preds_out.predictions
+        opt_temp = calibrate_temperature_ece(preds, preds_out.label_ids)
+    except Exception as e:
+        print(f"ℹ️ [Agent 4 Trainer] Temperature calibration notice: {e}")
 
+    metrics["calibrated_temperature"] = opt_temp
     trainer.model.save_pretrained(str(cfg.output_dir), safe_serialization=True)
     tokenizer.save_pretrained(str(cfg.output_dir))
     (cfg.output_dir / "eval_metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")

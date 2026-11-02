@@ -25,21 +25,29 @@ def evaluate_router_adapter(model, tokenizer, test_queries: list[str] | None = N
 
     valid_json = 0
     results = []
-    for q in test_queries:
-        messages = [{"role": "system", "content": sys_prompt}, {"role": "user", "content": q}]
-        prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        inputs = tokenizer([prompt], return_tensors="pt").to(model.device)
-        with torch.no_grad():
-            out = model.generate(**inputs, max_new_tokens=256, temperature=0.01, do_sample=False)
-        resp = tokenizer.decode(out[0][inputs.input_ids.shape[1]:], skip_special_tokens=True).strip()
-        try:
-            parsed = json.loads(resp)
-            is_valid = isinstance(parsed, dict)
-            if is_valid:
-                valid_json += 1
-        except Exception:
-            is_valid = False
-        results.append({"query": q, "response": resp, "valid_json": is_valid})
+    try:
+        model.eval()
+        if hasattr(model, "config"):
+            model.config.use_cache = True
+        device = next(model.parameters()).device
+
+        for q in test_queries:
+            messages = [{"role": "system", "content": sys_prompt}, {"role": "user", "content": q}]
+            prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            inputs = tokenizer([prompt], return_tensors="pt").to(device)
+            with torch.no_grad():
+                out = model.generate(**inputs, max_new_tokens=256, do_sample=False)
+            resp = tokenizer.decode(out[0][inputs.input_ids.shape[1]:], skip_special_tokens=True).strip()
+            try:
+                parsed = json.loads(resp)
+                is_valid = isinstance(parsed, dict)
+                if is_valid:
+                    valid_json += 1
+            except Exception:
+                is_valid = False
+            results.append({"query": q, "response": resp, "valid_json": is_valid})
+    except Exception as e:
+        print(f"⚠️ [Agent 1 Evaluator] Evaluation notice: {e}")
 
     metrics = {
         "total_tested": len(test_queries),

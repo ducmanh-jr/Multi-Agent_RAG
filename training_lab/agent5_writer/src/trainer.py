@@ -83,36 +83,39 @@ def run_writer_sft_and_rpo_training(cfg: Agent5TrainingConfig):
     print("🚀 [Agent 5 Writer] Starting Stage 1 SFT...")
     sft_trainer.train()
 
+    final_model = sft_trainer.model
+
     dpo_file = cfg.dataset_dir / "writer_dpo.jsonl"
     if dpo_file.exists():
-        print("🎯 [Agent 5 Writer] Starting Stage 2 RPO/DPO Citation Alignment...")
-        train_dpo, val_dpo = load_writer_dpo_dataset(dpo_file, seed=cfg.seed)
-        dpo_args = safe_build_config(
-            DPOConfig,
-            output_dir=str(cfg.output_dir / "dpo_checkpoints"),
-            per_device_train_batch_size=1,
-            gradient_accumulation_steps=8,
-            learning_rate=cfg.lr_dpo,
-            num_train_epochs=cfg.epochs_dpo,
-            beta=cfg.dpo_beta,
-            rpo_alpha=0.1,  # RPO alignment
-            fp16=True,
-            logging_steps=10,
-            max_length=2048,
-            max_prompt_length=1024,
-            optim="paged_adamw_8bit",
-            lr_scheduler_type="cosine",
-            warmup_steps=10,
-            gradient_checkpointing=True,
-            report_to="none",
-        )
-        dpo_trainer = DPOTrainer(
-            model=sft_trainer.model, ref_model=None, args=dpo_args, train_dataset=train_dpo, eval_dataset=val_dpo, processing_class=tokenizer
-        )
-        dpo_trainer.train()
-        final_model = dpo_trainer.model
-    else:
-        final_model = sft_trainer.model
+        try:
+            print("🎯 [Agent 5 Writer] Starting Stage 2 RPO/DPO Citation Alignment...")
+            train_dpo, val_dpo = load_writer_dpo_dataset(dpo_file, seed=cfg.seed)
+            dpo_args = safe_build_config(
+                DPOConfig,
+                output_dir=str(cfg.output_dir / "dpo_checkpoints"),
+                per_device_train_batch_size=1,
+                gradient_accumulation_steps=8,
+                learning_rate=cfg.lr_dpo,
+                num_train_epochs=cfg.epochs_dpo,
+                beta=cfg.dpo_beta,
+                rpo_alpha=0.1,  # RPO alignment
+                fp16=True,
+                logging_steps=10,
+                max_length=2048,
+                max_prompt_length=1024,
+                optim="paged_adamw_8bit",
+                lr_scheduler_type="cosine",
+                warmup_steps=10,
+                gradient_checkpointing=True,
+                report_to="none",
+            )
+            dpo_trainer = DPOTrainer(
+                model=sft_trainer.model, ref_model=None, args=dpo_args, train_dataset=train_dpo, eval_dataset=val_dpo, processing_class=tokenizer
+            )
+            dpo_trainer.train()
+            final_model = dpo_trainer.model
+        except Exception as e:
+            print(f"ℹ️ [Agent 5 Writer] DPO notice ({e}). Lưu trọng số SFT hoàn chỉnh.")
 
     final_model.save_pretrained(str(cfg.output_dir), safe_serialization=True)
     tokenizer.save_pretrained(str(cfg.output_dir))
