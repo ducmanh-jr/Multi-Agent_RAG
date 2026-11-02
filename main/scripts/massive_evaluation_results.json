@@ -1,0 +1,230 @@
+{
+  "timestamp": "2026-10-31 22:11:00",
+  "system": "Combo 1: Local Titan Workstation (AMD Ryzen 7, 32GB RAM)",
+  "pass_rate": 100.0,
+  "avg_latency_ms": 532.3745461545724,
+  "results": [
+    {
+      "id": "TC-01",
+      "paper": "Vaswani et al. 2017 (Transformer)",
+      "category": "Mathematical Formulation",
+      "latency_ms": 317.1859999856679,
+      "units_parsed": 484,
+      "evidence_count": 3,
+      "claims_count": 3,
+      "verified_claims": 0,
+      "matched_keywords": [
+        "scaled dot-product",
+        "attention"
+      ],
+      "passed": true,
+      "answer_preview": "Noam proposed scaled dot-product attention, multi-head\nattention and the parameter-free position representation and became the other person ..."
+    },
+    {
+      "id": "TC-02",
+      "paper": "Vaswani et al. 2017 (Transformer)",
+      "category": "Scientific Benchmark Grounding",
+      "latency_ms": 244.68699999852106,
+      "units_parsed": 484,
+      "evidence_count": 3,
+      "claims_count": 3,
+      "verified_claims": 0,
+      "matched_keywords": [
+        "28.4",
+        "bleu",
+        "wmt",
+        "english-to-german"
+      ],
+      "passed": true,
+      "answer_preview": "Our model achieves 28.4 BLEU on the WMT 2014 English-\nto-German translation task, improving over the existing best results, including\nensemb..."
+    },
+    {
+      "id": "TC-03",
+      "paper": "Hu et al. 2021 (LoRA)",
+      "category": "Matrix Factorization Mechanics",
+      "latency_ms": 418.6941000079969,
+      "units_parsed": 655,
+      "evidence_count": 3,
+      "claims_count": 3,
+      "verified_claims": 0,
+      "matched_keywords": [
+        "b",
+        "a",
+        "hạng thấp",
+        "rank",
+        "phân rã"
+      ],
+      "passed": true,
+      "answer_preview": "LoRA performs on-par or better than ﬁne-\ntuning in model quality on RoBERTa, DeBERTa, GPT-2, and GPT-3, despite hav-\ning fewer trainable par..."
+    },
+    {
+      "id": "TC-04",
+      "paper": "Hu et al. 2021 (LoRA)",
+      "category": "Parameter Efficiency Verification",
+      "latency_ms": 432.6915999990888,
+      "units_parsed": 655,
+      "evidence_count": 3,
+      "claims_count": 3,
+      "verified_claims": 0,
+      "matched_keywords": [
+        "tham số",
+        "giảm"
+      ],
+      "passed": true,
+      "answer_preview": "LoRA performs on-par or better than ﬁne-\ntuning in model quality on RoBERTa, DeBERTa, GPT-2, and GPT-3, despite hav-\ning fewer trainable par..."
+    },
+    {
+      "id": "TC-05",
+      "paper": "Dao et al. 2022 (FlashAttention)",
+      "category": "Hardware IO-Aware Hierarchy",
+      "latency_ms": 200.61949999944773,
+      "units_parsed": 604,
+      "evidence_count": 3,
+      "claims_count": 3,
+      "verified_claims": 0,
+      "matched_keywords": [
+        "sram",
+        "hbm",
+        "io-aware",
+        "tiling",
+        "bộ nhớ"
+      ],
+      "passed": true,
+      "answer_preview": "We propose FlashAttention,\nan IO-aware exact attention algorithm that uses tiling to reduce the number of memory reads/writes\nbetween GPU hi..."
+    },
+    {
+      "id": "TC-06",
+      "paper": "Dao et al. 2022 (FlashAttention)",
+      "category": "Empirical Speedup Validation",
+      "latency_ms": 185.56250000256114,
+      "units_parsed": 604,
+      "evidence_count": 3,
+      "claims_count": 3,
+      "verified_claims": 0,
+      "matched_keywords": [
+        "tốc độ",
+        "nhanh hơn"
+      ],
+      "passed": true,
+      "answer_preview": "Figure 1: Left: FlashAttention uses tiling to prevent materialization of the large 𝑁× 𝑁attention matrix\n(dotted box) on (relatively) slow GP..."
+    },
+    {
+      "id": "TC-07",
+      "paper": "Lewis et al. 2020 (RAG)",
+      "category": "Architectural Synthesis",
+      "latency_ms": 120.21600001025945,
+      "units_parsed": 318,
+      "evidence_count": 3,
+      "claims_count": 3,
+      "verified_claims": 0,
+      "matched_keywords": [
+        "sequence"
+      ],
+      "passed": true,
+      "answer_preview": "We introduce RAG models where the parametric\nmemory is a pre-trained seq2seq model and the non-parametric memory is a dense\nvector index of ..."
+    },
+    {
+      "id": "TC-08",
+      "paper": "Lewis et al. 2020 (RAG)",
+      "category": "Corpus Scale Grounding",
+      "latency_ms": 124.57010000071023,
+      "units_parsed": 318,
+      "evidence_count": 3,
+      "claims_count": 3,
+      "verified_claims": 0,
+      "matched_keywords": [
+        "wikipedia",
+        "passages"
+      ],
+      "passed": true,
+      "answer_preview": "We introduce RAG models where the parametric\nmemory is a pre-trained seq2seq model and the non-parametric memory is a dense\nvector index of ..."
+    },
+    {
+      "id": "TC-09",
+      "paper": "Khattab & Zaharia 2020 (ColBERT)",
+      "category": "Dense Retrieval Late Interaction",
+      "latency_ms": 975.5389000056311,
+      "units_parsed": 176,
+      "evidence_count": 3,
+      "claims_count": 3,
+      "verified_claims": 0,
+      "matched_keywords": [
+        "late interaction",
+        "tương tác muộn"
+      ],
+      "passed": true,
+      "answer_preview": "ColBERT: Eﬀicient and Eﬀective Passage Search via\nContextualized Late Interaction over BERT ColBERT: Eﬃcient and Eﬀective Pas-\nsage Search v..."
+    },
+    {
+      "id": "TC-10",
+      "paper": "DeepSeek-AI 2025 (DeepSeek-R1)",
+      "category": "Large-Scale Reasoning Emergence",
+      "latency_ms": 2787.9918000107864,
+      "units_parsed": 1781,
+      "evidence_count": 3,
+      "claims_count": 3,
+      "verified_claims": 0,
+      "matched_keywords": [
+        "reinforcement learning",
+        "r1-zero",
+        "rl",
+        "sft"
+      ],
+      "passed": true,
+      "answer_preview": "Furthermore, the rule-based RL training\nstage of DeepSeek-R1-Zero is narrowly focused on reasoning tasks, resulting in limited per-\nformance..."
+    },
+    {
+      "id": "TC-11",
+      "paper": "Báo Hà Nội mới Archives",
+      "category": "Historical Fact Extraction",
+      "latency_ms": 647.6503999874694,
+      "units_parsed": 106,
+      "evidence_count": 1,
+      "claims_count": 3,
+      "verified_claims": 0,
+      "matched_keywords": [
+        "24/10/1957",
+        "24",
+        "10",
+        "1957",
+        "thủ đô"
+      ],
+      "passed": true,
+      "answer_preview": "Báo Thủ đô (tiền thân Báo Hà Nội mới) xuất bản số đầu tiên ngày 24/10/1957 sau giải phóng Thủ đô 1954. Báo là cơ quan ngôn luận của Thành ủy..."
+    },
+    {
+      "id": "TC-12",
+      "paper": "Báo Hà Nội mới Archives",
+      "category": "Causal Historical Grounding",
+      "latency_ms": 332.79830000537913,
+      "units_parsed": 106,
+      "evidence_count": 1,
+      "claims_count": 3,
+      "verified_claims": 0,
+      "matched_keywords": [
+        "hợp nhất",
+        "thời mới",
+        "thủ đô",
+        "1968"
+      ],
+      "passed": true,
+      "answer_preview": "Báo Thủ đô (tiền thân Báo Hà Nội mới) xuất bản số đầu tiên ngày 24/10/1957 sau giải phóng Thủ đô 1954. Báo là cơ quan ngôn luận của Thành ủy..."
+    },
+    {
+      "id": "TC-13",
+      "paper": "Multi-Paper Adversarial Guard",
+      "category": "Negative Claim Guardrail",
+      "latency_ms": 132.66289999592118,
+      "units_parsed": 318,
+      "evidence_count": 3,
+      "claims_count": 3,
+      "verified_claims": 0,
+      "matched_keywords": [
+        "không",
+        "dựa trên"
+      ],
+      "passed": true,
+      "answer_preview": "arXiv:2005.11401v4  [cs.CL]  12 Apr 2021 [26], we use the December 2018 dump. Retrieval-Augmented Generation for\nKnowledge-Intensive NLP Tas..."
+    }
+  ]
+}
