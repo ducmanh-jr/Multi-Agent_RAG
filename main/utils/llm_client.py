@@ -656,10 +656,16 @@ class UnifiedLLMClient:
         is_numeric_query = any(
             w in user_query.lower() for w in ["bao nhiêu", "mấy", "số lượng", "định lượng", "tổng số", "tỷ lệ"]
         )
+        is_temporal_query = any(
+            w in user_query.lower() for w in ["thời điểm nào", "khi nào", "thời gian nào", "năm nào", "ngày nào", "giai đoạn nào", "từ bao giờ", "phạm vi thời gian", "từ thời điểm"]
+        )
 
         candidates = []
         for u in units:
-            raw_paras = [p.strip() for p in re.split(r"[\r\n]+", u["text"]) if len(p.strip()) > 20]
+            unit_text = re.sub(r"(?<!\n)\r?\n(?!\r?\n)", " ", u["text"])
+            raw_paras = [p.strip() for p in re.split(r"[\r\n]{2,}", unit_text) if len(p.strip()) > 20]
+            if not raw_paras:
+                raw_paras = [unit_text.strip()]
             for p in raw_paras:
                 if is_metadata_or_header(p):
                     continue
@@ -673,12 +679,15 @@ class UnifiedLLMClient:
                     s_tokens = set(re.findall(r"\w+", s.lower())) - stop_words
                     overlap = len(query_tokens & s_tokens)
                     has_quant = has_quantity_for_entity(s, user_query)
+                    has_date = bool(re.search(r"\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b", s) or re.search(r"\b(19\d\d|20\d\d)\b", s))
 
                     if is_general_summary:
                         richness = 3 if 60 <= len(s) <= 350 else 1
                         score = overlap * 2 + richness
                     elif is_numeric_query:
                         score = overlap * 2 + (6 if has_quant else 0)
+                    elif is_temporal_query:
+                        score = overlap * 2 + (7 if has_date else 0)
                     else:
                         score = overlap
 
