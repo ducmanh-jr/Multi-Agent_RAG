@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-SOTA Dual-T4 Model Builder for Agent 5 (Academic Writer) with 4-bit NF4, SDPA, DoRA & rsLoRA.
+Model Builder for Agent 5 (Academic Report Writer).
+Loads `Qwen/Qwen2.5-7B-Instruct` in 4-bit NF4 (~4.8GB) on `cuda:0` for zero-latency, single-device execution.
 """
 
 import torch
@@ -10,11 +11,11 @@ from .config import Agent5TrainingConfig
 
 
 def get_dual_t4_device_map(max_mem: str = "14.5GiB"):
-    num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
-    if num_gpus >= 2:
-        return "balanced", {0: max_mem, 1: max_mem}
-    elif num_gpus == 1:
-        return {"": 0}, None
+    """Pins 4-bit model to current CUDA device (~5GB fits in 16GB VRAM) to avoid cross-device tensor mismatch in Trainer."""
+    if torch.cuda.is_available():
+        target = torch.cuda.current_device()
+        print(f"⚡ [Agent 5 ModelBuilder] Pinning 4-bit Qwen2.5-7B to cuda:{target} (~5.2GB / 16GB VRAM)...")
+        return {"": target}, None
     return "auto", None
 
 

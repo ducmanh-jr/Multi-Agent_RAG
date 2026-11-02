@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Model & PEFT QLoRA/DoRA Builder for Agent 1 (Retrieval Router) on Kaggle Dual T4.
-Distributes `Qwen/Qwen2.5-7B-Instruct` across `cuda:0` and `cuda:1` via `device_map="balanced"`.
+Loads `Qwen/Qwen2.5-7B-Instruct` in 4-bit NF4 (~4.8GB) on `cuda:0` for zero-latency, single-device execution.
 """
 
 import torch
@@ -11,12 +11,11 @@ from .config import Agent1TrainingConfig
 
 
 def get_dual_t4_device_map(max_mem: str = "14.5GiB"):
-    num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
-    if num_gpus >= 2:
-        print(f"⚡ [Agent 1 ModelBuilder] Detected {num_gpus} GPUs (Kaggle T4x2). Balancing across cuda:0 & cuda:1 ({max_mem}/GPU)...")
-        return "balanced", {0: max_mem, 1: max_mem}
-    elif num_gpus == 1:
-        return {"": 0}, None
+    """Pins 4-bit model to current CUDA device (~5GB fits in 16GB VRAM) to avoid cross-device tensor mismatch in Trainer."""
+    if torch.cuda.is_available():
+        target = torch.cuda.current_device()
+        print(f"⚡ [Agent 1 ModelBuilder] Pinning 4-bit Qwen2.5-7B to cuda:{target} (~5.2GB / 16GB VRAM)...")
+        return {"": target}, None
     return "auto", None
 
 

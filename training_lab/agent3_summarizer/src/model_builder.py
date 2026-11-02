@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Dual-T4 Model & PEFT DoRA/QLoRA Builder for Agent 3 (Generator & Critic).
+Model Builder for Agent 3 (Academic Summarizer & Critic).
+Loads `Qwen/Qwen2.5-7B-Instruct` in 4-bit NF4 (~4.8GB) on `cuda:0` for zero-latency, single-device execution.
 """
 
 import torch
@@ -9,11 +10,11 @@ from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 
 
 def get_dual_t4_device_map(max_mem: str = "14.5GiB"):
-    num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
-    if num_gpus >= 2:
-        return "balanced", {0: max_mem, 1: max_mem}
-    elif num_gpus == 1:
-        return {"": 0}, None
+    """Pins 4-bit model to current CUDA device (~5GB fits in 16GB VRAM) to avoid cross-device tensor mismatch in Trainer."""
+    if torch.cuda.is_available():
+        target = torch.cuda.current_device()
+        print(f"⚡ [Agent 3 ModelBuilder] Pinning 4-bit Qwen2.5-7B to cuda:{target} (~5.2GB / 16GB VRAM)...")
+        return {"": target}, None
     return "auto", None
 
 
@@ -25,7 +26,7 @@ def build_summarizer_model_and_tokenizer(
     use_dora: bool = True,
     max_mem: str = "14.5GiB",
 ):
-    """Loads 4-bit NF4 Qwen2.5-7B-Instruct balanced across Dual T4 and attaches DoRA adapter."""
+    """Loads 4-bit NF4 Qwen2.5-7B-Instruct on current CUDA device and attaches DoRA adapter."""
     tokenizer = AutoTokenizer.from_pretrained(base_model_id, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
