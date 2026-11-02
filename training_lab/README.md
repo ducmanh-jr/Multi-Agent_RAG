@@ -1,42 +1,27 @@
-# 🔬 Phòng Nghiên cứu & Huấn luyện Tác tử (Training & Research Lab)
+# 🧬 Phòng Thí Nghiệm Huấn Luyện Multi-LoRA & NLI (`training_lab/`)
 
-Thư mục `training_lab/` là không gian độc lập phục vụ toàn bộ chu trình **Nghiên cứu & Phát triển (R&D), Huấn luyện tham số (Fine-tuning), Sinh dữ liệu tổng hợp (Synthetic Data) và Đánh giá chất lượng (Evaluation)** cho từng tác tử trong hệ thống Multi-Agent Research RAG.
+`training_lab/` là thư mục chuyên trách việc **sinh dữ liệu huấn luyện (SFT + DPO + Hard Negatives)** và **tinh chỉnh các bộ trọng số QLoRA / Cross-Encoder** cho hệ thống Multi-Agent RAG.
 
-Kiến trúc này tuân thủ chuẩn **MLOps Lifecycle Separation**, tách biệt hoàn toàn giữa:
-1. **Phòng thí nghiệm (Training Lab - R&D)**: Nơi kỹ sư AI và nhà nghiên cứu làm việc với GPU, notebook, QLoRA, loss curves và synthetic data.
-2. **Hệ thống chạy thực tế (Production Runtime)**: Nơi ứng dụng web, FastAPI server, SQLite C-Speed FTS5 và LangGraph phục vụ người dùng cuối với độ trễ thấp và độ ổn định 100%.
+Đặc biệt, thư mục này đã được tích hợp sẵn **Notebook tự động hóa hoàn toàn (`GitHub Clone + Google Drive Sync 2 chiều`)** để bạn không bao giờ phải tải hay upload dữ liệu/trọng số thủ công.
 
 ---
 
-## 📁 Cấu trúc thư mục
+## 🗂️ Cấu Trúc Thư Mục `training_lab/`
 
-```text
-training_lab/
-├── README.md                           # Bản đặc tả phòng nghiên cứu
-├── agent1_retrieval/                   # R&D cho Tác tử 1: Router & Retrieval
-│   ├── eval_router_accuracy.py         # Đo đạc độ chính xác phân loại công cụ (target >= 80%)
-│   ├── retrieval_eval_manual.jsonl     # Tập test bench 30 kịch bản truy vấn thực tế
-│   ├── router_policy.py                # Thuật toán phân luồng heuristic & guardrails
-│   ├── schemas.py                      # Pydantic schema chuẩn cho Router Decision
-│   └── retrieval_router_critique_qlora/# Checkpoint adapter LoRA sau fine-tune
-├── agent2_reader/                      # R&D cho Tác tử 2: Layout Parser & Reader
-│   ├── reader_agent.py                 # Thử nghiệm bóc tách cấu trúc tài liệu đa cột
-│   ├── reader_policy.py                # Chính sách phân loại độ phức tạp trang (simple vs complex)
-│   ├── tool_layoutlmv3.py              # Thử nghiệm phân đoạn thị giác LayoutLMv3
-│   ├── tool_ocr_fallback.py            # Cơ chế phát hiện trang PDF scan ảnh & OCR
-│   ├── tool_alt_segmentation.py        # Thuật toán phân đoạn thay thế
-│   └── test_tool_layoutlmv3.py         # Unit test độc lập cho parser
-└── agent3_summarizer/                  # R&D cho Tác tử 3: Generator & Critic LoRA
-    ├── Code/                           # Script huấn luyện SFT kép (Generator + Critic)
-    ├── Script test/                    # Kịch bản kiểm thử độ hội tụ và giảm thiểu ảo giác
-    └── Weights/                        # Trọng số QLoRA Generator & Critic
-```
+| Thư mục / Tệp | Chức năng chi tiết |
+| :--- | :--- |
+| **[`Train_Master_GitHub_Drive.ipynb`](Train_Master_GitHub_Drive.ipynb)** | **Notebook Huấn Luyện Chính (1-Click)**: Tự động `git clone` dự án từ GitHub, kết nối Google Drive (`drive.mount` hoặc `gdown`), chạy huấn luyện SFT + DPO cho cả 3 LoRA Adapters + NLI Verifier và tự động nén + sao lưu `weights_bundle_v2.zip` lên Google Drive. |
+| **[`kaggle_fn_v2/`](kaggle_fn_v2/)** | **Pipeline Huấn Luyện Thế Hệ Mới (v2)**:<br/>• `01_generate_sft_dpo_dataset.py`: Trích xuất 2,667 mẫu huấn luyện từ kho PDF.<br/>• `02_train_multilora_sft_dpo.py`: Huấn luyện QLoRA 4-bit NF4 (`r=32, alpha=64, DoRA`) với SFT + DPO ($\beta=0.1$).<br/>• `datasets/`: Chứa 5 tập dữ liệu `.jsonl` đã tạo sẵn. |
+| **[`weights_drive_bundle/`](weights_drive_bundle/)** | **Bộ Trọng Số QLoRA Chuẩn `float16` (Sẵn Sàng Sử Dụng)**:<br/>• `agent1_router/` (`77 MB`): Adapter phân tích ý định & tách truy vấn.<br/>• `generator_qlora/final/` (`77 MB`): Adapter tổng hợp câu trả lời có trích dẫn.<br/>• `critic_qlora/final/` (`19 MB`): Adapter tự phản biện phát hiện ảo giác.<br/>• `layoutlmv3_doclaynet_model/`: Cấu hình nhận diện bố cục PDF. |
+| `agent1_retrieval/` .. `agent4_factchecker/` | Lưu trữ các kịch bản huấn luyện riêng lẻ của từng Agent ở phiên bản v1. |
 
 ---
 
-## 🚀 Quy trình chuyển giao từ Lab sang Production
+## 🚀 Quy Trình Huấn Luyện Tự Động (Không Cần Tải Thủ Công)
 
-Khi một tác tử hoàn thành huấn luyện trong `training_lab/`:
-1. Trọng số LoRA tối ưu được kiểm thử đạt chuẩn sẽ được xuất sang thư mục [`weights/`](../weights/) (ví dụ: `weights/agent1_router/`).
-2. Logic phân loại và heuristic guardrails được tích hợp vào tác tử thực thi tương ứng trong [`agents/`](../agents/).
-3. Hệ thống chạy chính [`main.py`](../main.py) và FastAPI [`api/`](../api/) chỉ nạp các artifact cuối cùng mà không cần phụ thuộc vào môi trường huấn luyện cồng kềnh.
+1. Mở trực tiếp file **[`Train_Master_GitHub_Drive.ipynb`](Train_Master_GitHub_Drive.ipynb)** trên **Google Colab** (khuyên dùng nếu muốn tự động lưu thẳng vào Google Drive) hoặc **Kaggle GPU (T4 x2 / P100)**.
+2. Bấm **Run All (Chạy tất cả các ô)**:
+   - **Ô 1**: Tự động `git clone https://github.com/ducmanh-jr/Multi-Agent_RAG.git` để lấy toàn bộ code và 2,667 mẫu dữ liệu trong `training_lab/kaggle_fn_v2/datasets/`.
+   - **Ô 2**: Tự động mount Google Drive (`/content/drive/MyDrive/MultiAgent_RAG_Weights`) hoặc tải checkpoint qua `gdown`.
+   - **Ô 3 & 4**: Huấn luyện tuần tự `router` (SFT) $ightarrow$ `generator` (SFT + DPO $\beta=0.1$) $ightarrow$ `critic` (Hard-Negative SFT) $ightarrow$ `fact_checker_nli`.
+   - **Ô 5**: Tự động đóng gói `weights_bundle_v2.zip` và chép thẳng vào Google Drive của bạn.
