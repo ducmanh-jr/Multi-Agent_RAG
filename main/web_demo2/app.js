@@ -495,10 +495,13 @@ document.addEventListener("DOMContentLoaded", () => {
         });
       }
 
-      // Clicking the row toggles selection for that document
+      // Clicking the row toggles selection for that document and opens PDF in right tab
       item.addEventListener("click", () => {
         const nextChecked = !state.checkedDocIds.has(docId);
         toggleDocCheckbox(docId, nextChecked);
+        if (nextChecked) {
+          viewDocumentInSidecar(docId);
+        }
       });
     });
 
@@ -1161,6 +1164,16 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     const report = data.report || data.final_report || (data.result && data.result.report) || "";
+    if (report) {
+      const reportPane = document.getElementById("sidecarReportPane");
+      if (reportPane) {
+        reportPane.innerHTML = `
+          <div class="sidecar-report-content report-markdown-view">
+            ${renderMarkdown(report, evidence)}
+          </div>
+        `;
+      }
+    }
     const evidence = (data.evidence && data.evidence.length ? data.evidence : null) || (data.result && data.result.evidence) || data.evidence_spans || [];
     state.currentEvidence = evidence;
     updateSidecarEvidence(evidence);
@@ -1430,12 +1443,57 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
+  function switchSidecarTab(targetTab) {
+    document.querySelectorAll(".sidecar-tabs .tab-btn").forEach(t => {
+      t.classList.toggle("active", t.dataset.tab === targetTab);
+    });
+    ["evidenceTab", "pdfViewerTab", "reportViewTab"].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.classList.toggle("active", id === targetTab);
+    });
+  }
+
+  function viewDocumentInSidecar(docId) {
+    const doc = state.documents.find(d => d.id === docId);
+    if (!doc) return;
+    state.selectedDocId = docId;
+    if (pdfFrame) {
+      pdfFrame.src = `/api/documents/${encodeURIComponent(doc.id)}/file#page=1`;
+    }
+    const sidecarDocTitle = document.getElementById("sidecarDocTitle");
+    if (sidecarDocTitle) {
+      sidecarDocTitle.textContent = doc.name;
+      sidecarDocTitle.title = doc.name;
+    }
+    const openExtBtn = document.getElementById("openExternalPdfBtn");
+    if (openExtBtn) {
+      openExtBtn.href = `/api/documents/${encodeURIComponent(doc.id)}/file`;
+      openExtBtn.style.display = "inline-flex";
+    }
+    openSidecar();
+    switchSidecarTab("pdfViewerTab");
+  }
+
   function openSidecar() {
-    if (sidecar) sidecar.classList.remove("collapsed");
+    if (sidecar) {
+      sidecar.classList.remove("collapsed");
+      if (toggleSidecarBtn) toggleSidecarBtn.classList.add("active");
+    }
   }
 
   function toggleSidecar() {
-    if (sidecar) sidecar.classList.toggle("collapsed");
+    if (!sidecar) return;
+    const isNowCollapsed = sidecar.classList.toggle("collapsed");
+    if (toggleSidecarBtn) {
+      toggleSidecarBtn.classList.toggle("active", !isNowCollapsed);
+    }
+    if (!isNowCollapsed) {
+      if (state.selectedDocId) {
+        viewDocumentInSidecar(state.selectedDocId);
+      } else if (state.documents.length > 0) {
+        viewDocumentInSidecar(state.documents[0].id);
+      }
+    }
   }
 
   function toggleSidebar() {
@@ -1444,7 +1502,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
   if (toggleSidebarBtn) toggleSidebarBtn.addEventListener("click", toggleSidebar);
   if (toggleSidecarBtn) toggleSidecarBtn.addEventListener("click", toggleSidecar);
-  if (closeSidecarBtn) closeSidecarBtn.addEventListener("click", () => sidecar && sidecar.classList.add("collapsed"));
+  if (closeSidecarBtn) {
+    closeSidecarBtn.addEventListener("click", () => {
+      if (sidecar) sidecar.classList.add("collapsed");
+      if (toggleSidecarBtn) toggleSidecarBtn.classList.remove("active");
+    });
+  }
 
   // Click "Mới" Button -> Reset session & clear active run
   if (newChatBtn) {
@@ -1482,13 +1545,9 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
-  sidecarTabs.forEach(tab => {
+  document.querySelectorAll(".sidecar-tabs .tab-btn").forEach(tab => {
     tab.addEventListener("click", () => {
-      sidecarTabs.forEach(t => t.classList.remove("active"));
-      tab.classList.add("active");
-      const target = tab.dataset.tab;
-      document.getElementById("evidenceTab").classList.toggle("active", target === "evidenceTab");
-      document.getElementById("pdfViewerTab").classList.toggle("active", target === "pdfViewerTab");
+      switchSidecarTab(tab.dataset.tab);
     });
   });
 

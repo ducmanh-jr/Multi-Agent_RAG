@@ -24,7 +24,7 @@
   --border-focus: #27272a;
 
   --sidebar-w: 260px;
-  --sidecar-w: 420px;
+  --sidecar-w: 50vw;
 
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -1332,10 +1332,10 @@ body {
 /* ================== 6. RIGHT SIDECAR ================== */
 .sidecar-panel {
   width: var(--sidecar-w);
-  min-width: var(--sidecar-w);
-  max-width: var(--sidecar-w);
+  min-width: 460px;
+  max-width: 65vw;
   height: 100%;
-  background-color: var(--bg-sidebar);
+  background-color: #ffffff;
   border-left: 1px solid var(--border);
   display: flex;
   flex-direction: column;
@@ -1343,6 +1343,72 @@ body {
   overflow: hidden;
   transition: margin-right 0.25s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease;
   z-index: 20;
+}
+
+.sidecar-title-box {
+  min-width: 0;
+  flex: 1;
+  padding-right: 12px;
+}
+
+.sidecar-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidecar-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+.sidecar-report-pane {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 24px;
+}
+
+.split-tab-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 32px;
+  padding: 0 11px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-surface, #ffffff);
+  color: var(--text-secondary, #334155);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.split-tab-toggle-btn:hover {
+  background: #f4f4f5;
+  color: #09090b;
+  border-color: #d4d4d8;
+}
+
+.split-tab-toggle-btn.active {
+  background: #09090b !important;
+  color: #ffffff !important;
+  border-color: #09090b !important;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+}
+
+.split-tab-toggle-btn.active svg {
+  stroke: #ffffff !important;
+}
+
+.split-toggle-label {
+  font-size: 12px;
+  font-weight: 500;
 }
 
 .sidecar-panel.collapsed {
@@ -2287,22 +2353,27 @@ body {
 }
 
 .section-icon-del-btn:hover {
-  background: #fee2e2;
-  color: #dc2626;
-  border-color: #fecaca;
+  background: #27272a;
+  color: #ffffff;
+  border-color: #3f3f46;
 }
 
 .section-icon-del-btn.has-selection {
-  background: #fee2e2;
-  color: #dc2626;
-  border-color: #fca5a5;
+  background: #09090b;
+  color: #ffffff;
+  border-color: #27272a;
   font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+
+.section-icon-del-btn.has-selection svg {
+  stroke: #ffffff;
 }
 
 .del-count-badge {
   font-size: 10px;
   font-weight: 700;
-  color: #dc2626;
+  color: #ffffff;
   line-height: 1;
 }
 
@@ -2377,66 +2448,69 @@ body {
   border-radius: 6px;
   font-size: 12px;
   font-weight: 500;
-  color: #dc2626;
+  color: #09090b;
   cursor: pointer;
   text-align: left;
   transition: background 0.12s ease;
 }
 
 .more-dots-menu-item:hover {
-  background: #fef2f2;
-  color: #b91c1c;
+  background: #f4f4f5;
+  color: #000000;
 }
 
-/* Bulk delete bar in Kho Tài Liệu */
+/* Bulk delete bar in Kho Tài Liệu - PURE BLACK / DARK NEUTRAL */
 .doc-bulk-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 4px 12px;
-  margin: 0 10px 4px;
-  background: #fef2f2;
-  border: 1px solid #fecaca;
+  padding: 6px 12px;
+  margin: 0 10px 6px;
+  background: #18181b;
+  border: 1px solid #27272a;
   border-radius: 7px;
   font-size: 11px;
-  color: #991b1b;
+  color: #f4f4f5;
 }
 
 .bulk-select-all-label {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   cursor: pointer;
   font-weight: 500;
   user-select: none;
+  color: #f4f4f5;
 }
 
 .bulk-select-all-label input[type="checkbox"] {
-  accent-color: #dc2626;
-  width: 12px;
-  height: 12px;
+  accent-color: #09090b;
+  width: 13px;
+  height: 13px;
   cursor: pointer;
 }
 
 .bulk-actions-right {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
 }
 
 .bulk-confirm-del-btn {
-  background: #dc2626;
+  background: #09090b;
   color: #ffffff;
-  border: none;
+  border: 1px solid #3f3f46;
   border-radius: 5px;
-  padding: 2px 7px;
+  padding: 3px 9px;
   font-size: 10.5px;
   font-weight: 600;
   cursor: pointer;
+  transition: background 0.15s ease;
 }
 
 .bulk-confirm-del-btn:hover {
-  background: #b91c1c;
+  background: #27272a;
+  border-color: #52525b;
 }
 
 .bulk-cancel-btn {

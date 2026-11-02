@@ -1083,7 +1083,7 @@ def get_document_file(doc_id: str):
 
     media_type = "application/pdf" if doc.get("name", "").endswith(".pdf") else "text/plain"
 
-    return FileResponse(doc["path"], filename=doc.get("name", "document"), media_type=media_type)
+    return FileResponse(doc["path"], filename=doc.get("name", "document"), media_type=media_type, content_disposition_type="inline")
 
 
 
