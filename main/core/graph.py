@@ -1,47 +1,63 @@
-from typing import Literal, Any
-from langgraph.graph import StateGraph, START, END
+from typing import Any, Literal, Optional
+from langgraph.graph import END, START, StateGraph
 
-from core.state import AgentState
+from agents.agent0_scout.node import ScoutAgent
 from core.config import settings
+from core.state import AgentState
+from core.supervisor import supervisor_planner
+from modes.registry import get_active_agents, get_mode_agents, normalize_mode
 from utils.logger import logger
-
-# =====================================================================
-# LAZY IMPORT: Các Agent class được import tại đây nhưng KHÔNG khởi tạo
-# singleton tại module level. Việc khởi tạo chỉ xảy ra khi gọi
-# build_research_rag_graph(), cho phép project import được ngay cả khi
-# các node.py vẫn là stub (raise NotImplementedError).
-# =====================================================================
-
-from agents.agent1_retrieval.node import RetrievalAgent
-from agents.agent2_reader.node import ReaderAgent
-from agents.agent3_summarizer.node import SummarizerAgent
-from agents.agent4_fact_checker.node import FactCheckerAgent
-from agents.agent5_writer.node import WriterAgent
 
 
 # ===================== NODE FUNCTIONS =====================
 
 def orchestrator_router_node(state: AgentState) -> dict[str, Any]:
     """
-    Orchestrator Router Node:
-    Đọc query, xác định intent và chuẩn bị state ban đầu cho đồ thị.
+    Agentic Supervisor Router Node (L3-L4):
+    Phân tích query, phân loại intent + độ phức tạp (LOW/MEDIUM/HIGH),
+    tách sub_queries đa bước và trích xuất thực thể bắt buộc.
     """
     query = state.get("query", "")
     retry_count = state.get("retry_count", 0)
-    logger.info(f"[Orchestrator] Khởi động luồng cho query: '{query}' (retry_count: {retry_count})")
-    
-    intent = "academic_research"
+    evidence_gaps = state.get("evidence_gaps") or []
+
+    plan = supervisor_planner.plan_query(
+        query=query,
+        evidence_gaps=evidence_gaps,
+        retry_count=retry_count,
+    )
+    logger.info(
+        f"[Supervisor Planner] Query='{query[:70]}' | Intent={plan.intent} | "
+        f"Complexity={plan.complexity} | SubQueries={len(plan.sub_queries)} | Retry={retry_count}"
+    )
+
     trace = {
-        "node": "Orchestrator",
-        "action": "route_to_retrieval",
-        "intent": intent,
-        "retry_count": retry_count
+        "node": "SupervisorPlanner",
+        "action": "plan_and_route",
+        "intent": plan.intent,
+        "complexity": plan.complexity,
+        "sub_queries": plan.sub_queries,
+        "required_entities": plan.required_entities,
+        "alpha": plan.alpha,
+        "top_k": plan.top_k,
+        "retry_count": retry_count,
     }
     return {
-        "intent": intent,
+        "intent": plan.intent,
+        "complexity": plan.complexity,
+        "sub_queries": plan.sub_queries,
+        "required_entities": plan.required_entities,
+        "is_numeric_query": plan.is_numeric_query,
+        "is_comparative_query": plan.is_comparative_query,
+        "alpha": plan.alpha,
+        "top_k": plan.top_k,
         "retry_count": retry_count,
-        "reasoning_trace": [trace]
+        "reasoning_trace": [trace],
     }
+
+
+def scout_node(state: AgentState) -> dict[str, Any]:
+    return _agents["scout"].run(state)
 
 
 def retrieval_node(state: AgentState) -> dict[str, Any]:
@@ -62,48 +78,71 @@ def fact_checker_node(state: AgentState) -> dict[str, Any]:
 
 def retry_loop_node(state: AgentState) -> dict[str, Any]:
     """
-    Node trung gian xử lý vòng lặp tầng ngoài:
-    Tăng retry_count += 1 khi Fact-Checker trả về contradict hoặc not_enough_info.
+    Node trung gian xử lý vòng lặp tự sửa lỗi (Two-Tier Self-Correction):
+    Tăng retry_count += 1 và sinh bộ sub_queries bù lỗ hổng thông tin (Gap-Driven Re-Query).
     """
     current_retry = state.get("retry_count", 0) + 1
-    logger.warning(f"[Orchestrator Self-Correction] Phát hiện phản biện! Tăng retry_count lên {current_retry}/3")
-    
+    query = state.get("query", "")
+    gaps = state.get("evidence_gaps") or []
+    critic_fb = state.get("critic_feedback") or {}
+
+    missing_points = [
+        str(g.get("missing_aspect") or g.get("suggested_query") or "")
+        for g in gaps
+        if isinstance(g, dict)
+    ] + list(critic_fb.get("missing_key_points") or [])
+    unsupported = list(critic_fb.get("unsupported_claims") or [])
+
+    new_sub_queries = supervisor_planner.build_gap_requeries(
+        original_query=query,
+        missing_points=missing_points,
+        unsupported_claims=unsupported,
+    )
+
+    logger.warning(
+        f"[Orchestrator Self-Correction] Kích hoạt vòng tìm kiếm bổ sung {current_retry}/{settings.MAX_ORCHESTRATOR_RETRY} "
+        f"với sub_queries={new_sub_queries}"
+    )
+
     trace = {
         "node": "Orchestrator_SelfCorrection",
-        "action": "increment_retry",
-        "new_retry_count": current_retry
+        "action": "gap_driven_requery",
+        "new_retry_count": current_retry,
+        "new_sub_queries": new_sub_queries,
     }
     return {
         "retry_count": current_retry,
-        "reasoning_trace": [trace]
+        "sub_queries": new_sub_queries,
+        "critic_action": "approve",  # Reset flag before re-entering retrieval
+        "reasoning_trace": [trace],
     }
 
 
 def escalation_node(state: AgentState) -> dict[str, Any]:
     """
     Escalation Node (Lối thoát an toàn):
-    Kích hoạt khi retry_count >= 3 mà vẫn không đạt kiểm chứng factual grounding.
-    Trả về câu trả lời tốt nhất hiện có kèm cảnh báo độ tin cậy thấp.
+    Khi vượt quá số vòng retry nhưng vẫn còn mệnh đề chưa kiểm chứng,
+    chuyển sang Writer với cờ confidence='low' hoặc xuất báo cáo có cảnh báo rõ ràng.
     """
-    logger.error("[Escalation] Đã chạm giới hạn retry (3 lần). Kích hoạt cảnh báo độ tin cậy thấp!")
-    answer = state.get("answer", "Không thể tìm thấy đủ tài liệu hỗ trợ.")
-    warning_report = (
-        f"# CẢNH BÁO ĐỘ TIN CẬY THẤP (LOW CONFIDENCE REPORT)\n\n"
-        f"> **Lưu ý:** Câu trả lời dưới đây chưa vượt qua được vòng kiểm chứng Fact-Check sau 3 lần thử lại.\n\n"
-        f"### Nội dung sơ bộ:\n{answer}\n\n"
-        f"### Khuyến nghị:\nCần cung cấp thêm tài liệu hoặc thu hẹp phạm vi câu hỏi."
-    )
-    
-    trace = {
-        "node": "EscalationNode",
-        "action": "escalate_with_warning",
-        "confidence": "low"
-    }
-    return {
-        "confidence": "low",
-        "final_report": warning_report,
-        "reasoning_trace": [trace]
-    }
+    logger.warning("[Escalation] Đã chạm giới hạn retry. Chuyển sang Writer với cảnh báo độ tin cậy.")
+    state_copy = dict(state)
+    state_copy["confidence"] = "low"
+    try:
+        writer_out = _agents["writer"].run(state_copy)  # type: ignore[arg-type]
+        writer_out["confidence"] = "low"
+        return writer_out
+    except Exception:
+        answer = state.get("answer", "Không tìm thấy đủ bằng chứng trong tài liệu.")
+        warning_report = (
+            f"# BÁO CÁO NGHIÊN CỨU (ĐỘ TIN CẬY THẤP)\n\n"
+            f"> **Lưu ý:** Một số mệnh đề chưa tìm thấy bằng chứng nguyên văn sau {state.get('retry_count', 1)} vòng truy xuất.\n\n"
+            f"{answer}"
+        )
+        return {
+            "confidence": "low",
+            "final_report": warning_report,
+            "reasoning_trace": [{"node": "EscalationNode", "action": "escalate_with_warning"}],
+        }
 
 
 def writer_node(state: AgentState) -> dict[str, Any]:
@@ -112,72 +151,76 @@ def writer_node(state: AgentState) -> dict[str, Any]:
 
 # ===================== CONDITIONAL EDGES =====================
 
-def route_after_retrieval(state: AgentState) -> Literal["reader_node", "summarizer_node"]:
+def route_after_summarizer(state: AgentState) -> Literal["fact_checker_node", "retry_loop_node"]:
     """
-    Rẽ nhánh: Nếu truy vấn có kèm file PDF thì qua Reader Agent, ngược lại đi thẳng tới Summarizer.
+    Inner Critic Gate:
+    Nếu Summarizer Critic phát hiện ngữ cảnh hiện tại hoàn toàn thiếu thông tin ('request_more_context')
+    và còn ngân sách retry -> Quay thẳng về retry_loop_node -> retrieval_node để lấy thêm chunks!
     """
-    if state.get("pdf_path"):
-        logger.info("[Routing] Phát hiện file PDF -> Chuyển hướng tới Reader Agent.")
-        return "reader_node"
-    logger.info("[Routing] Không có PDF -> Đi thẳng tới Summarizer Agent.")
-    return "summarizer_node"
+    critic_action = state.get("critic_action", "approve")
+    retry_count = state.get("retry_count", 0)
+    no_new_evidence = state.get("no_new_evidence", False)
+
+    if (
+        critic_action == "request_more_context"
+        and retry_count < min(settings.MAX_ORCHESTRATOR_RETRY, 2)
+        and not no_new_evidence
+    ):
+        logger.info("[Routing] Inner Critic yêu cầu 'request_more_context' -> Quay về Retrieval lấy thêm tài liệu.")
+        return "retry_loop_node"
+
+    return "fact_checker_node"
 
 
 def route_after_fact_check(state: AgentState) -> Literal["writer_node", "retry_loop_node", "escalation_node"]:
     """
-    Rẽ nhánh điều kiện tầng Orchestrator:
+    Outer Fact-Checker Gate:
     - Nếu support -> Sang Writer Agent
     - Nếu contradict / not_enough_info:
-        + Nếu retry_count >= 3 -> Sang Escalation node
-        + Nếu no_new_evidence is True (Early Stopping) -> Sang Escalation node
-        + Ngược lại -> Tăng retry và quay về Retrieval Agent
+        + Nếu retry_count >= MAX_ORCHESTRATOR_RETRY hoặc no_new_evidence -> Sang Escalation Node
+        + Ngược lại -> Sang retry_loop_node -> Retrieval Agent
     """
     label = state.get("fact_check_label", "not_enough_info")
     retry_count = state.get("retry_count", 0)
     no_new_evidence = state.get("no_new_evidence", False)
-    
+
     if label == "support":
         logger.info("[Routing] Fact-check: SUPPORT -> Tiến hành viết báo cáo cuối cùng.")
         return "writer_node"
-        
-    if retry_count >= settings.MAX_ORCHESTRATOR_RETRY:
-        logger.warning(f"[Routing] Đã retry {retry_count} lần -> Chuyển sang Escalation Node.")
+
+    if retry_count >= settings.MAX_ORCHESTRATOR_RETRY or no_new_evidence:
+        logger.warning(
+            f"[Routing] Dừng lặp (retry={retry_count}, no_new_evidence={no_new_evidence}) -> Chuyển sang Escalation/Writer."
+        )
         return "escalation_node"
 
-    if no_new_evidence:
-        logger.warning("[Routing Early Stopping] Không tìm thấy bằng chứng mới sau vòng tìm kiếm bổ sung -> Dừng lặp, chuyển sang Escalation Node.")
-        return "escalation_node"
-        
-    logger.info(f"[Routing] Fact-check: {label} (retry {retry_count}/3) -> Quay lại Retrieval Agent.")
+    logger.info(f"[Routing] Fact-check: {label} (retry {retry_count}/{settings.MAX_ORCHESTRATOR_RETRY}) -> Quay lại Retrieval.")
     return "retry_loop_node"
 
 
 # ===================== BUILD GRAPH =====================
 
-# Registry chứa các agent singleton — chỉ được populate khi gọi build_research_rag_graph()
 _agents: dict[str, Any] = {}
 
 
-def build_research_rag_graph():
+def build_research_rag_graph(mode: Optional[str] = None):
     """
-    Xây dựng và biên dịch đồ thị LangGraph.
-
-    LƯU Ý: Hàm này sẽ khởi tạo tất cả 5 Agent singleton. Nếu bất kỳ agent nào
-    vẫn là stub (raise NotImplementedError), hàm này sẽ vẫn chạy được vì
-    NotImplementedError chỉ raise khi gọi agent.run(), không phải khi __init__().
-    Tuy nhiên, khi chạy graph thực tế, node sẽ crash tại agent chưa hiện thực.
+    Xây dựng và biên dịch đồ thị LangGraph Two-Tier Self-Correction (L3-L4).
     """
-    # Khởi tạo agents (lazy — chỉ tại thời điểm build graph, không phải module load)
-    _agents["retrieval"] = RetrievalAgent()
-    _agents["reader"] = ReaderAgent()
-    _agents["summarizer"] = SummarizerAgent()
-    _agents["fact_checker"] = FactCheckerAgent()
-    _agents["writer"] = WriterAgent()
+    _agents["scout"] = ScoutAgent()
+    if mode:
+        norm_mode = normalize_mode(mode)
+        settings.EXECUTION_MODE = norm_mode
+        for a in ["retrieval", "reader", "summarizer", "factchecker", "writer"]:
+            settings.set_agent_mode(a, norm_mode)
+        _agents.update(get_mode_agents(norm_mode))
+    else:
+        _agents.update(get_active_agents())
 
     workflow = StateGraph(AgentState)
-    
-    # Thêm các Node
+
     workflow.add_node("orchestrator_router", orchestrator_router_node)
+    workflow.add_node("scout_node", scout_node)
     workflow.add_node("retrieval_node", retrieval_node)
     workflow.add_node("reader_node", reader_node)
     workflow.add_node("summarizer_node", summarizer_node)
@@ -185,30 +228,40 @@ def build_research_rag_graph():
     workflow.add_node("retry_loop_node", retry_loop_node)
     workflow.add_node("escalation_node", escalation_node)
     workflow.add_node("writer_node", writer_node)
-    
-    # Thêm các Edge cố định và có điều kiện
+
     workflow.add_edge(START, "orchestrator_router")
-    workflow.add_edge("orchestrator_router", "retrieval_node")
+    workflow.add_edge("orchestrator_router", "scout_node")
+    workflow.add_edge("scout_node", "retrieval_node")
     workflow.add_edge("retrieval_node", "reader_node")
     workflow.add_edge("reader_node", "summarizer_node")
-    workflow.add_edge("summarizer_node", "fact_checker_node")
-    
-    # Fact-Checker -> (Writer, Retry Loop, hoặc Escalation)
+
+    # Tier 1 Gate: Summarizer Inner Critic -> (Fact-Checker or Direct Re-Query)
+    workflow.add_conditional_edges(
+        "summarizer_node",
+        route_after_summarizer,
+        {
+            "fact_checker_node": "fact_checker_node",
+            "retry_loop_node": "retry_loop_node",
+        },
+    )
+
+    # Tier 2 Gate: Fact-Checker -> (Writer, Retry Loop, or Escalation)
     workflow.add_conditional_edges(
         "fact_checker_node",
         route_after_fact_check,
         {
             "writer_node": "writer_node",
             "retry_loop_node": "retry_loop_node",
-            "escalation_node": "escalation_node"
-        }
+            "escalation_node": "escalation_node",
+        },
     )
-    
-    # Vòng lặp phản hồi quay lại Retrieval
+
     workflow.add_edge("retry_loop_node", "retrieval_node")
-    
-    # Kết thúc
     workflow.add_edge("writer_node", END)
     workflow.add_edge("escalation_node", END)
-    
+
     return workflow.compile()
+
+
+build_graph = build_research_rag_graph
+
