@@ -1,9 +1,18 @@
-# 🛡️ Agent 4: Fact-Checker NLI Verifier (`training_lab/agent4_fact_checker/`)
+# 🛡️ Agent 4 (`agent4_fact_checker`) — 3-Class Cross-Encoder NLI Verifier (Kaggle T4x2)
 
-Thư mục huấn luyện độc lập cho **Agent 4 (Fact-Checker)** sử dụng mô hình **Cross-Encoder NLI 3 nhãn** (`SUPPORT`, `CONTRADICT`, `NOT_ENOUGH_INFO`).
-
-## 📂 Cấu Trúc Thư Mục
-- [`Train_Agent4_FactChecker_T4x2.ipynb`](Train_Agent4_FactChecker_T4x2.ipynb): Notebook chạy huấn luyện tự động Agent 4 trên Kaggle T4x2 / Colab (~10 phút).
-- [`train_agent4_t4x2.py`](train_agent4_t4x2.py): Script huấn luyện Cross-Encoder Sequence Classification với Cosine LR.
-- [`dataset/nli_verifier.jsonl`](dataset/nli_verifier.jsonl): `762` cặp `(premise, hypothesis, label)` bao gồm các mẫu gài bẫy số liệu/năm tháng.
-- [`weights/`](weights/): Nơi lưu trữ `model.safetensors` chuẩn `float16` sau khi huấn luyện.
+## Kiến trúc thư mục `agent4_fact_checker/`
+```text
+agent4_fact_checker/
+├── src/
+│   ├── __init__.py          # Package interface
+│   ├── config.py            # Agent4TrainingConfig & ánh xạ 3 nhãn (SUPPORT, CONTRADICT, NEI)
+│   ├── data_loader.py       # Đọc nli_verifier.jsonl và mã hóa cặp (claim, evidence)
+│   ├── model_builder.py     # Khởi tạo BAAI/bge-reranker-v2-m3 / SciBERT 3-class
+│   ├── trainer.py           # WeightedCrossEncoderTrainer (nhân hệ số phạt 1.35x cho CONTRADICT)
+│   └── evaluator.py         # Tính Macro-F1 & hiệu chỉnh nhiệt độ xác suất (Temperature ECE)
+├── dataset/
+│   └── nli_verifier.jsonl   # 3,000 cặp thẩm định sự kiện khoa học
+├── weights/                 # Trọng số Cross-Encoder NLI & eval_metrics.json
+├── train_agent4_t4x2.py     # CLI Entrypoint
+└── Train_Agent4_FactChecker_T4x2.ipynb
+```

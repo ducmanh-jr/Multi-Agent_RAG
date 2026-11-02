@@ -1,9 +1,18 @@
-# 🧭 Agent 1: Retrieval Router & Supervisor Planner (`training_lab/agent1_retrieval/`)
+# 🧭 Agent 1 (`agent1_retrieval`) — Retrieval Router & Query Planner (Kaggle T4x2)
 
-Thư mục huấn luyện độc lập cho **Agent 1 (Retrieval Router)** tối ưu hóa trên phần cứng **Kaggle Dual Tesla T4 (`2 × 16GB = 32GB VRAM`)**.
-
-## 📂 Cấu Trúc Thư Mục
-- [`Train_Agent1_Router_T4x2.ipynb`](Train_Agent1_Router_T4x2.ipynb): Notebook chạy huấn luyện tự động Agent 1 trên Kaggle T4x2 / Colab.
-- [`train_agent1_t4x2.py`](train_agent1_t4x2.py): Script huấn luyện QLoRA 4-bit NF4 + DoRA (`r=64, lora_alpha=128`, `NEFTune alpha=5.0`).
-- [`dataset/router_sft.jsonl`](dataset/router_sft.jsonl): `381` mẫu phân tích ý định, độ phức tạp (`LOW`/`MEDIUM`/`HIGH`), `required_entities` và `sub_queries`.
-- [`weights/`](weights/): Lưu trữ trọng số `adapter_model.safetensors` chuẩn `float16` (`77 MB`).
+## Kiến trúc thư mục `agent1_retrieval/`
+```text
+agent1_retrieval/
+├── src/
+│   ├── __init__.py          # Package interface
+│   ├── config.py            # Agent1TrainingConfig (DoRA r=64, alpha=128, Dual T4 14.5GiB/GPU)
+│   ├── data_loader.py       # Đọc router_sft.jsonl, kiểm tra JSON schema, chia 90/10 Train/Val
+│   ├── model_builder.py     # Qwen2.5-7B-Instruct 4-bit NF4 + device_map="balanced" + DoRA
+│   ├── trainer.py           # SFTTrainer (NEFTune=5.0, Paged AdamW 8-bit) + Ép kiểu FP16 (<80MB)
+│   └── evaluator.py         # Đánh giá tỷ lệ tuân thủ JSON Schema sau huấn luyện
+├── dataset/
+│   └── router_sft.jsonl     # 1,500 mẫu ChatML điều phối & phân rã truy vấn
+├── weights/                 # Trọng số QLoRA FP16 (77.05 MB)
+├── train_agent1_t4x2.py     # CLI Entrypoint
+└── Train_Agent1_Router_T4x2.ipynb
+```
