@@ -242,8 +242,10 @@ def health():
 
 def _run_inference(model, tokenizer, prompt: str, system_prompt: Optional[str] = None, max_tokens: int = 1024, temperature: float = 0.1, adapter_name: Optional[str] = None) -> str:
     """Helper to run text generation with optional adapter switching."""
-    if hasattr(model, "set_adapter") and adapter_name and adapter_name in _loaded_adapters:
-        model.set_adapter(adapter_name)
+    _alias_map = {"generator_qlora": "generator", "critic_qlora": "critic", "agent1_router": "router", "router_qlora": "router"}
+    resolved_adapter = _alias_map.get((adapter_name or "").strip().lower(), adapter_name)
+    if hasattr(model, "set_adapter") and resolved_adapter and resolved_adapter in _loaded_adapters:
+        model.set_adapter(resolved_adapter)
 
     messages = []
     if system_prompt:
