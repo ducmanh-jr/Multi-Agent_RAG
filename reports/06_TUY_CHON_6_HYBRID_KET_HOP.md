@@ -12,20 +12,13 @@
 
 ```mermaid
 flowchart TD
-    classDef inputNode fill:#ede9fe,stroke:#8b5cf6,stroke-width:2px,color:#3b0764,font-weight:bold,rx:6,ry:6;
-    classDef routerNode fill:#f5f3ff,stroke:#a78bfa,stroke-width:1.5px,color:#2e1065,rx:4,ry:4;
-    classDef stateClosed fill:#f0fdf4,stroke:#22c55e,stroke-width:2px,color:#14532d,font-weight:bold,rx:6,ry:6;
-    classDef stateOpen fill:#fef2f2,stroke:#ef4444,stroke-width:2px,color:#991b1b,font-weight:bold,rx:6,ry:6;
-    classDef stateHalf fill:#fffbeb,stroke:#f59e0b,stroke-width:2px,color:#78350f,font-weight:bold,rx:6,ry:6;
-    classDef fallbackNode fill:#f8fafc,stroke:#64748b,stroke-width:1.5px,color:#0f172a,rx:4,ry:4;
-
-    REQ["Yêu Cầu Từ Người Dùng (Query Request)"]:::inputNode
-    ROUTER["Bộ Định Tuyến Hạt Mịn Theo Từng Agent (Per-Agent Mode Router)<br/>Agent 1: API | Agent 2,3,4: Kaggle GPU | Agent 5: Hybrid"]:::routerNode
+    REQ["Yêu Cầu Từ Người Dùng (Query Request)"]
+    ROUTER["Bộ Định Tuyến Hạt Mịn Theo Từng Agent (Per-Agent Mode Router)<br/>Agent 1: API | Agent 2,3,4: Kaggle GPU | Agent 5: Hybrid"]
 
     subgraph CB ["CẦU DAO TỰ ĐỘNG 3 TRẠNG THÁI (THREE-STATE CIRCUIT BREAKER)"]
-        CLOSED["Trạng Thái CLOSED (Bình Thường)<br/>Định tuyến tới Kaggle GPU / Cloud API"]:::stateClosed
-        OPEN["Trạng Thái OPEN (Ngắt Mạch Bảo Vệ)<br/>Phát hiện 3 lỗi liên tiếp -> Chặn gọi xa trong 60s"]:::stateOpen
-        HALF["Trạng Thái HALF-OPEN (Thăm Dò)<br/>Gửi 1 request kiểm tra sau khi hết thời gian chờ"]:::stateHalf
+        CLOSED["Trạng Thái CLOSED (Bình Thường)<br/>Định tuyến tới Kaggle GPU / Cloud API"]
+        OPEN["Trạng Thái OPEN (Ngắt Mạch Bảo Vệ)<br/>Phát hiện 3 lỗi liên tiếp -> Chặn gọi xa trong 60s"]
+        HALF["Trạng Thái HALF-OPEN (Thăm Dò)<br/>Gửi 1 request kiểm tra sau khi hết thời gian chờ"]
         
         CLOSED -- "3 lỗi liên tiếp (Timeout > 15s hoặc HTTP 5xx)" --> OPEN
         OPEN -- "Hết thời gian cooldown (60 giây)" --> HALF
@@ -33,14 +26,29 @@ flowchart TD
         HALF -- "Thăm dò thất bại" --> OPEN
     end
 
-    FAILOVER["CHUYỂN MẠCH DỰ PHÒNG TỨC THÌ (ZERO-DOWNTIME FAILOVER)<br/>Tự động điều hướng yêu cầu sang cpu_max hoặc cpu_min (0 ms gián đoạn)"]:::fallbackNode
-    OUT["Báo Cáo Hoàn Chỉnh Bền Bỉ Tuyệt Đối"]:::inputNode
+    FAILOVER["CHUYỂN MẠCH DỰ PHÒNG TỨC THÌ (ZERO-DOWNTIME FAILOVER)<br/>Tự động điều hướng yêu cầu sang cpu_max hoặc cpu_min (0 ms gián đoạn)"]
+    OUT["Báo Cáo Hoàn Chỉnh Bền Bỉ Tuyệt Đối"]
 
     REQ --> ROUTER
     ROUTER --> CLOSED
     CLOSED --> OUT
     OPEN --> FAILOVER
     FAILOVER --> OUT
+
+    classDef purple fill:#f5f3ff,stroke:#a78bfa,stroke-width:1.5px,color:#2e1065;
+    classDef input fill:#ede9fe,stroke:#8b5cf6,stroke-width:2px,color:#3b0764;
+    classDef closed fill:#f0fdf4,stroke:#22c55e,stroke-width:2px,color:#14532d;
+    classDef open fill:#fef2f2,stroke:#ef4444,stroke-width:2px,color:#991b1b;
+    classDef half fill:#fffbeb,stroke:#f59e0b,stroke-width:2px,color:#78350f;
+    classDef failover fill:#f8fafc,stroke:#64748b,stroke-width:1.5px,color:#0f172a;
+
+    class REQ input;
+    class ROUTER purple;
+    class CLOSED closed;
+    class OPEN open;
+    class HALF half;
+    class FAILOVER failover;
+    class OUT closed;
 ```
 
 ---
@@ -48,7 +56,7 @@ flowchart TD
 ## 2. Cơ Chế Hoạt Động Kỹ Thuật & Khả Năng Tự Phục Hồi
 
 ### 2.1. Định Tuyến Hạt Mịn Theo Từng Tác Tử (Per-Agent Granular Routing)
-Không ép buộc toàn bộ hệ thống phải chạy trên một hạ tầng duy nhất, `hybrid` cho phép người dùng tùy biến nguồn lực tối ưu cho từng Agent trong tệp `.env`:
+Cho phép cấu hình độc lập chế độ chạy cho từng tác tử trong tệp `.env`:
 ```env
 AGENT_RETRIEVAL_MODE=api        # Agent 1 dùng Gemini API mở rộng truy vấn nhanh
 AGENT_READER_MODE=model         # Agent 2 dùng LayoutLMv3 bóc tách bảng PDF
@@ -58,12 +66,9 @@ AGENT_WRITER_MODE=hybrid        # Agent 5 ưu tiên GPU, tự động fallback v
 ```
 
 ### 2.2. Thuật Toán Cầu Dao Tự Động 3 Trạng Thái (Circuit Breaker State Machine)
-Để tránh tình trạng treo hệ thống khi đường truyền mạng tới Kaggle Worker (Cloudflare Tunnel) bị chập chờn:
-1. **Trạng thái `CLOSED`**: Lưu vết lỗi liên tiếp $N_{\text{fail}}$. Nếu $N_{\text{fail}} < 3$, hệ thống hoạt động bình thường trên Kaggle GPU.
-2. **Trạng thái `OPEN`**: Khi $N_{\text{fail}} \ge 3$, cầu dao ngắt mạch ngay lập tức. Mọi truy vấn trong $60\text{ giây}$ tiếp theo sẽ được chuyển hướng thẳng sang `cpu_max` mà không cần thử gửi qua mạng, triệt tiêu độ trễ chờ đợi (Zero Waiting Time).
-3. **Trạng thái `HALF-OPEN`**: Sau $60\text{ giây}$, hệ thống cho phép đúng 1 truy vấn thăm dò đi qua. Nếu thành công, mạch đóng lại (`CLOSED`) và đặt lại $N_{\text{fail}} = 0$.
-
-Nhờ kiến trúc kết hợp linh hoạt này, chế độ `hybrid` vừa đạt được năng lực biểu diễn vượt trội của mô hình 7B tinh chỉnh, vừa đảm bảo tính sẵn sàng $99.99\%$ của hệ thống biên.
+* `CLOSED`: Hoạt động bình thường. Đếm lỗi liên tiếp $N_{\text{fail}}$.
+* `OPEN`: Khi $N_{\text{fail}} \ge 3$, ngắt mạch ngay lập tức. Chuyển hướng sang `cpu_max` trong $60\text{ giây}$ mà không cần chờ timeout.
+* `HALF-OPEN`: Hết $60\text{ giây}$, gửi 1 truy vấn thăm dò. Nếu thành công, đóng mạch lại (`CLOSED`).
 
 ---
 
