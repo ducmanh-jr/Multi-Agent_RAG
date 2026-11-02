@@ -6,11 +6,34 @@ Includes Multi-Class Focal Loss (gamma=2.0) to boost rare scientific layout clas
 
 import json
 import torch
+import inspect
+import dataclasses
 import torch.nn.functional as F
 from transformers import Trainer, TrainingArguments
 from .config import Agent2TrainingConfig, DOCLAYNET_LABELS
 from .data_loader import load_doclaynet_dataset
 from .model_builder import build_layoutlmv3_model
+
+
+def safe_build_config(config_cls, **kwargs):
+    """Safely instantiates TrainingArguments across different transformers versions."""
+    try:
+        valid_fields = {f.name for f in dataclasses.fields(config_cls)}
+    except TypeError:
+        valid_fields = set(inspect.signature(config_cls.__init__).parameters.keys())
+
+    if "warmup_steps" in valid_fields and "warmup_ratio" in kwargs and "warmup_ratio" not in valid_fields:
+        ratio = kwargs.pop("warmup_ratio")
+        if "warmup_steps" not in kwargs:
+            kwargs["warmup_steps"] = max(1, int(ratio * 100))
+
+    if "eval_strategy" in valid_fields and "evaluation_strategy" in kwargs and "evaluation_strategy" not in valid_fields:
+        kwargs["eval_strategy"] = kwargs.pop("evaluation_strategy")
+    elif "evaluation_strategy" in valid_fields and "eval_strategy" in kwargs and "eval_strategy" not in valid_fields:
+        kwargs["evaluation_strategy"] = kwargs.pop("eval_strategy")
+
+    filtered = {k: v for k, v in kwargs.items() if k in valid_fields}
+    return config_cls(**filtered)
 
 
 class FocalLossLayoutTrainer(Trainer):
@@ -34,7 +57,8 @@ def run_reader_training(cfg: Agent2TrainingConfig):
     model, tokenizer = build_layoutlmv3_model(cfg)
     train_ds, val_ds = load_doclaynet_dataset(cfg.dataset_path, tokenizer, cfg.max_seq_length, cfg.val_split_ratio, cfg.seed)
 
-    training_args = TrainingArguments(
+    training_args = safe_build_config(
+        TrainingArguments,
         output_dir=str(cfg.output_dir / "checkpoints"),
         num_train_epochs=cfg.epochs,
         per_device_train_batch_size=cfg.per_device_train_batch_size,
@@ -45,10 +69,10 @@ def run_reader_training(cfg: Agent2TrainingConfig):
         eval_strategy="epoch",
         save_strategy="epoch",
         load_best_model_at_end=True,
-        warmup_ratio=cfg.warmup_ratio,
+        warmup_steps=10,
         weight_decay=cfg.weight_decay,
         lr_scheduler_type="cosine",
-        logging_steps=10,
+        logging_steps=20,
         report_to="none",
         seed=cfg.seed,
     )
@@ -58,16 +82,15 @@ def run_reader_training(cfg: Agent2TrainingConfig):
         args=training_args,
         train_dataset=train_ds,
         eval_dataset=val_ds,
+        processing_class=tokenizer,
     )
+    print("🚀 [Agent 2 Trainer] Starting Multi-Class Focal Loss training on LayoutLMv3...")
     trainer.train()
 
-    trainer.model.save_pretrained(str(cfg.output_dir), safe_serialization=True)
+    model.save_pretrained(str(cfg.output_dir), safe_serialization=True)
     tokenizer.save_pretrained(str(cfg.output_dir))
-    label_map = {
-        "id2label": {str(i): l for i, l in enumerate(DOCLAYNET_LABELS)},
-        "label2id": {l: i for i, l in enumerate(DOCLAYNET_LABELS)},
-        "loss_function": "MultiClassFocalLoss(gamma=2.0)",
-    }
-    (cfg.output_dir / "label_map.json").write_text(json.dumps(label_map, indent=2), encoding="utf-8")
-    print(f"✅ [Agent 2 Trainer] Saved LayoutLMv3 SOTA Focal-Loss weights & label_map.json to {cfg.output_dir}")
-    return trainer.model, tokenizer
+
+    label_map_path = cfg.output_dir / "label_map.json"
+    label_map_path.write_text(json.dumps(DOCLAYNET_LABELS, indent=2), encoding="utf-8")
+    print(f"✅ [Agent 2 Trainer] Model and label map saved to {cfg.output_dir}")
+    return model, tokenizer

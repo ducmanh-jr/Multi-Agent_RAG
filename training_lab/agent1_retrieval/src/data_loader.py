@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Dataset Loader & ChatML Formatter for Agent 1 (Retrieval Router & Supervisor Planner).
-Validates strict JSON output schema (`action`, `rewritten_queries`, `alpha`, `reason`).
+Validates strict JSON output schema (`action`, `rewritten_queries`, `alpha`, `reason`, `intent`, `sub_queries`).
 """
 
 import json
@@ -16,7 +16,7 @@ def validate_router_record(messages: list[dict]) -> bool:
     assistant_msg = messages[-1].get("content", "")
     try:
         parsed = json.loads(assistant_msg)
-        return "action" in parsed or "rewritten_queries" in parsed
+        return any(k in parsed for k in ("action", "rewritten_queries", "intent", "sub_queries", "complexity", "alpha", "reasoning"))
     except Exception:
         return True  # Allow general ChatML format
 

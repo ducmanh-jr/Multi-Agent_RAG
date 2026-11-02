@@ -5,11 +5,39 @@ Ensures `adapter_model.safetensors` is cast to `torch.float16` (< 80MB) for dire
 """
 
 import torch
+import inspect
+import dataclasses
 from safetensors.torch import load_file, save_file
 from trl import SFTTrainer, SFTConfig
 from .config import Agent1TrainingConfig
 from .data_loader import load_router_dataset
 from .model_builder import build_router_model_and_tokenizer
+
+
+def safe_build_config(config_cls, **kwargs):
+    """Safely instantiates TrainingArguments, SFTConfig, or DPOConfig across different transformers/trl versions."""
+    try:
+        valid_fields = {f.name for f in dataclasses.fields(config_cls)}
+    except TypeError:
+        valid_fields = set(inspect.signature(config_cls.__init__).parameters.keys())
+
+    if "max_length" in valid_fields and "max_seq_length" in kwargs:
+        kwargs["max_length"] = kwargs.pop("max_seq_length")
+    elif "max_seq_length" in valid_fields and "max_length" in kwargs:
+        kwargs["max_seq_length"] = kwargs.pop("max_length")
+
+    if "warmup_steps" in valid_fields and "warmup_ratio" in kwargs and "warmup_ratio" not in valid_fields:
+        ratio = kwargs.pop("warmup_ratio")
+        if "warmup_steps" not in kwargs:
+            kwargs["warmup_steps"] = max(1, int(ratio * 100))
+
+    if "eval_strategy" in valid_fields and "evaluation_strategy" in kwargs and "evaluation_strategy" not in valid_fields:
+        kwargs["eval_strategy"] = kwargs.pop("evaluation_strategy")
+    elif "evaluation_strategy" in valid_fields and "eval_strategy" in kwargs and "eval_strategy" not in valid_fields:
+        kwargs["evaluation_strategy"] = kwargs.pop("eval_strategy")
+
+    filtered = {k: v for k, v in kwargs.items() if k in valid_fields}
+    return config_cls(**filtered)
 
 
 def export_fp16_safetensors(output_dir):
@@ -29,7 +57,8 @@ def run_router_sft_training(cfg: Agent1TrainingConfig):
     model, tokenizer, peft_config = build_router_model_and_tokenizer(cfg)
     train_ds, val_ds = load_router_dataset(cfg.dataset_path, tokenizer, cfg.val_split_ratio, cfg.seed)
 
-    sft_args = SFTConfig(
+    sft_args = safe_build_config(
+        SFTConfig,
         output_dir=str(cfg.output_dir / "checkpoints"),
         per_device_train_batch_size=cfg.per_device_train_batch_size,
         per_device_eval_batch_size=cfg.per_device_eval_batch_size,
@@ -44,11 +73,11 @@ def run_router_sft_training(cfg: Agent1TrainingConfig):
         save_steps=50,
         save_total_limit=2,
         load_best_model_at_end=True,
-        max_seq_length=cfg.max_seq_length,
+        max_length=cfg.max_seq_length,
         dataset_text_field="text",
         optim="paged_adamw_8bit",
         lr_scheduler_type="cosine",
-        warmup_ratio=cfg.warmup_ratio,
+        warmup_steps=10,
         weight_decay=cfg.weight_decay,
         neftune_noise_alpha=cfg.neftune_noise_alpha,
         gradient_checkpointing=True,
@@ -64,9 +93,12 @@ def run_router_sft_training(cfg: Agent1TrainingConfig):
         processing_class=tokenizer,
         args=sft_args,
     )
+    print("🚀 [Agent 1 Trainer] Starting SFT training on Qwen2.5-7B with DoRA + rsLoRA...")
     trainer.train()
 
-    trainer.model.save_pretrained(str(cfg.output_dir), safe_serialization=True)
-    tokenizer.save_pretrained(str(cfg.output_dir))
-    export_fp16_safetensors(cfg.output_dir)
+    final_adapter_dir = cfg.output_dir
+    trainer.model.save_pretrained(str(final_adapter_dir), safe_serialization=True)
+    tokenizer.save_pretrained(str(final_adapter_dir))
+    export_fp16_safetensors(final_adapter_dir)
+    print(f"✅ [Agent 1 Trainer] Training completed and weights saved to {final_adapter_dir}")
     return trainer

@@ -9,12 +9,35 @@ Combines:
 
 import json
 import torch
+import inspect
+import dataclasses
 import torch.nn.functional as F
 from transformers import Trainer, TrainingArguments
 from .config import Agent4TrainingConfig
 from .data_loader import load_nli_dataset
 from .model_builder import build_nli_cross_encoder
 from .evaluator import compute_nli_metrics, calibrate_temperature_ece
+
+
+def safe_build_config(config_cls, **kwargs):
+    """Safely instantiates TrainingArguments across different transformers versions."""
+    try:
+        valid_fields = {f.name for f in dataclasses.fields(config_cls)}
+    except TypeError:
+        valid_fields = set(inspect.signature(config_cls.__init__).parameters.keys())
+
+    if "warmup_steps" in valid_fields and "warmup_ratio" in kwargs and "warmup_ratio" not in valid_fields:
+        ratio = kwargs.pop("warmup_ratio")
+        if "warmup_steps" not in kwargs:
+            kwargs["warmup_steps"] = max(1, int(ratio * 100))
+
+    if "eval_strategy" in valid_fields and "evaluation_strategy" in kwargs and "evaluation_strategy" not in valid_fields:
+        kwargs["eval_strategy"] = kwargs.pop("evaluation_strategy")
+    elif "evaluation_strategy" in valid_fields and "eval_strategy" in kwargs and "eval_strategy" not in valid_fields:
+        kwargs["evaluation_strategy"] = kwargs.pop("eval_strategy")
+
+    filtered = {k: v for k, v in kwargs.items() if k in valid_fields}
+    return config_cls(**filtered)
 
 
 class WeightedCrossEncoderTrainer(Trainer):
@@ -54,7 +77,8 @@ def run_factchecker_training(cfg: Agent4TrainingConfig):
     model, tokenizer = build_nli_cross_encoder(cfg)
     train_ds, val_ds = load_nli_dataset(cfg.dataset_path, tokenizer, cfg.max_seq_length, cfg.val_split_ratio, cfg.seed)
 
-    training_args = TrainingArguments(
+    training_args = safe_build_config(
+        TrainingArguments,
         output_dir=str(cfg.output_dir / "checkpoints"),
         num_train_epochs=cfg.epochs,
         per_device_train_batch_size=cfg.per_device_train_batch_size,
@@ -67,7 +91,7 @@ def run_factchecker_training(cfg: Agent4TrainingConfig):
         load_best_model_at_end=True,
         metric_for_best_model="macro_f1",
         greater_is_better=True,
-        warmup_ratio=0.1,
+        warmup_steps=10,
         weight_decay=0.01,
         lr_scheduler_type="cosine",
         logging_steps=20,
@@ -83,6 +107,7 @@ def run_factchecker_training(cfg: Agent4TrainingConfig):
         processing_class=tokenizer,
         compute_metrics=compute_nli_metrics,
     )
+    print("🚀 [Agent 4 Trainer] Starting R-Drop + Focal Loss NLI training...")
     trainer.train()
     metrics = trainer.evaluate()
 
