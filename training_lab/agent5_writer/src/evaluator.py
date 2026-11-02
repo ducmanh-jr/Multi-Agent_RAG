@@ -10,10 +10,13 @@ from pathlib import Path
 def evaluate_academic_writer(weights_dir: Path, sample_output: str | None = None) -> dict:
     """Verifies exported FP16 adapter and checks structural compliance of synthesized scholarly reports."""
     sf_path = weights_dir / "adapter_model.safetensors"
-    text = sample_output or "### 1. Tóm tắt
-| A | B |
+    text = sample_output or """### 1. Tóm tắt
+| Phương Pháp | Độ Chính Xác |
+| --- | --- |
+| LoRA | 89.2% |
 $$E=mc^2$$
-Trích dẫn [Doc1], [Doc2]."
+Trích dẫn [Doc1], [Doc2]."""
+
     has_headings = "###" in text
     has_table = "|" in text
     has_citations = bool(re.search(r"\[Doc\d+\]", text))
