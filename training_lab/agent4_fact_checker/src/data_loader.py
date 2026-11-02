@@ -18,10 +18,12 @@ def load_nli_dataset(dataset_path: Path, tokenizer, max_length: int = 512, val_r
                 continue
             row = json.loads(line)
             label_str = row.get("label", "NOT_ENOUGH_INFO").upper()
+            lbl = LABEL2ID.get(label_str, 2)
             records.append({
                 "claim": row["claim"],
                 "evidence": row["evidence"],
-                "label": LABEL2ID.get(label_str, 2),
+                "label": lbl,
+                "labels": lbl,
             })
 
     ds = Dataset.from_list(records)

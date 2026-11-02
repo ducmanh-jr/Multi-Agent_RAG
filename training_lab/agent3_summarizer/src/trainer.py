@@ -84,7 +84,7 @@ def train_generator_sft_and_dpo(cfg: Agent3TrainingConfig):
         report_to="none",
     )
     sft_trainer = SFTTrainer(
-        model=model, train_dataset=train_sft, eval_dataset=val_sft, peft_config=peft_config, processing_class=tokenizer, args=sft_args
+        model=model, train_dataset=train_sft, eval_dataset=val_sft, peft_config=None, processing_class=tokenizer, args=sft_args
     )
     print("🚀 [Agent 3 Generator] Starting Stage 1 SFT...")
     sft_trainer.train()
@@ -159,7 +159,7 @@ def train_critic_sft(cfg: Agent3TrainingConfig):
         report_to="none",
     )
     trainer = SFTTrainer(
-        model=model, train_dataset=train_ds, eval_dataset=val_ds, peft_config=peft_config, processing_class=tokenizer, args=sft_args
+        model=model, train_dataset=train_ds, eval_dataset=val_ds, peft_config=None, processing_class=tokenizer, args=sft_args
     )
     print("🚀 [Agent 3 Critic] Starting Adversarial SFT...")
     trainer.train()

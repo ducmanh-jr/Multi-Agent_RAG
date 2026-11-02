@@ -78,7 +78,7 @@ def run_writer_sft_and_rpo_training(cfg: Agent5TrainingConfig):
         report_to="none",
     )
     sft_trainer = SFTTrainer(
-        model=model, train_dataset=train_sft, eval_dataset=val_sft, peft_config=peft_config, processing_class=tokenizer, args=sft_args
+        model=model, train_dataset=train_sft, eval_dataset=val_sft, peft_config=None, processing_class=tokenizer, args=sft_args
     )
     print("🚀 [Agent 5 Writer] Starting Stage 1 SFT...")
     sft_trainer.train()

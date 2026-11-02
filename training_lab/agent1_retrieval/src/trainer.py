@@ -89,7 +89,7 @@ def run_router_sft_training(cfg: Agent1TrainingConfig):
         model=model,
         train_dataset=train_ds,
         eval_dataset=val_ds,
-        peft_config=peft_config,
+        peft_config=None,
         processing_class=tokenizer,
         args=sft_args,
     )
