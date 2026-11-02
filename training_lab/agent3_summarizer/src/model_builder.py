@@ -66,6 +66,8 @@ def build_summarizer_model_and_tokenizer(
 
     # Chuẩn AMP của PyTorch trên Tesla T4: Trọng số LoRA trainable phải ở float32 để GradScaler unscale:
     for param in model.parameters():
+        if param.dtype == torch.bfloat16:
+            param.data = param.data.to(torch.float32)
         if param.requires_grad:
             param.data = param.data.to(torch.float32)
 

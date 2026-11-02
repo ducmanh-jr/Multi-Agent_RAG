@@ -33,7 +33,7 @@ class Agent3TrainingConfig:
 
     # Common Dual T4 Settings
     lora_dropout: float = 0.05
-    use_dora: bool = True
+    use_dora: bool = False
     neftune_noise_alpha: float = 5.0
     per_device_batch_size: int = 2
     gradient_accumulation_steps: int = 8

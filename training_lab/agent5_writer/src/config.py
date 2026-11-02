@@ -19,7 +19,7 @@ class Agent5TrainingConfig:
     lora_r: int = 32
     lora_alpha: int = 64
     lora_dropout: float = 0.05
-    use_dora: bool = True
+    use_dora: bool = False
     use_rslora: bool = True
     attn_implementation: str = "sdpa"
 

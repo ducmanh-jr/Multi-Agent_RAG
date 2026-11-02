@@ -64,7 +64,7 @@ def run_writer_sft_and_rpo_training(cfg: Agent5TrainingConfig):
         gradient_accumulation_steps=cfg.gradient_accumulation_steps,
         learning_rate=cfg.lr_sft,
         num_train_epochs=cfg.epochs_sft,
-        fp16=True,
+        fp16=False,
         logging_steps=10,
         eval_strategy="steps",
         eval_steps=50,
@@ -99,7 +99,7 @@ def run_writer_sft_and_rpo_training(cfg: Agent5TrainingConfig):
                 num_train_epochs=cfg.epochs_dpo,
                 beta=cfg.dpo_beta,
                 rpo_alpha=0.1,  # RPO alignment
-                fp16=True,
+                fp16=False,
                 logging_steps=10,
                 max_length=2048,
                 max_prompt_length=1024,

@@ -65,7 +65,7 @@ def run_router_sft_training(cfg: Agent1TrainingConfig):
         gradient_accumulation_steps=cfg.gradient_accumulation_steps,
         learning_rate=cfg.learning_rate,
         num_train_epochs=cfg.epochs,
-        fp16=True,
+        fp16=False,
         logging_steps=10,
         eval_strategy="steps",
         eval_steps=50,

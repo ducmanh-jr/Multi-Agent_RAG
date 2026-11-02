@@ -18,7 +18,7 @@ class Agent1TrainingConfig:
     lora_r: int = 64
     lora_alpha: int = 128
     lora_dropout: float = 0.05
-    use_dora: bool = True
+    use_dora: bool = False
     use_rslora: bool = True  # Rank-Stabilized LoRA scaling (alpha / sqrt(r))
     attn_implementation: str = "sdpa"  # Optimal Memory-Efficient Attention for Tesla T4 (sm_75)
     target_modules: list[str] = field(
