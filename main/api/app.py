@@ -86,6 +86,12 @@ app.add_middleware(
 
 )
 
+@app.get('/health')
+@app.get('/api/health')
+def health_check():
+    return {'status': 'ok', 'timestamp': datetime.datetime.now().isoformat()}
+
+
 
 
 @app.middleware("http")
