@@ -123,6 +123,11 @@ def load_generator_model():
             or find_adapter_path("agent1_router")
             or find_adapter_path("agent1_retrieval/retrieval_router_critique_qlora/final")
         )
+        writer_path = (
+            os.getenv("WRITER_LORA_PATH")
+            or find_adapter_path("agent5_writer/weights")
+            or find_adapter_path("writer_qlora")
+        )
 
         peft_attached = False
 
@@ -149,6 +154,15 @@ def load_generator_model():
                 model = PeftModel.from_pretrained(model, router_path, adapter_name="router")
                 peft_attached = True
             _loaded_adapters.append("router")
+
+        if writer_path:
+            print(f"Attaching Academic Writer QLoRA from {writer_path}...")
+            if peft_attached:
+                model.load_adapter(writer_path, adapter_name="writer")
+            else:
+                model = PeftModel.from_pretrained(model, writer_path, adapter_name="writer")
+                peft_attached = True
+            _loaded_adapters.append("writer")
 
         print(f"PEFT Adapters active: {_loaded_adapters}")
 
@@ -259,7 +273,14 @@ def health():
 
 def _run_inference(model, tokenizer, prompt: str, system_prompt: Optional[str] = None, max_tokens: int = 1024, temperature: float = 0.1, adapter_name: Optional[str] = None) -> str:
     """Helper to run text generation with optional adapter switching."""
-    _alias_map = {"generator_qlora": "generator", "critic_qlora": "critic", "agent1_router": "router", "router_qlora": "router"}
+    _alias_map = {
+        "generator_qlora": "generator",
+        "critic_qlora": "critic",
+        "agent1_router": "router",
+        "router_qlora": "router",
+        "writer_qlora": "writer",
+        "agent5_writer": "writer",
+    }
     resolved_adapter = _alias_map.get((adapter_name or "").strip().lower(), adapter_name)
     if hasattr(model, "set_adapter") and resolved_adapter and resolved_adapter in _loaded_adapters:
         model.set_adapter(resolved_adapter)

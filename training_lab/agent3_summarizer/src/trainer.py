@@ -70,6 +70,7 @@ def train_generator_sft_and_dpo(cfg: Agent3TrainingConfig):
             learning_rate=cfg.gen_lr_dpo,
             num_train_epochs=cfg.gen_epochs_dpo,
             beta=cfg.dpo_beta,
+            rpo_alpha=0.1,  # RPO (Regularized Preference Optimization: DPO + 0.1 * NLL loss)
             fp16=True,
             logging_steps=10,
             max_length=2048,

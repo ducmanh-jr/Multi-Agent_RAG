@@ -40,6 +40,7 @@ def build_router_model_and_tokenizer(cfg: Agent1TrainingConfig):
         device_map=dev_map,
         max_memory=max_mem,
         torch_dtype=torch.float16,
+        attn_implementation=cfg.attn_implementation,
         trust_remote_code=True,
     )
     model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
@@ -49,6 +50,7 @@ def build_router_model_and_tokenizer(cfg: Agent1TrainingConfig):
         lora_alpha=cfg.lora_alpha,
         lora_dropout=cfg.lora_dropout,
         use_dora=cfg.use_dora,
+        use_rslora=cfg.use_rslora,
         target_modules=cfg.target_modules,
         bias="none",
         task_type="CAUSAL_LM",

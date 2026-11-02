@@ -44,6 +44,7 @@ def build_summarizer_model_and_tokenizer(
         device_map=dev_map,
         max_memory=mem_map,
         torch_dtype=torch.float16,
+        attn_implementation="sdpa",
         trust_remote_code=True,
     )
     model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
@@ -53,6 +54,7 @@ def build_summarizer_model_and_tokenizer(
         lora_alpha=lora_alpha,
         lora_dropout=lora_dropout,
         use_dora=use_dora,
+        use_rslora=True,
         target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
         bias="none",
         task_type="CAUSAL_LM",

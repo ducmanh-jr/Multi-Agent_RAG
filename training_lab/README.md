@@ -65,6 +65,22 @@ training_lab/
 │   ├── Train_Agent4_FactChecker_T4x2.ipynb    # Notebook huấn luyện riêng Agent 4 trên Kaggle T4x2
 │   └── README.md                              # Tài liệu kỹ thuật chi tiết Agent 4
 │
-├── Train_Master_T4x2.ipynb                    # 🚀 Notebook Tổng Hợp: Chạy huấn luyện cả 4 Agent liên hoàn
+├── agent5_writer/                             # 📝 AGENT 5: Academic Report Writer & Citation Synthesizer
+│   ├── src/                                   # Kiến trúc mã nguồn Fine-Tuning SFT + RPO/DPO (DoRA + rsLoRA + SDPA)
+│   │   ├── __init__.py
+│   │   ├── config.py                          # Cấu hình DoRA + rsLoRA (`r=32, alpha=64`) + `rpo_alpha=0.1`
+│   │   ├── data_loader.py                     # Bộ nạp `writer_sft.jsonl` (1,500) & `writer_dpo.jsonl` (1,000)
+│   │   ├── model_builder.py                   # Khởi tạo `Qwen2.5-7B` 4-bit NF4 + `attn_implementation="sdpa"`
+│   │   ├── trainer.py                         # Pipeline Stage 1 SFT -> Stage 2 RPO/DPO + Xuất FP16 (<80MB)
+│   │   └── evaluator.py                       # Kiểm định cấu trúc IEEE/Markdown, Bảng, LaTeX & Citation `[DocX]`
+│   ├── dataset/
+│   │   ├── writer_sft.jsonl                   # 1,500 mẫu tổng hợp báo cáo khoa học chuẩn IEEE/Markdown
+│   │   └── writer_dpo.jsonl                   # 1,000 cặp đối chiếu ưu tiên (Chosen có trích dẫn vs Rejected)
+│   ├── weights/                               # Trọng số Writer QLoRA FP16 (19.28 MB - sẵn trên GitHub)
+│   ├── train_agent5_t4x2.py                   # CLI Entrypoint gọi vào package `src.*`
+│   ├── Train_Agent5_Writer_T4x2.ipynb         # Notebook huấn luyện riêng Agent 5 trên Kaggle T4x2
+│   └── README.md                              # Tài liệu kỹ thuật chi tiết Agent 5
+│
+├── Train_Master_T4x2.ipynb                    # 🚀 Notebook Tổng Hợp: Chạy huấn luyện cả 5 Agent liên hoàn
 └── README.md                                  # Tài liệu kiến trúc tổng thể `training_lab/`
 ```
