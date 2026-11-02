@@ -190,15 +190,7 @@ def extract_table_or_equations_tool(pdf_path: Optional[str], page_number: int = 
                 except Exception:
                     pass
         if not markdown_tables:
-            raw_lines = (page.get_text("text") or "").splitlines()
-            numeric_lines = [
-                ln.strip()
-                for ln in raw_lines
-                if len(re.findall(r"\b\d+(?:[.,]\d+)?%?\b", ln)) >= 2
-            ]
             doc.close()
-            if numeric_lines:
-                return f"[Dữ liệu số học/bảng biểu Trang {page_number}]:\n" + "\n".join(numeric_lines[:25])
             return f"Không phát hiện bảng biểu trên trang {page_number}."
         doc.close()
         return "\n\n".join(markdown_tables)

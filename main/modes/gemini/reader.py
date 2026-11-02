@@ -58,7 +58,7 @@ class GeminiReaderAgent(BaseAgent):
             doc_id = os.path.splitext(os.path.basename(str(pdf_path)))[0]
             for p_no in sorted(list(pages_covered))[:3]:
                 table_md = extract_table_or_equations_tool(pdf_path, p_no)
-                if table_md and ("Bảng" in table_md or "Dữ liệu số học" in table_md):
+                if table_md and ("Bảng" in table_md and "|" in table_md):
                     unit = SourceUnit(
                         id=f"{doc_id}_p{p_no}_table",
                         text=table_md,

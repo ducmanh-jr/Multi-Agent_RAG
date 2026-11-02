@@ -874,7 +874,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // ==================== 5. POLLING STATUS ====================
   function pollRunStatus(runId, messageCard, query, startTime, timerInterval) {
-    const maxPolls = 90;
+    const maxPolls = 300;
     let polls = 0;
 
     clearActivePolling();
@@ -1163,6 +1163,10 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     }
 
+        const evidence = (data.evidence && data.evidence.length ? data.evidence : null) || (data.result && data.result.evidence) || data.evidence_spans || [];
+    state.currentEvidence = evidence;
+    updateSidecarEvidence(evidence);
+
     const report = data.report || data.final_report || (data.result && data.result.report) || "";
     if (report) {
       const reportPane = document.getElementById("sidecarReportPane");
@@ -1174,26 +1178,33 @@ document.addEventListener("DOMContentLoaded", () => {
         `;
       }
     }
-    const evidence = (data.evidence && data.evidence.length ? data.evidence : null) || (data.result && data.result.evidence) || data.evidence_spans || [];
-    state.currentEvidence = evidence;
-    updateSidecarEvidence(evidence);
 
     // 1. Extract the direct conversational AI answer
     let mainAnswer = "";
     
     // Check if report has Executive Summary section
     const execMatch = report.match(/## 1\.\s*(?:Tóm\s*tắt\s*Tổng\s*quan|Executive\s*Summary)[\s\S]*?\n([\s\S]*?)(?=\n## 2|\n---|\Z)/i);
+    const directAnsMatch = report.match(/> \*\*Câu trả lời Trực tiếp:\*\* \*\*([\s\S]*?)\*\*/);
+
     if (execMatch && execMatch[1].trim() && !execMatch[1].includes("Thông tin nghiên cứu học thuật xác thực liên quan đến: tóm tắt.")) {
       mainAnswer = execMatch[1].trim();
+    } else if (directAnsMatch && directAnsMatch[1].trim()) {
+      mainAnswer = directAnsMatch[1].trim();
     } else if (data.answer && data.answer.trim()) {
       mainAnswer = data.answer.trim();
     } else {
-      const matchAns = report.match(/> \*\*Câu trả lời Trực tiếp:\*\* \*\*(.*?)\*\*/);
-      if (matchAns && matchAns[1]) {
-        mainAnswer = matchAns[1].trim();
+      const findingsMatch = report.match(/## 2\.\s*(?:Kết quả Nghiên cứu|Các Luận Điểm)[\s\S]*?\n([\s\S]*?)(?=\n## 3|\n---|\Z)/i);
+      if (findingsMatch && findingsMatch[1].trim()) {
+        mainAnswer = findingsMatch[1].trim();
+      } else if (report && report.trim()) {
+        mainAnswer = report.trim();
       } else {
         const claims = data.verified_claims || [];
-        mainAnswer = claims[0]?.claim || claims[0]?.text || report || "Đã thẩm định và hoàn tất quy trình nghiên cứu.";
+        if (claims.length > 0) {
+          mainAnswer = claims.map((c, i) => `${i + 1}. ${c.claim || c.text || c.evidence}`).join("\n\n");
+        } else {
+          mainAnswer = "Đã thẩm định và hoàn tất quy trình nghiên cứu.";
+        }
       }
     }
 

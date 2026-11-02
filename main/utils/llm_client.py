@@ -565,8 +565,13 @@ class UnifiedLLMClient:
             clean = s.replace("_", " ").strip()
             return clean if clean else "Tài liệu nghiên cứu"
 
+        def clean_caption_credit(s: str) -> str:
+            res = re.sub(r"\(Ảnh:[^)]*\)", "", s).strip()
+            res = re.sub(r"\(Nguồn:[^)]*\)", "", res).strip()
+            return res
+
         def is_complete_sentence(s: str) -> bool:
-            s_clean = s.strip()
+            s_clean = clean_caption_credit(s).strip()
             if len(s_clean) < 30:
                 return False
             if s_clean[-1] not in '.!?:\u201c\u201d':
@@ -585,20 +590,22 @@ class UnifiedLLMClient:
             return True
 
         def is_metadata_or_header(line: str) -> bool:
-            l = line.strip()
+            l = clean_caption_credit(line).strip()
             if not l or len(l) < 20:
                 return True
             if l.startswith("#") or l.startswith("---") or l.startswith("==="):
                 return True
             bad_phrases = [
                 "Tác giả", "Năm xuất bản", "Nguồn công bố", "Liên kết tham chiếu",
-                "Quyền riêng tư", "Cookie", "Ảnh:", "Theo tư liệu", "http://", "https://",
+                "Quyền riêng tư", "Cookie", "Theo tư liệu", "http://", "https://",
                 "YÊU CẦU TRẢ VỀ", "ĐỊNH DẠNG JSON", "markdown bên ngoài",
                 "Tóm tắt nội dung nghiên cứu", "Bối cảnh và Giá trị khoa học",
             ]
             for phrase in bad_phrases:
                 if phrase.lower() in l.lower():
                     return True
+            if l.lower().startswith("ảnh:"):
+                return True
             return False
 
         def has_quantity_for_entity(sentence: str, query: str) -> bool:
@@ -659,7 +666,8 @@ class UnifiedLLMClient:
                 sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", p) if len(s.strip()) > 20]
                 if not sentences:
                     sentences = [p]
-                for idx_s, s in enumerate(sentences):
+                for idx_s, raw_s in enumerate(sentences):
+                    s = clean_caption_credit(raw_s).strip()
                     if is_metadata_or_header(s) or not is_complete_sentence(s):
                         continue
                     s_tokens = set(re.findall(r"\w+", s.lower())) - stop_words
