@@ -90,7 +90,28 @@ def train_qlora_sft(
     trainer.train()
     model.save_pretrained(output_dir)
     tokenizer.save_pretrained(output_dir)
-    print(f"[OK] Saved QLoRA SFT adapter to: {output_dir}")
+    _compress_safetensors_fp16(output_dir)
+    del trainer, model, tokenizer
+    _free_vram()
+    print(f"[OK] Saved QLoRA SFT adapter (FP16) to: {output_dir}")
+
+
+def _free_vram():
+    import gc
+    import torch
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
+def _compress_safetensors_fp16(folder: str):
+    """Ensure saved adapter_model.safetensors is stored in FP16 (<80MB) for fast Drive & GitHub sync."""
+    import torch
+    from safetensors.torch import load_file, save_file
+    sf_path = os.path.join(folder, "adapter_model.safetensors")
+    if os.path.exists(sf_path):
+        tensors = load_file(sf_path)
+        save_file({k: v.to(torch.float16) for k, v in tensors.items()}, sf_path)
 
 
 def train_generator_dpo(
@@ -150,7 +171,10 @@ def train_generator_dpo(
     )
     trainer.train()
     model.save_pretrained(output_dir)
-    print(f"[OK] Saved DPO-aligned Generator adapter to: {output_dir}")
+    _compress_safetensors_fp16(output_dir)
+    del trainer, model, tokenizer
+    _free_vram()
+    print(f"[OK] Saved DPO-aligned Generator adapter (FP16) to: {output_dir}")
 
 
 def train_nli_verifier(
