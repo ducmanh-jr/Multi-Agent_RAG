@@ -263,6 +263,7 @@ def health():
     return {
         "status": "online",
         "worker": "Kaggle Dual T4 Worker",
+        "model_worker": "Kaggle Dual Tesla T4 (Qwen2.5-7B + Qwen2.5-3B NF4)",
         "cuda_available": torch.cuda.is_available(),
         "gpu_count": gpu_count,
         "gpus": gpu_info,
@@ -306,6 +307,7 @@ def _run_inference(model, tokenizer, prompt: str, system_prompt: Optional[str] =
         return tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
 
 
+@app.post("/generate")
 @app.post("/api/generate")
 def generate(req: GenerateRequest):
     """Generates completion using Qwen-7B on GPU 0."""
