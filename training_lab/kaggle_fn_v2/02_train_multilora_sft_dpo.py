@@ -153,12 +153,73 @@ def train_generator_dpo(
     print(f"[OK] Saved DPO-aligned Generator adapter to: {output_dir}")
 
 
+def train_nli_verifier(
+    data_path: str,
+    output_dir: str,
+    base_nli_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2",
+    epochs: int = 2,
+):
+    """Stage 4: Fine-tune Agent 4 Fact-Checker NLI Cross-Encoder on nli_verifier_train.jsonl."""
+    import torch
+    from transformers import AutoModelForSequenceClassification, AutoTokenizer, Trainer, TrainingArguments
+    from datasets import load_dataset
+
+    label2id = {"SUPPORT": 0, "CONTRADICT": 1, "NOT_ENOUGH_INFO": 2}
+    id2label = {0: "SUPPORT", 1: "CONTRADICT", 2: "NOT_ENOUGH_INFO"}
+
+    tokenizer = AutoTokenizer.from_pretrained(base_nli_model)
+    model = AutoModelForSequenceClassification.from_pretrained(
+        base_nli_model,
+        num_labels=3,
+        label2id=label2id,
+        id2label=id2label,
+        ignore_mismatched_sizes=True,
+    )
+    raw_ds = load_dataset("json", data_files=data_path, split="train")
+
+    def _preprocess(batch):
+        enc = tokenizer(
+            batch["premise"],
+            batch["hypothesis"],
+            truncation=True,
+            padding="max_length",
+            max_length=512,
+        )
+        enc["labels"] = [label2id.get(str(lbl).upper(), 2) for lbl in batch["label"]]
+        return enc
+
+    tok_ds = raw_ds.map(_preprocess, batched=True)
+    args = TrainingArguments(
+        output_dir=output_dir,
+        num_train_epochs=epochs,
+        per_device_train_batch_size=8,
+        learning_rate=2e-5,
+        fp16=torch.cuda.is_available(),
+        logging_steps=20,
+        save_strategy="epoch",
+        report_to="none",
+    )
+    trainer = Trainer(model=model, args=args, train_dataset=tok_ds, processing_class=tokenizer)
+    trainer.train()
+    model.save_pretrained(output_dir)
+    tokenizer.save_pretrained(output_dir)
+    print(f"[OK] Saved Agent 4 NLI Verifier to: {output_dir}")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--base_model", default="Qwen/Qwen2.5-7B-Instruct")
-    parser.add_argument("--adapter", choices=["router", "generator", "critic", "all"], default="all")
-    parser.add_argument("--data_dir", default="training_lab/kaggle_fn_v2/datasets")
-    parser.add_argument("--output_dir", default="training_lab/kaggle_fn_v2/weights")
+    parser.add_argument("--base_model", "--base-model", dest="base_model", default="Qwen/Qwen2.5-7B-Instruct")
+    parser.add_argument(
+        "--adapter",
+        choices=["router", "generator", "critic", "nli", "all"],
+        default="all",
+        help="Chọn Agent cần huấn luyện: router (Agent 1), generator (Agent 3 Gen), critic (Agent 3 Critic), nli (Agent 4 FactChecker), hoặc all",
+    )
+    parser.add_argument("--data_dir", "--dataset-dir", dest="data_dir", default="training_lab/kaggle_fn_v2/datasets")
+    parser.add_argument("--output_dir", "--output-dir", dest="output_dir", default="training_lab/weights_drive_bundle")
+    parser.add_argument("--epochs", type=int, default=2)
+    parser.add_argument("--batch-size", type=int, default=2)
+    parser.add_argument("--grad-accum", type=int, default=4)
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -167,14 +228,16 @@ if __name__ == "__main__":
             args.base_model,
             os.path.join(args.data_dir, "router_sft.jsonl"),
             os.path.join(args.output_dir, "agent1_router"),
+            epochs=args.epochs,
         )
     if args.adapter in ("generator", "all"):
         sft_dir = os.path.join(args.output_dir, "generator_qlora_sft")
-        final_gen_dir = os.path.join(args.output_dir, "generator_qlora")
+        final_gen_dir = os.path.join(args.output_dir, "generator_qlora", "final")
         train_qlora_sft(
             args.base_model,
             os.path.join(args.data_dir, "generator_sft.jsonl"),
             sft_dir,
+            epochs=args.epochs,
         )
         train_generator_dpo(
             args.base_model,
@@ -186,5 +249,14 @@ if __name__ == "__main__":
         train_qlora_sft(
             args.base_model,
             os.path.join(args.data_dir, "critic_sft.jsonl"),
-            os.path.join(args.output_dir, "critic_qlora"),
+            os.path.join(args.output_dir, "critic_qlora", "final"),
+            epochs=args.epochs,
         )
+    if args.adapter in ("nli", "all"):
+        nli_file = os.path.join(args.data_dir, "nli_verifier_train.jsonl")
+        if os.path.exists(nli_file):
+            train_nli_verifier(
+                nli_file,
+                os.path.join(args.output_dir, "fact_checker_nli"),
+                epochs=args.epochs,
+            )
