@@ -1,0 +1,150 @@
+"""
+Gemini Mode - Agentic Summarizer + Self-Critic Agent (L3-L4, Quota-Optimized).
+Combines Grounded Synthesis, Verbatim Evidence Span Extraction, Atomic Claim Decomposition,
+and Self-Critique (approve / rewrite / request_more_context) in a SINGLE structured JSON Gemini Call!
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from typing import Any
+
+from agents.agent3_summarizer.components.generator import pack_context_by_token_budget
+from core.base_agent import BaseAgent
+from core.schemas import SummarizerCriticOutput
+from core.state import AgentState, AtomicClaim, EvidenceSpan
+from core.verifier import ensure_inline_citations, evaluate_inner_critic_fast
+from utils.llm_client import llm_client
+
+
+class GeminiSummarizerAgent(BaseAgent):
+    """Agentic Summarizer + Self-Critic powered by Gemini API (1 Call)."""
+
+    def __init__(self, max_internal_retry: int = 2):
+        super().__init__(name="GeminiSummarizerAgent", max_internal_retry=max_internal_retry)
+
+    def run(self, state: AgentState) -> dict[str, Any]:
+        query = state.get("query", "")
+        source_units = state.get("source_units", []) or []
+        required_entities = state.get("required_entities", []) or []
+
+        self.logger.info(f"[Gemini Summarizer] Calling Gemini Flash for: '{query[:65]}' ({len(source_units)} units)")
+
+        context_str, _ = pack_context_by_token_budget(source_units, max_tokens=6000)
+
+        prompt = f"""Bạn là Trợ lý Nghiên cứu Khoa học tự chủ (Gemini Agentic Summarizer & Self-Critic).
+Nhiệm vụ:
+1. Chỉ dựa trên Tài liệu nguồn dưới đây, hãy tổng hợp câu trả lời chi tiết, mạch lạc cho câu hỏi: "{query}".
+2. Gắn ký hiệu trích dẫn [1], [2] ngay sau mỗi luận điểm tương ứng với thứ tự các đoạn nguồn.
+3. Nếu tài liệu hoàn toàn không có thông tin hoặc con số được hỏi, hãy nói rõ tài liệu không đề cập và đặt "critic_action": "request_more_context".
+4. Tự kiểm định (Self-Critique): Đánh giá xem ngữ cảnh hiện tại đã đủ trả lời trọn vẹn câu hỏi chưa.
+
+Tài liệu nguồn:
+{context_str}
+
+YÊU CẦU TRẢ VỀ ĐÚNG ĐỊNH DẠNG JSON HỢP LỆ:
+{{
+  "answer": "Nội dung trả lời tổng hợp có gắn trích dẫn [1], [2]...",
+  "evidence_spans": [
+    {{"quote": "câu trích dẫn nguyên văn từ tài liệu", "unit_id": "Unit ID", "doc_id": "Doc ID", "page_no": 1}}
+  ],
+  "claims": [
+    {{"text": "Nhận định nguyên tử độc lập", "unit_id": "Unit ID"}}
+  ],
+  "is_supported": true,
+  "missing_key_points": [],
+  "critic_action": "approve"
+}}
+"""
+        response_text = ""
+        try:
+            response_text = llm_client._call_gemini(
+                prompt=prompt,
+                temperature=0.15,
+                max_tokens=2048,
+                json_mode=True,
+            )
+        except Exception as e:
+            self.logger.warning(f"[Gemini Summarizer] API call failed ({e}), using deterministic fallback.")
+
+        answer = ""
+        raw_claims: list[Any] = []
+        raw_spans: list[Any] = []
+        critic_out = SummarizerCriticOutput()
+
+        if response_text:
+            clean_json = re.sub(r"^```(?:json)?|```$", "", response_text.strip(), flags=re.MULTILINE).strip()
+            try:
+                # Fix unescaped LaTeX backslashes before json.loads
+                sanitized_json = re.sub(r'\\(?![/\"\\bfnrtu])', r"\\\\", clean_json)
+                data = json.loads(sanitized_json)
+                answer = str(data.get("answer", "")).strip()
+                raw_spans = data.get("evidence_spans", []) or []
+                raw_claims = data.get("claims", []) or []
+                critic_out = SummarizerCriticOutput.from_dict(
+                    {
+                        "is_supported": data.get("is_supported", True),
+                        "missing_key_points": data.get("missing_key_points", []),
+                        "action": data.get("critic_action", "approve"),
+                    }
+                )
+            except Exception:
+                m_ans = re.search(r'"answer"\s*:\s*"((?:[^"\\]|\\.)*)', clean_json, flags=re.DOTALL)
+                if m_ans:
+                    answer = m_ans.group(1).replace('\\"', '"').replace("\\n", "\n").strip()
+                else:
+                    answer = re.sub(r'^\s*\{\s*"answer"\s*:\s*"?', "", clean_json).strip()
+
+        if not answer:
+            fallback_raw = llm_client._mock_fallback(
+                f'Câu hỏi nghiên cứu: "{query}"\n{context_str}', json_mode=True
+            )
+            fb_data = json.loads(fallback_raw)
+            answer = fb_data.get("answer", "")
+            raw_spans = fb_data.get("evidence_spans", [])
+            raw_claims = fb_data.get("claims", [])
+            critic_out = evaluate_inner_critic_fast(query, answer, source_units, required_entities)
+
+        # Normalize claims and evidence_spans to strict state contracts
+        claims = [
+            AtomicClaim(
+                id=f"claim_{idx + 1}",
+                text=c.get("text") or c.get("claim", "") if isinstance(c, dict) else str(c),
+                unit_id=c.get("unit_id") if isinstance(c, dict) else None,
+            ).to_dict()
+            for idx, c in enumerate(raw_claims)
+            if (c.get("text") or c.get("claim", "") if isinstance(c, dict) else str(c)).strip()
+        ]
+        evidence_spans = [
+            EvidenceSpan(
+                id=f"ev_{idx + 1}",
+                quote=e.get("quote", "") if isinstance(e, dict) else str(e),
+                unit_id=e.get("unit_id", "u1") if isinstance(e, dict) else "u1",
+                doc_id=e.get("doc_id", "doc") if isinstance(e, dict) else "doc",
+                page_no=e.get("page_no", 1) if isinstance(e, dict) else 1,
+            ).to_dict()
+            for idx, e in enumerate(raw_spans)
+        ]
+
+        answer = ensure_inline_citations(answer, source_units, evidence_spans)
+
+        trace = self.log_action(
+            "gemini_summarization_completed",
+            {
+                "engine": "Gemini_API_SingleCall_Critic",
+                "claims_count": len(claims),
+                "evidence_count": len(evidence_spans),
+                "critic_action": critic_out.action,
+            },
+        )
+
+        return {
+            "answer": answer,
+            "claims": claims,
+            "evidence_spans": evidence_spans,
+            "critic_action": critic_out.action,
+            "critic_feedback": critic_out.to_dict(),
+            "generator_model_family": "gemini_flash",
+            "reasoning_trace": [trace],
+        }
