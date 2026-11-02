@@ -1,19 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-CLI Entrypoint for Agent 4 (Fact-Checker 3-Class NLI Verifier) Fine-Tuning on Kaggle Dual T4.
-"""
-
 import sys
 import argparse
 from pathlib import Path
 
-# Ensure local package `src` is always on sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-
 from src.config import Agent4TrainingConfig
-from src.trainer import run_factchecker_training
-
 
 def main():
     parser = argparse.ArgumentParser(description="Fine-tune Agent 4 NLI Verifier on Kaggle T4x2")
@@ -23,6 +15,8 @@ def main():
     parser.add_argument("--lr", type=float, default=2e-5)
     args = parser.parse_args()
 
+    from src.trainer import run_factchecker_training
+
     cfg = Agent4TrainingConfig(
         base_model_id=args.model_id,
         epochs=args.epochs,
@@ -30,7 +24,6 @@ def main():
         learning_rate=args.lr,
     )
     run_factchecker_training(cfg)
-
 
 if __name__ == "__main__":
     main()

@@ -1,20 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-CLI Entrypoint for Agent 2 (Document Reader - LayoutLMv3) Fine-Tuning on Kaggle Dual T4.
-"""
-
 import sys
 import argparse
 from pathlib import Path
 
-# Ensure local package `src` is always on sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-
 from src.config import Agent2TrainingConfig
-from src.trainer import run_reader_training
-from src.evaluator import evaluate_layout_parser
-
 
 def main():
     parser = argparse.ArgumentParser(description="Fine-tune Agent 2 LayoutLMv3 Reader on Kaggle T4x2")
@@ -23,10 +14,12 @@ def main():
     parser.add_argument("--batch-size", type=int, default=16)
     args = parser.parse_args()
 
+    from src.trainer import run_reader_training
+    from src.evaluator import evaluate_layout_parser
+
     cfg = Agent2TrainingConfig(epochs=args.epochs, learning_rate=args.lr, per_device_train_batch_size=args.batch_size)
     model, tokenizer = run_reader_training(cfg)
     evaluate_layout_parser(model, tokenizer)
-
 
 if __name__ == "__main__":
     main()
