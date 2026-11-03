@@ -225,14 +225,20 @@ class CPUMinSummarizerAgent(BaseAgent):
         q_tokens = [w for w in re.findall(r"\w+", clean_q.lower()) if w not in VIETNAMESE_STOP_WORDS and len(w) > 1]
         proper_noun_phrases = re.findall(r"\b[A-ZĐ][a-zà-ỹ0-9_-]+(?:\s+[A-ZĐ][a-zà-ỹ0-9_-]+)+\b", clean_q)
         cap_words = re.findall(r"\b[A-ZĐ][a-zà-ỹ0-9_-]+\b", clean_q)
+        first_word_match = re.match(r"^\s*([A-ZĐ][a-zà-ỹ0-9_-]+)\b", clean_q)
+        first_word = first_word_match.group(1) if first_word_match else ""
         entities = [p.lower() for p in proper_noun_phrases if p.lower() not in VIETNAMESE_STOP_WORDS]
         if not entities:
-            entities = [c.lower() for c in cap_words if c.lower() not in VIETNAMESE_STOP_WORDS and len(c) > 2]
+            entities = [
+                c.lower() for c in cap_words
+                if (c != first_word or c.isupper()) and c.lower() not in VIETNAMESE_STOP_WORDS and len(c) > 2
+            ]
 
         q_bigrams = [f"{q_tokens[i]} {q_tokens[i+1]}" for i in range(len(q_tokens) - 1)] if len(q_tokens) >= 2 else []
 
         # 4. Global Document text check (Zero Hallucination Guard across all selected docs)
-        doc_full_text = " ".join(str(u.get("text", "")) for u in source_units).lower()
+        raw_doc_text = " ".join(str(u.get("text", "")) for u in source_units).lower()
+        doc_full_text = re.sub(r"\s+", " ", raw_doc_text)
         ent_present = any(e in doc_full_text for e in entities) if entities else True
         bigram_present = any(b in doc_full_text for b in q_bigrams) if q_bigrams else True
         token_overlap = [t for t in q_tokens if t in doc_full_text]
@@ -242,9 +248,7 @@ class CPUMinSummarizerAgent(BaseAgent):
         if not is_general_summary:
             if proper_noun_phrases and not any(p.lower() in doc_full_text for p in proper_noun_phrases):
                 is_out_of_domain = True
-            elif entities and not ent_present:
-                is_out_of_domain = True
-            elif q_bigrams and not bigram_present:
+            elif entities and not ent_present and token_cov < 0.5:
                 is_out_of_domain = True
             elif token_cov < 0.35:
                 is_out_of_domain = True
@@ -497,7 +501,8 @@ class CPUMinSummarizerAgent(BaseAgent):
                 if len(selected_candidates) >= 5:
                     break
 
-        if not selected_candidates or (is_list_q and not any(c.get("has_list") for c in selected_candidates)):
+        is_strict_group_q = bool(re.search(r"\b(\d+\s+nhóm|mấy\s+nhóm|các\s+nhóm)\b", clean_q, re.I))
+        if not selected_candidates or (is_strict_group_q and not any(c.get("has_list") for c in selected_candidates)):
             no_doc_msg = (
                 f"Dựa trên các bài báo/tài liệu hiện có trong hệ thống, thông tin về \"{clean_q}\" "
                 f"**hoàn toàn không được đề cập**.\n\n"
