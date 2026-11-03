@@ -203,6 +203,7 @@ class AgentState(TypedDict, total=False):
     is_numeric_query: bool
     is_comparative_query: bool
     pdf_path: Optional[str]
+    pdf_paths: Optional[list[str]]
     perspectives: list[str]
 
     # 2. Retrieval Stage

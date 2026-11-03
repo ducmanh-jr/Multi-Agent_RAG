@@ -1712,13 +1712,21 @@ async def create_run(req: CreateRunRequest):
         raise HTTPException(status_code=400, detail="Question cannot be empty.")
 
     run_id = f"run_{uuid.uuid4().hex[:10]}"
-    pdf_path = None
-    doc_id = req.document_id or (req.document_ids[0] if req.document_ids else None)
+    target_doc_ids = []
+    if req.document_ids:
+        target_doc_ids = [d for d in req.document_ids if d]
+    elif req.document_id:
+        target_doc_ids = [req.document_id]
 
-    if doc_id:
-        doc = db.get_document(doc_id)
-        if doc:
-            pdf_path = doc.get("path")
+    pdf_paths: list[str] = []
+    for d_id in target_doc_ids:
+        doc = db.get_document(d_id)
+        if doc and doc.get("path") and os.path.exists(doc.get("path")):
+            pdf_paths.append(doc.get("path"))
+
+    if target_doc_ids and pdf_paths:
+        doc_id = target_doc_ids[0]
+        pdf_path = pdf_paths[0]
     else:
         # Nếu người dùng không chọn tài liệu và không có doc_id -> Thông báo rõ ràng
         no_doc_report = (
@@ -1770,7 +1778,7 @@ async def create_run(req: CreateRunRequest):
 
                 graph.invoke,
 
-                {"query": prompt, "pdf_path": pdf_path, "retry_count": 0},
+                {"query": prompt, "pdf_path": pdf_path, "pdf_paths": pdf_paths, "retry_count": 0},
 
             )
 
