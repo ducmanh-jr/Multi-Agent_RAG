@@ -64,6 +64,16 @@ def generate_summary_and_claims(
       - evidence_spans: verbatim quotations with unit_id & context_hash
       - claims: atomic propositions
     """
+    if not source_units:
+        clean_q = query.strip()
+        no_doc_msg = (
+            f"Dựa trên các bài báo và tài liệu hiện có trong hệ thống, thông tin về \"{clean_q}\" "
+            f"**hoàn toàn không được đề cập**.\n\n"
+            f"💡 **Gợi ý**: Bạn có thể tải file PDF hoặc bài báo liên quan đến vấn đề này lên hệ thống "
+            f"để tôi có thể đọc và phân tích chi tiết cho bạn."
+        )
+        return no_doc_msg, [], [{"id": "claim_1", "text": f"Tài liệu hiện có không đề cập đến '{clean_q}'.", "evidence_ids": []}]
+
     # Prioritize most relevant units via BM25 before packing token budget
     if len(source_units) > 10:
         from agents.agent1_retrieval.tools.bm25 import SimpleBM25
@@ -85,7 +95,11 @@ Nhiệm vụ của bạn:
    - Trình bày các ý chính thành các gạch đầu dòng rõ ràng, với tiêu đề in đậm (Ví dụ: "- **Tên sự kiện / Khái niệm (Năm)**: Diễn giải chi tiết, số liệu, ý nghĩa...").
    - Nếu có nhiều nhóm chủ đề hoặc sự kiện quốc tế/trong nước, hãy phân nhóm rõ ràng.
    - Giọng văn khách quan, học thuật nhưng tự nhiên, dễ đọc.
-3. Trích xuất chính xác các câu trích dẫn nguyên văn (evidence_spans) làm bằng chứng kiểm chứng.
+3. QUY TẮC KHI TÀI LIỆU KHÔNG CÓ THÔNG TIN (ZERO HALLUCINATION - KỊCH BẢN 2):
+   - Nếu câu hỏi hỏi về một sự kiện, người hoặc chủ đề mà tài liệu nguồn KHÔNG hề đề cập:
+     + Tuyệt đối KHÔNG tự sáng tác hay suy diễn.
+     + Trả lời rõ ràng: "Dựa trên các bài báo/tài liệu hiện có trong hệ thống, thông tin về \"{query}\" **hoàn toàn không được đề cập**.\n\n💡 **Gợi ý**: Bạn có thể tải file PDF hoặc bài báo liên quan lên hệ thống để phân tích."
+4. Trích xuất chính xác các câu trích dẫn nguyên văn (evidence_spans) làm bằng chứng kiểm chứng.
 4. Tách các luận điểm thành nhận định nguyên tử (atomic claims) gắn với Unit ID tương ứng.
 
 Câu hỏi nghiên cứu:

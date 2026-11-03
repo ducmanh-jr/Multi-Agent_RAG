@@ -29,6 +29,25 @@ class GeminiSummarizerAgent(BaseAgent):
         source_units = state.get("source_units", []) or []
         required_entities = state.get("required_entities", []) or []
 
+        # Kịch bản 2: Khi kho tài liệu không có văn bản nào phù hợp
+        if not source_units:
+            clean_q = query.strip()
+            no_doc_msg = (
+                f"Dựa trên các bài báo và tài liệu hiện có trong hệ thống, thông tin về \"{clean_q}\" "
+                f"**hoàn toàn không được đề cập**.\n\n"
+                f"💡 **Gợi ý**: Bạn có thể tải file PDF hoặc bài báo liên quan đến vấn đề này lên hệ thống "
+                f"để tôi có thể đọc và phân tích chi tiết cho bạn."
+            )
+            return {
+                "answer": no_doc_msg,
+                "claims": [{"id": "claim_1", "text": f"Tài liệu hiện có không đề cập đến '{clean_q}'.", "unit_id": None}],
+                "evidence_spans": [],
+                "critic_action": "approve",
+                "critic_feedback": "Approved: Out-of-domain / Document Miss",
+                "generator_model_family": "gemini_flash",
+                "reasoning_trace": [self.log_action("gemini_summarization_completed", {"status": "out_of_domain"})],
+            }
+
         self.logger.info(f"[Gemini Summarizer] Calling Gemini Flash for: '{query[:65]}' ({len(source_units)} units)")
 
         context_str, _ = pack_context_by_token_budget(source_units, max_tokens=6000)
@@ -42,8 +61,14 @@ QUY TẮC TRẢ LỜI CỐT LÕI (BẮT BUỘC):
 2. Trình bày danh sách & in đậm thực thể (Structured Formatting):
    - Nếu câu hỏi hỏi về các nhóm vấn đề, nội dung, mục tiêu, hoặc danh sách: Hãy dùng các gạch đầu dòng rõ ràng, in đậm tiêu đề từng ý (ví dụ: "1. **Tên ý chính**: Diễn giải cụ thể...").
    - Nếu câu hỏi về mốc thời gian, ngày tháng, tên riêng: Nêu chính xác con số, ngày tháng năm và sự kiện đi kèm.
-3. Gắn trích dẫn học thuật: Gắn ký hiệu [1], [2] tương ứng ngay sau mỗi luận điểm.
-4. Tuyệt đối không bịa đặt (Zero Hallucination): Mọi thông tin phải có trong tài liệu nguồn. Nếu tài liệu không nhắc đến, hãy nói rõ tài liệu không đề cập và đặt "critic_action": "request_more_context".
+3. Gắn trích dẫn học thuật: Gắn ký hiệu [1], [2] tương ứng ngay sau mỗi luận điểm có bằng chứng.
+4. KỊCH BẢN KHI TÀI LIỆU KHÔNG CÓ THÔNG TIN (ZERO HALLUCINATION):
+   - Nếu câu hỏi hỏi về một sự việc, nhân vật, mốc thời gian hoặc chủ đề mà Tài liệu nguồn KHÔNG hề đề cập đến:
+     + Tuyệt đối KHÔNG tự suy đoán, bịa đặt hoặc gán ghép là tài liệu có nói.
+     + Trả lời rõ ràng, minh bạch ngay dòng đầu tiên theo mẫu:
+       "Dựa trên các bài báo/tài liệu hiện có trong hệ thống, thông tin về \"{query}\" **hoàn toàn không được đề cập**."
+     + Thêm gợi ý: "💡 **Gợi ý**: Bạn có thể tải thêm file PDF hoặc bài báo liên quan đến vấn đề này lên hệ thống để tôi đọc và phân tích cho bạn."
+     + Đặt "is_supported": true, "critic_action": "approve", "evidence_spans": [], "claims": [{{"text": "Tài liệu không đề cập đến thông tin này", "unit_id": None}}].
 
 Tài liệu nguồn:
 {context_str}

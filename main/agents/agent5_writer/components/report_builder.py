@@ -104,7 +104,9 @@ def build_academic_report(
         display_short = short_answer.strip()
     elif answer and len(answer.strip()) > 30:
         paras = [p.strip() for p in answer.strip().split("\n\n") if p.strip()]
-        if len(paras) > 1 and (len(paras[0]) < 100 or paras[0].endswith(":") or paras[0].endswith("):")):
+        if any(phrase in answer.lower() for phrase in ["không được đề cập", "không đề cập", "không có thông tin", "chưa thể tổng hợp"]):
+            display_short = answer.strip()
+        elif len(paras) > 1 and (len(paras[0]) < 100 or paras[0].endswith(":") or paras[0].endswith("):")):
             display_short = paras[0] + "\n\n" + "\n\n".join(paras[1:5])
         else:
             display_short = paras[0]
