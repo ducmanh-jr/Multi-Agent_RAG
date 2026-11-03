@@ -1153,265 +1153,214 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // ==================== 6. RENDER FINAL ANSWER ====================
   function renderFinalAnswer(messageCard, data, query, finalElapsed = null) {
+    if (!messageCard) return;
     const container = messageCard.querySelector(".agent-response-container");
-    const acc = messageCard.querySelector(".thinking-accordion");
-    if (acc) {
-      acc.classList.remove("open");
-      const titleDiv = acc.querySelector(".thinking-title");
-      if (titleDiv) {
-        const timeStr = finalElapsed ? `trong ${finalElapsed}s` : "";
-        titleDiv.innerHTML = `
-          <span class="thinking-dot"></span>
-          <span>Đã đối soát trích dẫn (5 bước suy luận ${timeStr})</span>
-        `;
-      }
-    }
+    if (!container) return;
 
-        const evidence = (data.evidence && data.evidence.length ? data.evidence : null) || (data.result && data.result.evidence) || data.evidence_spans || [];
-    state.currentEvidence = evidence;
-    updateSidecarEvidence(evidence);
-
-    const report = data.report || data.final_report || (data.result && data.result.report) || "";
-    if (report) {
-      const reportPane = document.getElementById("sidecarReportPane");
-      if (reportPane) {
-        reportPane.innerHTML = `
-          <div class="sidecar-report-content report-markdown-view">
-            ${renderMarkdown(report, evidence)}
-          </div>
-        `;
-      }
-    }
-
-    // 1. Extract the direct conversational AI answer
-    let mainAnswer = "";
-    
-    // Check if report has Executive Summary section
-    const execMatch = report.match(/## 1\.\s*(?:Tóm\s*tắt\s*Tổng\s*quan|Executive\s*Summary)[\s\S]*?\n([\s\S]*?)(?=\n## 2|\n---|\Z)/i);
-    const directAnsMatch = report.match(/> \*\*Câu trả lời Trực tiếp:\*\* \*\*([\s\S]*?)\*\*/);
-
-    if (execMatch && execMatch[1].trim() && !execMatch[1].includes("Thông tin nghiên cứu học thuật xác thực liên quan đến: tóm tắt.")) {
-      mainAnswer = execMatch[1].trim();
-    } else if (directAnsMatch && directAnsMatch[1].trim()) {
-      mainAnswer = directAnsMatch[1].trim();
-    } else if (data.answer && data.answer.trim()) {
-      mainAnswer = data.answer.trim();
-    } else {
-      const findingsMatch = report.match(/## 2\.\s*(?:Kết quả Nghiên cứu|Các Luận Điểm)[\s\S]*?\n([\s\S]*?)(?=\n## 3|\n---|\Z)/i);
-      if (findingsMatch && findingsMatch[1].trim()) {
-        mainAnswer = findingsMatch[1].trim();
-      } else if (report && report.trim()) {
-        mainAnswer = report.trim();
-      } else {
-        const claims = data.verified_claims || [];
-        if (claims.length > 0) {
-          mainAnswer = claims.map((c, i) => `${i + 1}. ${c.claim || c.text || c.evidence}`).join("\n\n");
-        } else {
-          mainAnswer = "Đã thẩm định và hoàn tất quy trình nghiên cứu.";
+    try {
+      const acc = messageCard.querySelector(".thinking-accordion");
+      if (acc) {
+        acc.classList.remove("open");
+        const titleDiv = acc.querySelector(".thinking-title");
+        if (titleDiv) {
+          const timeStr = finalElapsed ? `trong ${finalElapsed}s` : "";
+          titleDiv.innerHTML = `
+            <span class="thinking-dot"></span>
+            <span>Đã đối soát trích dẫn (5 bước suy luận ${timeStr})</span>
+          `;
         }
       }
-    }
 
-    // Helper to sanitize document names for human-readable display
-    function cleanTitle(str) {
-      if (!str) return "Tài liệu";
-      return str.replace(/^(?:gemini|doc)_[a-f0-9]+_/i, "")
-                .replace(/^(?:gemini|doc)_/i, "")
-                .replace(/\.(?:pdf|md|txt)$/i, "")
-                .replace(/_/g, " ").trim();
-    }
+      const evidence = (data && data.evidence && data.evidence.length ? data.evidence : null) || (data && data.result && data.result.evidence) || (data && data.evidence_spans) || [];
+      state.currentEvidence = evidence;
+      try { updateSidecarEvidence(evidence); } catch (e) { console.warn("updateSidecarEvidence:", e); }
 
-    // Default document title for citation badge
-    const docObj = state.documents.find(d => d.id === state.selectedDocId) || state.documents[0];
-    const rawDocName = docObj ? (docObj.name || docObj.id) : "Tài liệu";
-    const cleanDoc = cleanTitle(rawDocName);
-    const shortDocName = cleanDoc.length > 22 ? cleanDoc.slice(0, 20) + "..." : cleanDoc;
+      const report = (data && (data.report || data.final_report || (data.result && data.result.report))) || "";
+      if (report) {
+        const reportPane = document.getElementById("sidecarReportPane");
+        if (reportPane) {
+          try {
+            reportPane.innerHTML = `
+              <div class="sidecar-report-content report-markdown-view">
+                ${renderMarkdown(report, evidence)}
+              </div>
+            `;
+          } catch (e) { console.warn("sidecarReportPane render:", e); }
+        }
+      }
 
-    // Build bottom inline citation list if evidence spans exist
-    let citationBadgesHtml = "";
-    if (evidence.length > 0) {
-      citationBadgesHtml = evidence.slice(0, 4).map((ev, i) => {
-        const pNum = ev.page || ev.page_no || 1;
-        const evDocClean = ev.doc_id ? cleanTitle(ev.doc_id) : shortDocName;
-        const badgeLabel = evDocClean.length > 18 ? evDocClean.slice(0, 16) + "..." : evDocClean;
-        return `<button class="inline-citation-badge" data-ev="${i}" title="${escapeHtml(ev.quote || '')}">${escapeHtml(badgeLabel)} • Trang ${pNum}</button>`;
-      }).join(" ");
-    }
+      // 1. Extract the direct conversational AI answer
+      let mainAnswer = "";
+      
+      const execMatch = report.match(/## 1\.\s*(?:Tóm\s*tắt\s*Tổng\s*quan|Executive\s*Summary)[\s\S]*?\n([\s\S]*?)(?=\n## 2|\n---|\Z)/i);
+      const directAnsMatch = report.match(/> \*\*Câu trả lời Trực tiếp:\*\* \*\*([\s\S]*?)\*\*/);
 
-    const card = document.createElement("div");
-    card.className = "agent-output-block";
-    card.innerHTML = `
-      <!-- Chatbot AI Primary Answer -->
-      <div class="chatbot-answer-container">
-        <div class="chatbot-answer-body">
-          ${renderMarkdown(mainAnswer, evidence)}
-        </div>
+      if (execMatch && execMatch[1].trim() && !execMatch[1].includes("Thông tin nghiên cứu học thuật xác thực liên quan đến: tóm tắt.")) {
+        mainAnswer = execMatch[1].trim();
+      } else if (directAnsMatch && directAnsMatch[1].trim()) {
+        mainAnswer = directAnsMatch[1].trim();
+      } else if (data && data.answer && data.answer.trim()) {
+        mainAnswer = data.answer.trim();
+      } else {
+        const findingsMatch = report.match(/## 2\.\s*(?:Kết quả Nghiên cứu|Các Luận Điểm)[\s\S]*?\n([\s\S]*?)(?=\n## 3|\n---|\Z)/i);
+        if (findingsMatch && findingsMatch[1].trim()) {
+          mainAnswer = findingsMatch[1].trim();
+        } else if (report && report.trim()) {
+          mainAnswer = report.trim();
+        } else {
+          const claims = (data && data.verified_claims) || [];
+          if (claims.length > 0) {
+            mainAnswer = claims.map((c, i) => `${i + 1}. ${c.claim || c.text || c.evidence}`).join("\n\n");
+          } else {
+            mainAnswer = "Đã thẩm định và hoàn tất quy trình nghiên cứu.";
+          }
+        }
+      }
 
-        ${citationBadgesHtml ? `
-        <div class="chatbot-sources-row">
-          <span class="sources-label">Nguồn trích dẫn:</span>
-          ${citationBadgesHtml}
-        </div>` : ''}
+      // Helper to sanitize document names
+      function cleanTitle(str) {
+        if (!str) return "Tài liệu";
+        return str.replace(/^(?:gemini|doc)_[a-f0-9]+_/i, "")
+                  .replace(/^(?:gemini|doc)_/i, "")
+                  .replace(/\.(?:pdf|md|txt)$/i, "")
+                  .replace(/_/g, " ").trim();
+      }
 
-        <!-- Chatbot Action Toolbar (Like, Dislike, Reload, Copy, More) -->
-        <div class="chat-action-bar">
-          <div class="chat-action-left">
-            <button class="chat-act-btn" id="likeBtn" title="Hữu ích">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"></path></svg>
-            </button>
-            <button class="chat-act-btn" id="dislikeBtn" title="Chưa chuẩn">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3"></path></svg>
-            </button>
-            <button class="chat-act-btn" id="reloadBtn" title="Tạo lại câu trả lời">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
-            </button>
-            <button class="chat-act-btn" id="copyBtn" title="Sao chép câu trả lời">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-            </button>
-            <div class="more-dots-wrap">
-              <button class="more-dots-btn" id="moreOptionsBtn" title="Tùy chọn">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
-                  <circle cx="12" cy="5" r="2.2"></circle>
-                  <circle cx="12" cy="12" r="2.2"></circle>
-                  <circle cx="12" cy="19" r="2.2"></circle>
-                </svg>
+      const docObj = (state.documents && state.documents.find(d => d.id === state.selectedDocId)) || (state.documents && state.documents[0]);
+      const rawDocName = docObj ? (docObj.name || docObj.id) : "Tài liệu";
+      const cleanDoc = cleanTitle(rawDocName);
+      const shortDocName = cleanDoc.length > 22 ? cleanDoc.slice(0, 20) + "..." : cleanDoc;
+
+      // Build bottom inline citation list if evidence spans exist
+      let citationBadgesHtml = "";
+      if (evidence && evidence.length > 0) {
+        citationBadgesHtml = evidence.slice(0, 4).map((ev, i) => {
+          const pNum = ev.page || ev.page_no || 1;
+          const evDocClean = ev.doc_id ? cleanTitle(ev.doc_id) : shortDocName;
+          const badgeLabel = evDocClean.length > 18 ? evDocClean.slice(0, 16) + "..." : evDocClean;
+          return `<button class="inline-citation-badge" data-ev="${i}" title="${escapeHtml(ev.quote || '')}">${escapeHtml(badgeLabel)} • Trang ${pNum}</button>`;
+        }).join(" ");
+      }
+
+      const card = document.createElement("div");
+      card.className = "agent-output-block";
+      card.innerHTML = `
+        <!-- Chatbot AI Primary Answer -->
+        <div class="chatbot-answer-container" style="display:flex; flex-direction:column; width:100%;">
+          <div class="chatbot-answer-body" style="font-size:14.5px; line-height:1.7; color:#18181b;">
+            ${renderMarkdown(mainAnswer, evidence)}
+          </div>
+
+          ${citationBadgesHtml ? `
+          <div class="chatbot-sources-row" style="margin-top:10px;">
+            <span class="sources-label" style="font-size:12px; font-weight:600; color:#71717a; margin-right:8px;">Nguồn trích dẫn:</span>
+            ${citationBadgesHtml}
+          </div>` : ''}
+
+          <!-- Chatbot Action Toolbar -->
+          <div class="chat-action-bar" style="display:flex; justify-content:space-between; align-items:center; margin-top:12px; padding-top:8px; border-top:1px solid #f4f4f5;">
+            <div class="chat-action-left" style="display:flex; gap:6px;">
+              <button class="chat-act-btn" id="likeBtn" title="Hữu ích">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"></path></svg>
               </button>
-              <div class="more-dots-menu" id="chatMoreMenu">
-                <button class="more-dots-menu-item" id="deleteChatMsgBtn">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <polyline points="3 6 5 6 21 6"></polyline>
-                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                  </svg>
-                  <span>Xóa</span>
-                </button>
+              <button class="chat-act-btn" id="dislikeBtn" title="Chưa chuẩn">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3"></path></svg>
+              </button>
+              <button class="chat-act-btn" id="reloadBtn" title="Tạo lại câu trả lời">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+              </button>
+              <button class="chat-act-btn" id="copyBtn" title="Sao chép câu trả lời">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+              </button>
+            </div>
+            <div class="chat-action-right">
+              <span class="model-footprint-badge" style="font-size:11px; color:#a1a1aa; background:#f4f4f5; padding:3px 8px; border-radius:12px;">5 Agents Verified</span>
+            </div>
+          </div>
+
+          <!-- Collapsible Academic Report & Evidence Ledger -->
+          <div class="academic-report-collapsible" style="margin-top:12px;">
+            <button class="academic-collapse-toggle" id="academicToggleBtn" style="display:flex; justify-content:space-between; width:100%; padding:8px 12px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; cursor:pointer; font-size:12.5px;">
+              <div class="collapse-toggle-left" style="display:flex; align-items:center; gap:6px;">
+                <svg class="toggle-arrow" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                <span>Xem Báo cáo Học thuật Chi tiết &amp; Đối soát Bằng chứng</span>
+              </div>
+              <div class="collapse-toggle-right" style="display:flex; align-items:center; gap:8px;">
+                <span class="evidence-tag" style="background:#e0e7ff; color:#3730a3; padding:1px 6px; border-radius:4px; font-size:11px;">${evidence ? evidence.length : 0} trích dẫn</span>
+                <a href="/api/runs/${encodeURIComponent((data && data.id) || state.activeRunId || '')}/export?format=md" target="_blank" class="export-link-ghost" style="color:#2563eb; text-decoration:none;" title="Tải file Markdown">Xuất .md</a>
+              </div>
+            </button>
+            <div class="academic-collapse-content" id="academicContent" style="display:none; padding:12px; border:1px solid #e2e8f0; border-top:none; border-radius:0 0 6px 6px;">
+              <div class="academic-content-inner report-markdown-view">
+                ${renderMarkdown(report, evidence)}
               </div>
             </div>
           </div>
-          <div class="chat-action-right">
-            <span class="model-footprint-badge">5 Agents Verified</span>
-          </div>
         </div>
+      `;
 
-        <!-- Collapsible Academic Report & Evidence Ledger -->
-        <div class="academic-report-collapsible">
-          <button class="academic-collapse-toggle" id="academicToggleBtn">
-            <div class="collapse-toggle-left">
-              <svg class="toggle-arrow" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>
-              <span>Xem Báo cáo Học thuật Chi tiết &amp; Đối soát Bằng chứng</span>
-            </div>
-            <div class="collapse-toggle-right">
-              <span class="evidence-tag">${evidence.length} trích dẫn</span>
-              <a href="/api/runs/${encodeURIComponent(data.id)}/export?format=md" target="_blank" class="export-link-ghost" title="Tải file Markdown">Xuất .md</a>
-            </div>
-          </button>
-          <div class="academic-collapse-content" id="academicContent" style="display:none;">
-            <div class="academic-content-inner">
-              ${renderMarkdown(report, evidence)}
-            </div>
-          </div>
-        </div>
-      </div>
-    `;
-
-    // Collapsible toggle handler
-    const toggleBtn = card.querySelector("#academicToggleBtn");
-    const contentDiv = card.querySelector("#academicContent");
-    const arrowSvg = card.querySelector(".toggle-arrow");
-    if (toggleBtn && contentDiv) {
-      toggleBtn.addEventListener("click", (e) => {
-        if (e.target.closest(".export-link-ghost")) return;
-        const isOpen = contentDiv.style.display !== "none";
-        contentDiv.style.display = isOpen ? "none" : "block";
-        if (arrowSvg) {
-          arrowSvg.style.transform = isOpen ? "rotate(0deg)" : "rotate(90deg)";
-        }
-      });
-    }
-
-    // Like / Dislike visual feedback
-    const likeBtn = card.querySelector("#likeBtn");
-    const dislikeBtn = card.querySelector("#dislikeBtn");
-    if (likeBtn) {
-      likeBtn.addEventListener("click", () => {
-        likeBtn.classList.toggle("active");
-        if (dislikeBtn) dislikeBtn.classList.remove("active");
-      });
-    }
-    if (dislikeBtn) {
-      dislikeBtn.addEventListener("click", () => {
-        dislikeBtn.classList.toggle("active");
-        if (likeBtn) likeBtn.classList.remove("active");
-      });
-    }
-
-    // Reload button: re-submits the query
-    const reloadBtn = card.querySelector("#reloadBtn");
-    if (reloadBtn) {
-      reloadBtn.addEventListener("click", () => {
-        submitQuery(query);
-      });
-    }
-
-    // Copy button with feedback
-    const copyBtn = card.querySelector("#copyBtn");
-    if (copyBtn) {
-      copyBtn.addEventListener("click", () => {
-        navigator.clipboard.writeText(mainAnswer);
-        copyBtn.title = "Đã sao chép";
-        copyBtn.style.color = "#09090b";
-        setTimeout(() => {
-          copyBtn.title = "Sao chép câu trả lời";
-          copyBtn.style.color = "";
-        }, 1800);
-      });
-    }
-
-    // 3-dots More Options menu -> Delete chat
-    const moreOptionsBtn = card.querySelector("#moreOptionsBtn");
-    const chatMoreMenu = card.querySelector("#chatMoreMenu");
-    const deleteChatMsgBtn = card.querySelector("#deleteChatMsgBtn");
-    if (moreOptionsBtn && chatMoreMenu) {
-      moreOptionsBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const isOpen = chatMoreMenu.classList.contains("open");
-        document.querySelectorAll(".more-dots-menu.open").forEach(m => m.classList.remove("open"));
-        document.querySelectorAll(".more-dots-btn.open").forEach(b => b.classList.remove("open"));
-        if (!isOpen) {
-          chatMoreMenu.classList.add("open");
-          moreOptionsBtn.classList.add("open");
-        }
-      });
-    }
-    if (deleteChatMsgBtn) {
-      deleteChatMsgBtn.addEventListener("click", async (e) => {
-        e.stopPropagation();
-        const targetRunId = (data && data.id) || state.activeRunId;
-        if (targetRunId) {
-          await deleteRun(targetRunId);
-        } else {
-          resetToWelcomeScreen();
-        }
-      });
-    }
-
-    // Citation pill clicks jump to Sidecar evidence & page
-    card.querySelectorAll(".inline-citation-badge").forEach(pillBtn => {
-      pillBtn.addEventListener("click", () => {
-        const evIdx = parseInt(pillBtn.dataset.ev, 10) || 0;
-        openSidecar();
-        if (evidence[evIdx]) {
-          const ev = evidence[evIdx];
-          const pageNo = ev.page || ev.page_no || 1;
-          const doc = state.documents.find(d => d.id === state.selectedDocId) || state.documents[0];
-          if (doc && pdfFrame) {
-            pdfFrame.src = `/api/documents/${encodeURIComponent(doc.id)}/file#page=${encodeURIComponent(pageNo)}`;
+      // Collapsible toggle handler
+      const toggleBtn = card.querySelector("#academicToggleBtn");
+      const contentDiv = card.querySelector("#academicContent");
+      const arrowSvg = card.querySelector(".toggle-arrow");
+      if (toggleBtn && contentDiv) {
+        toggleBtn.addEventListener("click", (e) => {
+          if (e.target.closest(".export-link-ghost")) return;
+          const isOpen = contentDiv.style.display !== "none";
+          contentDiv.style.display = isOpen ? "none" : "block";
+          if (arrowSvg) {
+            arrowSvg.style.transform = isOpen ? "rotate(0deg)" : "rotate(90deg)";
           }
-        }
-      });
-    });
+        });
+      }
 
-    container.appendChild(card);
-    messageFeed.scrollTo({ top: messageFeed.scrollHeight, behavior: "smooth" });
+      // Copy button with feedback
+      const copyBtn = card.querySelector("#copyBtn");
+      if (copyBtn) {
+        copyBtn.addEventListener("click", () => {
+          navigator.clipboard.writeText(mainAnswer);
+          copyBtn.title = "Đã sao chép";
+          copyBtn.style.color = "#09090b";
+          setTimeout(() => {
+            copyBtn.title = "Sao chép câu trả lời";
+            copyBtn.style.color = "";
+          }, 1800);
+        });
+      }
+
+      // Citation pill clicks jump to Sidecar evidence & page
+      card.querySelectorAll(".inline-citation-badge").forEach(pillBtn => {
+        pillBtn.addEventListener("click", () => {
+          const evIdx = parseInt(pillBtn.dataset.ev, 10) || 0;
+          openSidecar();
+          if (evidence && evidence[evIdx]) {
+            const ev = evidence[evIdx];
+            const pageNo = ev.page || ev.page_no || 1;
+            const doc = (state.documents && state.documents.find(d => d.id === state.selectedDocId)) || (state.documents && state.documents[0]);
+            if (doc && pdfFrame) {
+              pdfFrame.src = `/api/documents/${encodeURIComponent(doc.id)}/file#page=${encodeURIComponent(pageNo)}`;
+            }
+          }
+        });
+      });
+
+      container.appendChild(card);
+      messageFeed.scrollTo({ top: messageFeed.scrollHeight, behavior: "smooth" });
+    } catch (err) {
+      console.error("[ResearchDesk] Critical error in renderFinalAnswer:", err);
+      const fallbackCard = document.createElement("div");
+      fallbackCard.className = "agent-output-block";
+      const fallbackText = (data && (data.final_report || data.report || data.answer)) || "Đã thẩm định và hoàn tất nghiên cứu.";
+      fallbackCard.innerHTML = `
+        <div class="chatbot-answer-container" style="padding:14px; background:#ffffff; border-radius:8px; line-height:1.6;">
+          <div class="chatbot-answer-body">
+            ${renderMarkdown(fallbackText, [])}
+          </div>
+        </div>
+      `;
+      container.appendChild(fallbackCard);
+      messageFeed.scrollTo({ top: messageFeed.scrollHeight, behavior: "smooth" });
+    }
   }
 
   // ==================== 7. UPDATE SIDECAR EVIDENCE ====================
