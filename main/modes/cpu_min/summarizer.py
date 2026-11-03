@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import re
+import unicodedata
 from typing import Any
 
 from agents.agent1_retrieval.tools.bm25 import SimpleBM25
@@ -23,12 +24,21 @@ from core.state import AgentState, AtomicClaim, EvidenceSpan
 from core.verifier import evaluate_inner_critic_fast
 
 
+def strip_accents(text: str) -> str:
+    """Normalize Vietnamese diacritics for flexible matching across accented/unaccented queries."""
+    if not text:
+        return ""
+    norm = unicodedata.normalize("NFD", str(text))
+    s = re.sub(r"[\u0300-\u036f]", "", norm)
+    return s.replace("đ", "d").replace("Đ", "D")
+
+
 VIETNAMESE_STOP_WORDS = {
     "và", "của", "cho", "với", "như", "thế", "nào", "được", "có", "là", "ở", "ra", "vào",
-    "ngày", "tháng", "năm", "mấy", "bao", "nhiêu", "khi", "đầu", "tiên", "gì", "ai", "sao",
+    "ngày", "tháng", "năm", "mấy", "khi", "đầu", "tiên", "gì", "ai", "sao",
     "đâu", "đến", "từ", "lại", "đã", "đang", "sẽ", "các", "những", "một", "số", "về",
-    "trong", "để", "do", "bởi", "thì", "mà", "nhất", "nhì", "này", "đó", "kia", "hãy",
-    "cho", "biết", "hỏi", "thông", "tin", "chi", "tiết", "tại", "sao", "thế", "nào",
+    "trong", "để", "bởi", "thì", "mà", "nhất", "nhì", "này", "đó", "kia", "hãy",
+    "biết", "hỏi", "thông", "tin", "chi", "tiết", "tại", "sao",
 }
 
 
@@ -175,21 +185,22 @@ class CPUMinSummarizerAgent(BaseAgent):
                 "reasoning_trace": [self.log_action("cpu_min_summarization_completed", {"status": "out_of_domain"})],
             }
 
-        # 1. Intent analysis
+        # 1. Intent analysis (supporting both accented and unaccented Vietnamese)
+        clean_q_unaccent = strip_accents(clean_q.lower())
         is_date_q = bool(
             re.search(
-                r"\b(ngày nào|thời điểm nào|bao giờ|ngày bao nhiêu)\b",
-                clean_q,
+                r"\b(ngày nào|thời điểm nào|bao giờ|ngày bao nhiêu|ngay nao|thoi diem nao|bao gio|ngay bao nhieu)\b",
+                clean_q_unaccent,
                 re.I,
             )
         )
         is_year_q = bool(
             re.search(
-                r"\b(năm nào|năm bao nhiêu|ra đời năm nào|thành lập năm nào)\b",
-                clean_q,
+                r"\b(năm nào|năm bao nhiêu|ra đời năm nào|thành lập năm nào|nam nao|nam bao nhieu|ra doi nam nao|thanh lap nam nao)\b",
+                clean_q_unaccent,
                 re.I,
             )
-        ) or (is_date_q and "năm" in clean_q.lower())
+        ) or (is_date_q and ("năm" in clean_q.lower() or "nam" in clean_q_unaccent))
 
         is_list_q = bool(
             re.search(
@@ -239,14 +250,28 @@ class CPUMinSummarizerAgent(BaseAgent):
         # 4. Global Document text check (Zero Hallucination Guard across all selected docs)
         raw_doc_text = " ".join(str(u.get("text", "")) for u in source_units).lower()
         doc_full_text = re.sub(r"\s+", " ", raw_doc_text)
-        ent_present = any(e in doc_full_text for e in entities) if entities else True
-        bigram_present = any(b in doc_full_text for b in q_bigrams) if q_bigrams else True
-        token_overlap = [t for t in q_tokens if t in doc_full_text]
+        doc_full_text_unaccent = strip_accents(doc_full_text)
+
+        ent_present = any(
+            e in doc_full_text or strip_accents(e) in doc_full_text_unaccent
+            for e in entities
+        ) if entities else True
+        bigram_present = any(
+            b in doc_full_text or strip_accents(b) in doc_full_text_unaccent
+            for b in q_bigrams
+        ) if q_bigrams else True
+        token_overlap = [
+            t for t in q_tokens
+            if t in doc_full_text or strip_accents(t) in doc_full_text_unaccent
+        ]
         token_cov = len(token_overlap) / max(len(q_tokens), 1)
 
         is_out_of_domain = False
         if not is_general_summary:
-            if proper_noun_phrases and not any(p.lower() in doc_full_text for p in proper_noun_phrases):
+            if proper_noun_phrases and not any(
+                p.lower() in doc_full_text or strip_accents(p.lower()) in doc_full_text_unaccent
+                for p in proper_noun_phrases
+            ):
                 is_out_of_domain = True
             elif entities and not ent_present and token_cov < 0.5:
                 is_out_of_domain = True
@@ -439,10 +464,11 @@ class CPUMinSummarizerAgent(BaseAgent):
             sents = extract_clean_sentences(u_text)
             for idx_s, s in enumerate(sents):
                 s_lower = s.lower()
-                token_hits = sum(1 for t in q_tokens if t in s_lower)
-                bigram_hits = sum(1 for b in q_bigrams if b in s_lower)
-                ent_hits = sum(1 for e in entities if e in s_lower)
-                req_ent_hits = sum(1 for r_ent in required_entities if r_ent.lower() in s_lower)
+                s_lower_unaccent = strip_accents(s_lower)
+                token_hits = sum(1 for t in q_tokens if t in s_lower or strip_accents(t) in s_lower_unaccent)
+                bigram_hits = sum(1 for b in q_bigrams if b in s_lower or strip_accents(b) in s_lower_unaccent)
+                ent_hits = sum(1 for e in entities if e in s_lower or strip_accents(e) in s_lower_unaccent)
+                req_ent_hits = sum(1 for r_ent in required_entities if r_ent.lower() in s_lower or strip_accents(r_ent.lower()) in s_lower_unaccent)
 
                 has_date = bool(re.search(r"\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b", s))
                 has_year = bool(re.search(r"\b(?:19\d\d|20\d\d)\b", s))
