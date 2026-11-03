@@ -1,0 +1,149 @@
+{
+  "passed": 20,
+  "total": 20,
+  "rate": "100.0%",
+  "burst_stress_test": "PASS",
+  "burst_elapsed_s": 2.1,
+  "results": [
+    {
+      "id": "EC-01",
+      "name": "Slash exact matching (/tom-tat)",
+      "status": "PASS",
+      "elapsed_s": 0.87,
+      "reason": ""
+    },
+    {
+      "id": "EC-02",
+      "name": "Slash with question (/tom-tat + question)",
+      "status": "PASS",
+      "elapsed_s": 0.45,
+      "reason": ""
+    },
+    {
+      "id": "EC-03",
+      "name": "Vietnamese accent alias (/tóm-tắt)",
+      "status": "PASS",
+      "elapsed_s": 0.45,
+      "reason": ""
+    },
+    {
+      "id": "EC-04",
+      "name": "Underscore alias (/so_sanh)",
+      "status": "PASS",
+      "elapsed_s": 0.47,
+      "reason": ""
+    },
+    {
+      "id": "EC-05",
+      "name": "Multiple leading slashes (///dong-gop)",
+      "status": "PASS",
+      "elapsed_s": 0.45,
+      "reason": ""
+    },
+    {
+      "id": "EC-06",
+      "name": "Punctuation after slash (/phuong-phap: - =)",
+      "status": "PASS",
+      "elapsed_s": 0.42,
+      "reason": ""
+    },
+    {
+      "id": "EC-07",
+      "name": "Fact-check verification (/kiem-chung)",
+      "status": "PASS",
+      "elapsed_s": 0.45,
+      "reason": ""
+    },
+    {
+      "id": "EC-08",
+      "name": "Quantitative metrics & Ports (/so-lieu)",
+      "status": "PASS",
+      "elapsed_s": 0.43,
+      "reason": ""
+    },
+    {
+      "id": "EC-09",
+      "name": "Terminology extraction (/thuat-ngu)",
+      "status": "PASS",
+      "elapsed_s": 0.47,
+      "reason": ""
+    },
+    {
+      "id": "EC-10",
+      "name": "Verbatim quote extraction (/trich-dan)",
+      "status": "PASS",
+      "elapsed_s": 0.45,
+      "reason": ""
+    },
+    {
+      "id": "EC-11",
+      "name": "Research gaps & limitations (/khoang-trong)",
+      "status": "PASS",
+      "elapsed_s": 0.43,
+      "reason": ""
+    },
+    {
+      "id": "EC-12",
+      "name": "Critical discussion questions (/cau-hoi)",
+      "status": "PASS",
+      "elapsed_s": 0.45,
+      "reason": ""
+    },
+    {
+      "id": "EC-13",
+      "name": "Zero-Hallucination Out-of-Domain (Transformer on NGINX)",
+      "status": "PASS",
+      "elapsed_s": 0.91,
+      "reason": ""
+    },
+    {
+      "id": "EC-14",
+      "name": "Zero-Hallucination Out-of-Domain (Quantum Computing on HDND)",
+      "status": "PASS",
+      "elapsed_s": 0.44,
+      "reason": ""
+    },
+    {
+      "id": "EC-15",
+      "name": "Cross-domain comparison (Thematic Disparity Handling)",
+      "status": "PASS",
+      "elapsed_s": 0.45,
+      "reason": ""
+    },
+    {
+      "id": "EC-16",
+      "name": "XSS script tag injection safety",
+      "status": "PASS",
+      "elapsed_s": 0.44,
+      "reason": ""
+    },
+    {
+      "id": "EC-17",
+      "name": "SQL injection pattern safety",
+      "status": "PASS",
+      "elapsed_s": 0.45,
+      "reason": ""
+    },
+    {
+      "id": "EC-18",
+      "name": "Special symbols & Regex chars overflow",
+      "status": "PASS",
+      "elapsed_s": 0.44,
+      "reason": ""
+    },
+    {
+      "id": "EC-19",
+      "name": "Nonexistent document ID resilience",
+      "status": "PASS",
+      "elapsed_s": 0.44,
+      "reason": ""
+    },
+    {
+      "id": "EC-20",
+      "name": "Extremely long query boundary",
+      "status": "PASS",
+      "elapsed_s": 1.02,
+      "reason": ""
+    }
+  ]
+}
