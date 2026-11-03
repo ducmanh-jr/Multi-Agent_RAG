@@ -1703,11 +1703,37 @@ def export_run_report(run_id: str, format: str = "md"):
 
 
 
+SLASH_PREFIX_MAP = {
+    "/tom-tat": ("Tóm tắt chi tiết", "Tóm tắt tổng quan nội dung, các đóng góp cốt lõi và kết quả chính của tài liệu nghiên cứu."),
+    "/so-sanh": ("So sánh đối chiếu chi tiết", "So sánh chi tiết các tài liệu đã chọn về phương pháp tiếp cận, kiến trúc kỹ thuật, ưu nhược điểm và kết quả thực nghiệm."),
+    "/dong-gop": ("Phân tích các đóng góp và điểm mới cốt lõi", "Trích xuất và phân tích các đóng góp khoa học mới (novelty và contributions) được đề xuất trong tài liệu."),
+    "/phuong-phap": ("Phân tích chi tiết phương pháp và kiến trúc kỹ thuật", "Phân tích chi tiết phương pháp đề xuất, kiến trúc mô hình/thuật toán và quy trình thực hiện."),
+    "/kiem-chung": ("Kiểm chứng tính xác thực của thông tin sau dựa trên bằng chứng tài liệu:", "Kiểm chứng tính xác thực của các thông tin sau dựa trên bằng chứng nguyên văn trích dẫn từ tài liệu."),
+    "/so-lieu": ("Trích xuất các bảng số liệu, kết quả thực nghiệm và benchmark định lượng", "Trích xuất các số liệu thực nghiệm định lượng, bảng benchmark và metric so sánh hiệu năng quan trọng nhất."),
+    "/thuat-ngu": ("Liệt kê và giải thích chi tiết các thuật ngữ chuyên môn, từ viết tắt", "Liệt kê các thuật ngữ chuyên môn, khái niệm cốt lõi và từ viết tắt trong tài liệu kèm theo định nghĩa chi tiết."),
+    "/trich-dan": ("Trích xuất nguyên văn bằng chứng quan trọng kèm số trang liên quan đến", "Trích xuất các đoạn văn nguyên văn quan trọng nhất (verbatim quotes) kèm vị trí và số trang."),
+    "/khoang-trong": ("Phân tích các hạn chế, khoảng trống nghiên cứu và hướng mở", "Chỉ ra các hạn chế (limitations), khoảng trống nghiên cứu (research gaps) và hướng phát triển tương lai được tác giả đề cập."),
+    "/cau-hoi": ("Tạo danh sách các câu hỏi phản biện chuyên sâu xoay quanh nội dung", "Tạo 5-10 câu hỏi phản biện chuyên sâu và câu hỏi thảo luận học thuật xoay quanh nội dung và giả định của bài báo."),
+    "/scout": ("Dò quét nhanh cấu trúc, mục lục và các đề mục chính trong tài liệu", "Dò quét nhanh cấu trúc, mục lục, phạm vi chủ đề và các phần chính trong toàn bộ tài liệu."),
+}
+
+def resolve_slash_prompt(p: str) -> str:
+    p_clean = (p or "").strip()
+    if not p_clean.startswith("/"):
+        return p_clean
+    for cmd, (prefix, default_prompt) in SLASH_PREFIX_MAP.items():
+        if p_clean.lower().startswith(cmd):
+            rest = p_clean[len(cmd):].strip().lstrip(":+ -")
+            if rest:
+                return f"{prefix}: {rest}"
+            return default_prompt
+    return p_clean
+
 @app.post("/api/runs")
 
 async def create_run(req: CreateRunRequest):
     """Creates and starts an asynchronous multi-agent research run with SQLite persistence."""
-    prompt = req.question or req.query
+    prompt = resolve_slash_prompt(req.question or req.query)
     if not prompt:
         raise HTTPException(status_code=400, detail="Question cannot be empty.")
 
