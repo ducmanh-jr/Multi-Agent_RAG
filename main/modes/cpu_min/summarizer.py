@@ -396,11 +396,20 @@ class CPUMinSummarizerAgent(BaseAgent):
 
                 doc_sections.append(section_md)
 
-            answer = (
-                f"> **Câu trả lời trực tiếp:**\n"
-                f"Dưới đây là tóm tắt tổng hợp nội dung của **{len(doc_sections)} bài báo/tài liệu** được chọn:\n\n"
-                + "\n".join(doc_sections)
-            )
+            is_comparison_q = any(w in clean_q.lower() for w in ["so sánh", "đối chiếu", "so sanh", "doi chieu", "khác nhau"])
+            if is_comparison_q:
+                answer = (
+                    f"> **Đánh giá tương quan:** Các tài liệu được chọn thuộc **các chủ đề/lĩnh vực nghiên cứu độc lập**. "
+                    f"Vì nội dung không cùng một hệ quy chiếu chuyên môn, hệ thống không áp đặt so sánh giả tạo, "
+                    f"mà đối chiếu khách quan phạm vi và nội dung cốt lõi của từng tài liệu:\n\n"
+                    + "\n".join(doc_sections)
+                )
+            else:
+                answer = (
+                    f"> **Câu trả lời trực tiếp:**\n"
+                    f"Dưới đây là tóm tắt tổng hợp nội dung của **{len(doc_sections)} bài báo/tài liệu** được chọn:\n\n"
+                    + "\n".join(doc_sections)
+                )
 
             critic_eval = evaluate_inner_critic_fast(
                 query=clean_q,
