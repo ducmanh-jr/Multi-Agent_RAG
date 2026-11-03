@@ -3993,3 +3993,193 @@ a {
   font-size: 0.8rem;
   color: var(--muted, #64716f);
 }
+
+
+/* ==================== SLASH COMMAND AUTOCOMPLETE ==================== */
+.question-card {
+  position: relative !important;
+}
+
+.slash-command-popup {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  width: 100%;
+  max-width: 580px;
+  background: rgba(255, 255, 255, 0.98);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 14px;
+  box-shadow: 0 20px 40px -10px rgba(15, 23, 42, 0.22), 0 0 0 1px rgba(0, 0, 0, 0.05);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  z-index: 10000;
+  font-family: inherit;
+  animation: slashMenuSpring 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes slashMenuSpring {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.slash-command-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 14px;
+  background: rgba(248, 250, 252, 0.9);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.07);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #64748b;
+  letter-spacing: 0.02em;
+}
+
+.slash-command-header .slash-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #0f172a;
+  font-weight: 700;
+}
+
+.slash-command-list {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  overflow-y: auto;
+  max-height: 290px;
+}
+
+.slash-command-list::-webkit-scrollbar {
+  width: 5px;
+}
+.slash-command-list::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.35);
+  border-radius: 4px;
+}
+
+.slash-command-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 8px 12px;
+  border-radius: 9px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+  user-select: none;
+  border: 1px solid transparent;
+}
+
+.slash-command-item:hover,
+.slash-command-item.active {
+  background: #f1f5f9;
+  border-color: rgba(59, 130, 246, 0.25);
+}
+
+.slash-cmd-icon-box {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  background: #f8fafc;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.slash-cmd-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.slash-cmd-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.slash-cmd-name {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 13px;
+  font-weight: 700;
+  color: #2563eb;
+}
+
+.slash-cmd-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.slash-cmd-badge {
+  font-size: 10.5px;
+  font-weight: 500;
+  padding: 2px 7px;
+  border-radius: 999px;
+  margin-left: auto;
+  letter-spacing: 0.01em;
+}
+
+.slash-badge-phan-tich { background: #e0f2fe; color: #0284c7; }
+.slash-badge-ky-thuat { background: #fef3c7; color: #d97706; }
+.slash-badge-kiem-chung { background: #dcfce7; color: #16a34a; }
+.slash-badge-hoc-thuat { background: #f3e8ff; color: #9333ea; }
+.slash-badge-he-thong { background: #f1f5f9; color: #475569; }
+
+.slash-cmd-desc {
+  font-size: 12px;
+  color: #64748b;
+  line-height: 1.4;
+  white-space: normal;
+}
+
+.slash-command-footer {
+  padding: 7px 14px;
+  background: rgba(248, 250, 252, 0.9);
+  border-top: 1px solid rgba(0, 0, 0, 0.07);
+  font-size: 11px;
+  color: #64748b;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.slash-command-footer .slash-hints {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.slash-command-footer kbd {
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.06);
+}
+
+.slash-empty-state {
+  padding: 24px;
+  text-align: center;
+  font-size: 12.5px;
+  color: #94a3b8;
+}

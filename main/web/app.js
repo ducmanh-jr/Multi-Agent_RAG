@@ -1592,3 +1592,384 @@ function setupRemoteWorkerListeners() {
     }
   });
 }
+
+
+// ==================== SLASH COMMANDS AUTOCOMPLETE SYSTEM ====================
+const SLASH_COMMANDS = [
+  {
+    cmd: "/tom-tat",
+    label: "Tóm tắt tài liệu",
+    desc: "Tóm tắt tổng quan nội dung, đóng góp cốt lõi và kết quả chính của tài liệu nghiên cứu.",
+    prompt: "Tóm tắt tổng quan nội dung, các đóng góp cốt lõi và kết quả chính của tài liệu nghiên cứu.",
+    category: "Phân tích",
+    icon: "📝"
+  },
+  {
+    cmd: "/so-sanh",
+    label: "So sánh đối chiếu",
+    desc: "So sánh chi tiết các tài liệu đã chọn về phương pháp, kiến trúc, ưu nhược điểm và benchmark.",
+    prompt: "So sánh chi tiết các tài liệu đã chọn về phương pháp tiếp cận, kiến trúc kỹ thuật, ưu nhược điểm và kết quả thực nghiệm.",
+    category: "Phân tích",
+    icon: "⚖️"
+  },
+  {
+    cmd: "/dong-gop",
+    label: "Đóng góp & Điểm mới",
+    desc: "Trích xuất những điểm mới và đóng góp khoa học cốt lõi (Novel contributions).",
+    prompt: "Trích xuất và phân tích các đóng góp khoa học mới (novelty & contributions) được đề xuất trong tài liệu.",
+    category: "Phân tích",
+    icon: "💡"
+  },
+  {
+    cmd: "/phuong-phap",
+    label: "Phương pháp & Kiến trúc",
+    desc: "Phân tích chi tiết kiến trúc mô hình, pipeline thuật toán hoặc quy trình thực hiện.",
+    prompt: "Phân tích chi tiết phương pháp đề xuất, kiến trúc mô hình/thuật toán và quy trình thực hiện.",
+    category: "Kỹ thuật",
+    icon: "⚙️"
+  },
+  {
+    cmd: "/kiem-chung",
+    label: "Kiểm chứng sự thật",
+    desc: "Fact-check đối soát thông tin dựa trên bằng chứng nguyên văn trích dẫn từ tài liệu.",
+    prompt: "Kiểm chứng tính xác thực của thông tin sau dựa trên bằng chứng nguyên văn trích dẫn từ tài liệu: ",
+    category: "Kiểm chứng",
+    icon: "🛡️"
+  },
+  {
+    cmd: "/so-lieu",
+    label: "Bảng số liệu & Benchmark",
+    desc: "Trích xuất toàn bộ bảng số liệu định lượng, kết quả benchmark và metric đánh giá.",
+    prompt: "Trích xuất các số liệu thực nghiệm định lượng, bảng benchmark và metric so sánh hiệu năng quan trọng nhất.",
+    category: "Kỹ thuật",
+    icon: "📊"
+  },
+  {
+    cmd: "/thuat-ngu",
+    label: "Giải thích thuật ngữ",
+    desc: "Liệt kê các thuật ngữ chuyên môn, khái niệm cốt lõi và từ viết tắt kèm định nghĩa.",
+    prompt: "Liệt kê các thuật ngữ chuyên môn, khái niệm cốt lõi và từ viết tắt trong tài liệu kèm theo định nghĩa chi tiết.",
+    category: "Khái niệm",
+    icon: "📖"
+  },
+  {
+    cmd: "/trich-dan",
+    label: "Bằng chứng nguyên văn",
+    desc: "Trích xuất các đoạn văn nguyên văn quan trọng nhất (verbatim quotes) kèm vị trí và số trang.",
+    prompt: "Trích xuất các đoạn văn nguyên văn quan trọng nhất (verbatim quotes) kèm vị trí/ngữ cảnh liên quan đến chủ đề: ",
+    category: "Kiểm chứng",
+    icon: "🔍"
+  },
+  {
+    cmd: "/khoang-trong",
+    label: "Khoảng trống nghiên cứu",
+    desc: "Chỉ ra các hạn chế (limitations) và hướng phát triển tương lai được tác giả đề cập.",
+    prompt: "Chỉ ra các hạn chế (limitations), khoảng trống nghiên cứu (research gaps) và hướng phát triển tương lai được tác giả đề cập.",
+    category: "Phân tích",
+    icon: "🔬"
+  },
+  {
+    cmd: "/cau-hoi",
+    label: "Tạo câu hỏi phản biện",
+    desc: "Sinh 5-10 câu hỏi phản biện chuyên sâu và câu hỏi thảo luận học thuật.",
+    prompt: "Tạo 5-10 câu hỏi phản biện chuyên sâu và câu hỏi thảo luận học thuật xoay quanh nội dung và giả định của bài báo.",
+    category: "Học thuật",
+    icon: "❓"
+  },
+  {
+    cmd: "/scout",
+    label: "Dò quét nhanh (Scout)",
+    desc: "Dò quét nhanh cấu trúc, mục lục, phạm vi chủ đề và các phần chính trong tài liệu.",
+    prompt: "Dò quét nhanh cấu trúc, mục lục, phạm vi chủ đề và các phần chính trong toàn bộ tài liệu.",
+    category: "Học thuật",
+    icon: "⚡"
+  },
+  {
+    cmd: "/cpu-min",
+    label: "Chế độ CPU Min",
+    desc: "Kích hoạt chế độ siêu nhẹ (Zero-Ollama, RAM < 100MB, tốc độ < 1 giây).",
+    action: "set_mode_cpu_min",
+    category: "Hệ thống",
+    icon: "🟢"
+  },
+  {
+    cmd: "/cpu-max",
+    label: "Chế độ CPU Max",
+    desc: "Kích hoạt chế độ đa tác nhân tối đa (Deep Reasoning, Full Fact-checking).",
+    action: "set_mode_cpu_max",
+    category: "Hệ thống",
+    icon: "🚀"
+  },
+  {
+    cmd: "/xuat-bao-cao",
+    label: "Xuất báo cáo Markdown",
+    desc: "Tải toàn bộ kết quả nghiên cứu và bằng chứng hiện tại về máy dưới dạng file .md.",
+    action: "export_report",
+    category: "Hệ thống",
+    icon: "📥"
+  },
+  {
+    cmd: "/clear",
+    label: "Xóa & Làm mới",
+    desc: "Làm mới khung nhập và đặt lại trạng thái hiển thị.",
+    action: "clear_input",
+    category: "Hệ thống",
+    icon: "🗑️"
+  }
+];
+
+function initSlashCommandsAutosuggest({ textarea, container, onAction }) {
+  if (!textarea || !container) return;
+
+  const popup = document.createElement("div");
+  popup.className = "slash-command-popup";
+  popup.style.display = "none";
+  container.appendChild(popup);
+
+  let activeIndex = 0;
+  let currentMatches = [];
+  let isPopupOpen = false;
+
+  function getBadgeClass(cat) {
+    switch (cat) {
+      case "Phân tích": return "slash-badge-phan-tich";
+      case "Kỹ thuật": return "slash-badge-ky-thuat";
+      case "Kiểm chứng": return "slash-badge-kiem-chung";
+      case "Học thuật": return "slash-badge-hoc-thuat";
+      case "Hệ thống": return "slash-badge-he-thong";
+      default: return "slash-badge-he-thong";
+    }
+  }
+
+  function render(matches) {
+    currentMatches = matches;
+    if (matches.length === 0) {
+      popup.innerHTML = `
+        <div class="slash-command-header">
+          <span class="slash-title">⚡ Lệnh nhanh (Slash Commands)</span>
+          <span>Không tìm thấy</span>
+        </div>
+        <div class="slash-empty-state">Không có lệnh nào khớp với từ khóa</div>
+      `;
+      popup.style.display = "flex";
+      isPopupOpen = true;
+      return;
+    }
+
+    if (activeIndex >= matches.length) activeIndex = 0;
+
+    const listHtml = matches.map((m, idx) => `
+      <li class="slash-command-item ${idx === activeIndex ? "active" : ""}" data-index="${idx}">
+        <div class="slash-cmd-icon-box">${m.icon}</div>
+        <div class="slash-cmd-body">
+          <div class="slash-cmd-title-row">
+            <span class="slash-cmd-name">${m.cmd}</span>
+            <span class="slash-cmd-label">${m.label}</span>
+            <span class="slash-cmd-badge ${getBadgeClass(m.category)}">${m.category}</span>
+          </div>
+          <div class="slash-cmd-desc">${m.desc}</div>
+        </div>
+      </li>
+    `).join("");
+
+    popup.innerHTML = `
+      <div class="slash-command-header">
+        <span class="slash-title">⚡ Lệnh nhanh (Slash Commands)</span>
+        <span>${matches.length} gợi ý</span>
+      </div>
+      <ul class="slash-command-list">${listHtml}</ul>
+      <div class="slash-command-footer">
+        <div class="slash-hints">
+          <span><kbd>↑</kbd> <kbd>↓</kbd> Di chuyển</span>
+          <span><kbd>↵</kbd> hoặc <kbd>Tab</kbd> Chọn</span>
+          <span><kbd>Esc</kbd> Đóng</span>
+        </div>
+        <span>Antigravity RAG</span>
+      </div>
+    `;
+
+    popup.style.display = "flex";
+    isPopupOpen = true;
+
+    const activeEl = popup.querySelector(".slash-command-item.active");
+    if (activeEl) activeEl.scrollIntoView({ block: "nearest" });
+
+    popup.querySelectorAll(".slash-command-item").forEach(itemEl => {
+      itemEl.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        const idx = parseInt(itemEl.dataset.index, 10);
+        executeSelection(currentMatches[idx]);
+      });
+    });
+  }
+
+  function close() {
+    popup.style.display = "none";
+    isPopupOpen = false;
+    currentMatches = [];
+    activeIndex = 0;
+  }
+
+  function executeSelection(item) {
+    if (!item) return;
+
+    if (item.action) {
+      close();
+      const val = textarea.value;
+      const pos = textarea.selectionStart;
+      const before = val.substring(0, pos);
+      const after = val.substring(pos);
+      const slashIdx = before.lastIndexOf("/");
+      if (slashIdx !== -1) {
+        textarea.value = (before.substring(0, slashIdx) + after).trim();
+        textarea.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      if (onAction) onAction(item.action, item);
+      return;
+    }
+
+    if (item.prompt) {
+      const val = textarea.value;
+      const pos = textarea.selectionStart;
+      const before = val.substring(0, pos);
+      const after = val.substring(pos);
+      const slashIdx = before.lastIndexOf("/");
+      const prefix = slashIdx !== -1 ? before.substring(0, slashIdx) : "";
+      
+      textarea.value = prefix + item.prompt + after;
+      close();
+
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+      textarea.focus();
+      const newPos = prefix.length + item.prompt.length;
+      textarea.setSelectionRange(newPos, newPos);
+    }
+  }
+
+  // Keydown capture to intercept navigation and selection before form submissions
+  textarea.addEventListener("keydown", (e) => {
+    if (!isPopupOpen) return;
+
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      e.stopPropagation();
+      activeIndex = (activeIndex + 1) % currentMatches.length;
+      render(currentMatches);
+      return;
+    }
+
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      e.stopPropagation();
+      activeIndex = (activeIndex - 1 + currentMatches.length) % currentMatches.length;
+      render(currentMatches);
+      return;
+    }
+
+    if (e.key === "Enter" || e.key === "Tab") {
+      if (currentMatches.length > 0) {
+        e.preventDefault();
+        e.stopPropagation();
+        executeSelection(currentMatches[activeIndex]);
+        return;
+      }
+    }
+
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      close();
+      return;
+    }
+  }, true);
+
+  // Input detection
+  textarea.addEventListener("input", () => {
+    const val = textarea.value;
+    const pos = textarea.selectionStart;
+    const before = val.substring(0, pos);
+
+    const match = before.match(/(?:^|\s)\/([a-zA-Z0-9_-]*)$/);
+    if (match) {
+      const query = match[1].toLowerCase();
+      const filtered = SLASH_COMMANDS.filter(c => {
+        const cmdClean = c.cmd.replace(/^\//, "").toLowerCase();
+        const lbl = c.label.toLowerCase();
+        const d = c.desc.toLowerCase();
+        return cmdClean.includes(query) || lbl.includes(query) || d.includes(query);
+      });
+      activeIndex = 0;
+      render(filtered);
+    } else {
+      if (isPopupOpen) close();
+    }
+  });
+
+  document.addEventListener("click", (e) => {
+    if (isPopupOpen && !popup.contains(e.target) && e.target !== textarea) {
+      close();
+    }
+  });
+}
+
+
+// Hook Slash Commands Autocomplete into Question Card
+const questionEl = $("#question");
+const questionCardEl = $(".question-card");
+if (questionEl && questionCardEl) {
+  initSlashCommandsAutosuggest({
+    textarea: questionEl,
+    container: questionCardEl,
+    onAction: async (action) => {
+      if (action === "set_mode_cpu_min") {
+        try {
+          await api("/config/agents", {
+            method: "POST",
+            body: {
+              agent_modes: {
+                router: "cpu_min",
+                retriever: "cpu_min",
+                grader: "cpu_min",
+                generator: "cpu_min",
+                hallucination: "cpu_min"
+              }
+            }
+          });
+          toast("🟢 Đã chuyển sang chế độ CPU Min (Siêu nhẹ, RAM < 100MB, tốc độ < 1s)");
+        } catch (e) {
+          toast("Lỗi chuyển CPU Min: " + e.message, true);
+        }
+      } else if (action === "set_mode_cpu_max") {
+        try {
+          await api("/config/agents", {
+            method: "POST",
+            body: {
+              agent_modes: {
+                router: "cpu_max",
+                retriever: "cpu_max",
+                grader: "cpu_max",
+                generator: "cpu_max",
+                hallucination: "cpu_max"
+              }
+            }
+          });
+          toast("🚀 Đã chuyển sang chế độ CPU Max (Đa tác nhân, Full Fact-checking, 100% benchmark)");
+        } catch (e) {
+          toast("Lỗi chuyển CPU Max: " + e.message, true);
+        }
+      } else if (action === "export_report") {
+        const mdLink = $("#export-md");
+        if (mdLink && mdLink.href && !mdLink.href.endsWith("#")) {
+          mdLink.click();
+          toast("📥 Đang xuất báo cáo Markdown...");
+        } else {
+          toast("Chưa có báo cáo nào hoàn thành để xuất.", true);
+        }
+      } else if (action === "clear_input") {
+        questionEl.value = "";
+        questionEl.dispatchEvent(new Event("input", { bubbles: true }));
+        toast("Đã làm mới khung câu hỏi.");
+      }
+    }
+  });
+}
