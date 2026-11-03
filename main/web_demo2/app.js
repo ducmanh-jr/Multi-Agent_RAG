@@ -758,22 +758,26 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
 
-    // KIỂM TRA ĐIỀU KIỆN (Phương án 2): Chưa chọn tài liệu VÀ Chưa bật Auto-Scout
+    // KIỂM TRA ĐIỀU KIỆN BẮT BUỘC: Chưa chọn tài liệu VÀ Chưa bật Auto-Scout
     if (!state.selectedDocId && !state.autoScout) {
       const promptCard = document.createElement("div");
       promptCard.className = "message-card";
       promptCard.innerHTML = `
         <div class="agent-response-container">
-          <div class="agent-output-block" style="padding: 14px 18px; border-left: 3px solid #2563eb; background: #f8fafc; border-radius: 8px;">
-            <div style="font-size: 13.5px; color: var(--text-primary, #0f172a); line-height: 1.6;">
-              Vui lòng <b>chọn một tài liệu</b> trong kho hoặc bật <b>Auto-Scout</b> để bắt đầu nghiên cứu.
+          <div class="agent-output-block" style="padding: 16px 20px; border-left: 4px solid #2563eb; background: #f8fafc; border-radius: 8px;">
+            <div style="font-size: 14px; color: #1e293b; line-height: 1.6; font-weight: 500;">
+              ℹ️ Vui lòng <b>chọn một tài liệu</b> trong kho hoặc bật <b>Auto-Scout</b> để bắt đầu nghiên cứu.
+            </div>
+            <div style="font-size: 12.5px; color: #64748b; margin-top: 6px; line-height: 1.5;">
+              • Bấm vào tên bài báo (ví dụ: <i>Báo Hà Nội mới</i> hoặc <i>Môi trường</i>) ở cột bên trái để chọn.<br>
+              • Hoặc gạt bật nút <b>Auto-Scout</b> ở phía trên để AI tự động tìm kiếm bài báo khoa học.
             </div>
           </div>
         </div>
       `;
       messageFeed.appendChild(promptCard);
       messageFeed.scrollTo({ top: messageFeed.scrollHeight, behavior: "smooth" });
-      setButtonState("idle");
+      setButtonState(promptInput.value.trim().length > 0 ? "ready" : "idle");
       return;
     }
 

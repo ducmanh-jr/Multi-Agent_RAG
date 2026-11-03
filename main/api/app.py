@@ -1706,46 +1706,55 @@ def export_run_report(run_id: str, format: str = "md"):
 @app.post("/api/runs")
 
 async def create_run(req: CreateRunRequest):
-
     """Creates and starts an asynchronous multi-agent research run with SQLite persistence."""
-
     prompt = req.question or req.query
-
     if not prompt:
-
         raise HTTPException(status_code=400, detail="Question cannot be empty.")
 
-
-
     run_id = f"run_{uuid.uuid4().hex[:10]}"
-
     pdf_path = None
-
     doc_id = req.document_id or (req.document_ids[0] if req.document_ids else None)
 
     if doc_id:
-
         doc = db.get_document(doc_id)
-
         if doc:
-
             pdf_path = doc.get("path")
-
-
+    else:
+        # Nếu người dùng không chọn tài liệu và không có doc_id -> Thông báo rõ ràng
+        no_doc_report = (
+            "# Thông báo Hệ thống\n\n"
+            "> **Trạng thái:** `WAITING_FOR_DOCUMENT`\n\n"
+            "Vui lòng **chọn một tài liệu** trong kho hoặc bật **Auto-Scout** để bắt đầu nghiên cứu."
+        )
+        db.save_run(
+            run_id=run_id,
+            question=prompt,
+            status="completed",
+            document_id=None,
+        )
+        db.update_run_result(
+            run_id=run_id,
+            status="completed",
+            final_report=no_doc_report,
+            verified_claims=[],
+            rejected_claims=[],
+            evidence_spans=[],
+            reasoning_trace=[{"action": "waiting_for_document", "message": "Vui lòng chọn tài liệu hoặc bật Auto-Scout."}],
+        )
+        return {
+            "id": run_id,
+            "status": "completed",
+            "question": prompt,
+            "document_id": None,
+            "final_report": no_doc_report,
+        }
 
     run_record = db.save_run(
-
         run_id=run_id,
-
         question=prompt,
-
         status="processing",
-
         document_id=doc_id,
-
     )
-
-
 
     # Asynchronously execute graph and persist result
 
