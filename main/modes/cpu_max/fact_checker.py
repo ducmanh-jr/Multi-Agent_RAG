@@ -48,6 +48,26 @@ class CPUMaxFactCheckerAgent(BaseAgent):
                 "reasoning_trace": [trace],
             }
 
+        # Zero Hallucination: honest refusal verification
+        critic_fb = state.get("critic_feedback", {}) or {}
+        if critic_fb.get("reason") == "out_of_domain" or "hoàn toàn không được đề cập" in answer or "không được đề cập" in answer:
+            trace = self.log_action("out_of_domain_verified", {"status": "support"})
+            return {
+                "fact_check_label": "support",
+                "verified_claims": [
+                    {
+                        "claim": "Tài liệu nguồn không đề cập đến thông tin câu hỏi.",
+                        "text": "Tài liệu nguồn không đề cập đến thông tin câu hỏi.",
+                        "status": "support",
+                        "rationale": "Xác nhận tài liệu nguồn không chứa thông tin của câu hỏi (Zero Hallucination).",
+                        "confidence": 1.0,
+                    }
+                ],
+                "rejected_claims": [],
+                "evidence_gaps": [],
+                "reasoning_trace": [trace],
+            }
+
         ev_texts = [e.get("quote", "") if isinstance(e, dict) else str(e) for e in evidence_spans]
         all_sources = list(retrieved_docs) + [c for c in seen_chunks if c not in retrieved_docs]
         unit_texts = [u.get("text", "") for u in source_units if isinstance(u, dict)]

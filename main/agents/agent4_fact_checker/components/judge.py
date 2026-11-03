@@ -42,7 +42,7 @@ class FactCheckJudge:
         "scibert", "rag", "react", "bleu", "glue", "vram", "gpu"
     }
 
-    NEGATION_WORDS_VN = {"không", "không thể", "chưa", "chẳng", "không có", "tránh"}
+    NEGATION_WORDS_VN = {"không", "không thể", "chưa", "chẳng", "không có"}
     NEGATION_WORDS_EN = {"not", "never", "cannot", "no", "hardly", "fail", "fails", "unable", "dispense"}
 
     def __init__(self, model_path: Optional[str] = None, device: str = "cpu"):
@@ -166,7 +166,8 @@ class FactCheckJudge:
         raw_numbers = re.findall(r"\b\d+(?:[,\.]\d+)?\b", clean_text)
         normalized_numbers = {n.replace(",", "").replace(".", "") for n in raw_numbers}
 
-        words = set(re.findall(r"\w+", clean_text))
+        masked_text = re.sub(r"\b(không\s+(?:khí|gian|hàng|lực|phận|độ)|chân\s+không)\b", " ", clean_text)
+        words = set(re.findall(r"\w+", masked_text))
         has_neg = bool(words.intersection(self.NEGATION_WORDS_VN) or words.intersection(self.NEGATION_WORDS_EN))
         entities = words.intersection(self.AI_CORE_ENTITIES)
 
@@ -198,6 +199,19 @@ class FactCheckJudge:
         claim_tokens, claim_nums, claim_neg, claim_ents = self._extract_and_expand_tokens(claim)
 
         target_pool = evidence_spans if evidence_spans else [s.strip() for s in re.split(r"[.?!]\s+", context) if s.strip()]
+
+        # Exact substring shortcut: if claim is verbatim in context or evidence, it is verified 100% SUPPORT
+        norm_claim = claim.strip().lower().rstrip(".,;:")
+        if norm_claim and len(norm_claim) >= 15:
+            full_corpus = " ".join([context] + list(evidence_spans)).lower()
+            if norm_claim in full_corpus:
+                return {
+                    "status": "support",
+                    "confidence": 1.0,
+                    "evidence": norm_claim,
+                    "matched_keywords": list(claim_tokens),
+                    "reason": "Luận điểm trích xuất trực tiếp từ văn bản nguồn (Exact Substring Match)."
+                }
 
         best_span = ""
         best_score = 0.0

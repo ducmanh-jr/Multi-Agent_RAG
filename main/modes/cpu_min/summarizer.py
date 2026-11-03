@@ -50,12 +50,12 @@ def clean_vietnamese_text(text: str) -> str:
     s = re.sub(r"<br\s*/?>", " ", text, flags=re.I)
     s = re.sub(r"<[^>]+>", " ", s)
 
-    # 2. Fix markdown underscores in words (e.g. Báo_Thủ đô_ -> Báo Thủ đô)
-    s = re.sub(r"([A-Za-zÀ-ỹ0-9])_([A-Za-zÀ-ỹ0-9])", r"\1 \2", s)
-    s = re.sub(r"_+", " ", s)
+    # 2. Fix markdown underscores in words (e.g. _Báo Thủ đô_ -> Báo Thủ đô), PRESERVING snake_case like proxy_pass
+    s = re.sub(r"(?<![A-Za-z0-9])_+|_+(?![A-Za-z0-9])", "", s)
 
-    # 3. Fix stuck lowercase-uppercase words (e.g. BáoThủ -> Báo Thủ, BáoHà -> Báo Hà)
-    s = re.sub(r"([a-zà-ỹ])([A-ZĐ])", r"\1 \2", s)
+    # 3. Fix stuck lowercase-uppercase words (e.g. BáoThủ -> Báo Thủ) but PRESERVE camelCase code identifiers like generateHosts
+    s = re.sub(r"([à-ỹ])([A-ZĐ])", r"\1 \2", s)
+    s = re.sub(r"([a-z])([Đ])", r"\1 \2", s)
 
     # 4. Fix stuck punctuation (missing spaces after . , ! ? : ; when followed by words)
     # Notice: preserve dates like 24.10.1957 by only inserting space if followed by an uppercase letter!
@@ -136,7 +136,12 @@ def extract_clean_sentences(text: str) -> list[str]:
         words = re.findall(r"\w+", s_clean)
         if words and words[-1].lower() in dangling_words:
             continue
-        if not (s_clean[0].isupper() or s_clean[0].isdigit() or s_clean[0] in '"“\'[('):
+        is_valid_start = (
+            s_clean[0].isupper() or s_clean[0].isdigit() or s_clean[0] in '"“\'[(' or
+            ":" in s_clean or
+            any(s_clean.startswith(kw) for kw in ["server", "location", "proxy", "client", "listen", "upstream", "access", "error", "sudo", "docker", "certbot", "openssl"])
+        )
+        if not is_valid_start:
             continue
 
         sentences.append(s_clean)
@@ -266,9 +271,44 @@ class CPUMinSummarizerAgent(BaseAgent):
         ]
         token_cov = len(token_overlap) / max(len(q_tokens), 1)
 
+        # Precision Out-of-Domain Guard (Zero Hallucination)
+        NUM_WORDS = {'1': 'một', '2': 'hai', '3': 'ba', '4': 'bốn', '5': 'năm', '6': 'sáu', '7': 'bảy', '8': 'tám', '9': 'chín', '10': 'mười'}
+        cap_tokens = [w for w in re.findall(r"\b[A-ZĐ][A-Za-zà-ỹ0-9_-]+\b", clean_q) if len(w) > 2]
+        tech_terms = [
+            w.lower() for idx_w, w in enumerate(cap_tokens)
+            if (idx_w > 0 or w.lower() not in {"mô", "giá", "làm", "vì", "một", "báo", "hãy", "cho", "theo", "cấu"})
+            and w.lower() not in VIETNAMESE_STOP_WORDS
+        ]
+        ACRONYMS = {
+            "hđnd": "hội đồng nhân dân",
+            "ubnd": "ủy ban nhân dân",
+            "ttxvn": "thông tấn xã việt nam",
+            "fe": "frontend",
+            "be": "backend",
+        }
+        missing_tech = [
+            t for t in tech_terms
+            if t not in doc_full_text
+            and strip_accents(t) not in doc_full_text_unaccent
+            and (t not in ACRONYMS or ACRONYMS[t] not in doc_full_text)
+        ]
+
+        num_group_match = re.search(r"\b(\d+)\s+(nhóm|bước|phần|nguyên nhân|biện pháp)\b", clean_q.lower())
+        missing_group_phrase = False
+        if num_group_match:
+            digit = num_group_match.group(1)
+            word_entity = num_group_match.group(2)
+            word_form = NUM_WORDS.get(digit, digit)
+            cand1 = f"{digit} {word_entity}"
+            cand2 = f"{word_form} {word_entity}"
+            if cand1 not in doc_full_text and cand2 not in doc_full_text and strip_accents(cand2) not in doc_full_text_unaccent:
+                missing_group_phrase = True
+
         is_out_of_domain = False
         if not is_general_summary:
-            if proper_noun_phrases and not any(
+            if missing_tech or missing_group_phrase:
+                is_out_of_domain = True
+            elif proper_noun_phrases and not any(
                 p.lower() in doc_full_text or strip_accents(p.lower()) in doc_full_text_unaccent
                 for p in proper_noun_phrases
             ):
@@ -556,12 +596,23 @@ class CPUMinSummarizerAgent(BaseAgent):
 
         # 8. Formulate Direct Answer for Specific Questions
         # CASE A: LIST SYNTHESIS
-        if is_list_q and ":" in top_sent and (";" in top_sent or "thứ" in top_sent.lower()):
+        if is_list_q and ":" in top_sent and (";" in top_sent or "thứ" in top_sent.lower() or any(":" in c.get("sentence", "") for c in selected_candidates[1:4])):
             prefix, list_part = top_sent.split(":", 1)
             prefix_clean = prefix.strip()
             prefix_clean = re.sub(r"^(?:với|gồm|bao gồm)\s+", "", prefix_clean, flags=re.I)
 
+            # First try semicolon or newline split
             raw_items = [it.strip().rstrip(".;") for it in re.split(r";|\n", list_part) if it.strip()]
+            # If only 1 item was found, also check within top_u["text"] following prefix
+            if len(raw_items) <= 1:
+                u_text = str(top_u.get("text", ""))
+                idx_pref = u_text.find(prefix_clean)
+                if idx_pref != -1:
+                    after_text = u_text[idx_pref + len(prefix_clean):idx_pref + len(prefix_clean) + 650]
+                    after_text = re.sub(r"^[:\s]+", "", after_text)
+                    sub_items = re.split(r"(?<=[.)])\s+(?=[a-z_A-ZÀ-ỹ0-9]+(?:\s+[^:]{1,15})?:)", after_text)
+                    if len(sub_items) > 1:
+                        raw_items = [it.strip().rstrip(".;") for it in sub_items[:5] if it.strip()]
             formatted_items = []
             for idx, it in enumerate(raw_items, 1):
                 it_clean = it.strip().rstrip(".")
@@ -577,6 +628,20 @@ class CPUMinSummarizerAgent(BaseAgent):
                         evidence_ids=[top_u.get("id", "doc_1")],
                     ).to_dict()
                 )
+
+            if len(formatted_items) <= 1:
+                for cand in selected_candidates[1:6]:
+                    cand_s = cand["sentence"].strip().rstrip(".")
+                    if cand_s and (":" in cand_s or cand.get("unit", {}).get("id") == top_u.get("id")):
+                        cand_s = cand_s[0].upper() + cand_s[1:]
+                        formatted_items.append(f"{len(formatted_items)+1}. **{cand_s}** [1]")
+                        claims.append(
+                            AtomicClaim(
+                                id=f"claim_{len(claims)+1}",
+                                text=cand_s,
+                                evidence_ids=[cand["unit"].get("id", "doc_1")],
+                            ).to_dict()
+                        )
 
             items_str = "\n".join(formatted_items)
 
