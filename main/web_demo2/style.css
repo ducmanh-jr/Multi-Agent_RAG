@@ -2534,35 +2534,34 @@ body {
 }
 
 
-/* ==================== SLASH COMMAND AUTOCOMPLETE (ANTIGRAVITY STYLE) ==================== */
-.input-dock-mono {
+/* ==================== SLASH COMMAND AUTOCOMPLETE (MONOCHROME BLACK & WHITE) ==================== */
+.input-dock-mono,
+.question-card {
   position: relative !important;
 }
 
 .slash-command-popup {
   position: absolute;
-  bottom: calc(100% + 12px);
+  bottom: calc(100% + 10px);
   left: 0;
   width: 100%;
   max-width: 580px;
-  background: rgba(255, 255, 255, 0.98);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(0, 0, 0, 0.1);
-  border-radius: 16px;
-  box-shadow: 0 20px 40px -10px rgba(15, 23, 42, 0.22), 0 0 0 1px rgba(0, 0, 0, 0.05);
+  background: #ffffff;
+  border: 1px solid #e4e4e7;
+  border-radius: 14px;
+  box-shadow: 0 16px 36px -8px rgba(0, 0, 0, 0.14), 0 0 0 1px rgba(0, 0, 0, 0.04);
   display: flex;
   flex-direction: column;
   overflow: hidden;
   z-index: 10000;
   font-family: inherit;
-  animation: slashMenuSpring 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+  animation: slashMenuSpring 0.15s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 @keyframes slashMenuSpring {
   from {
     opacity: 0;
-    transform: translateY(8px) scale(0.97);
+    transform: translateY(6px) scale(0.98);
   }
   to {
     opacity: 1;
@@ -2575,11 +2574,11 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 10px 16px;
-  background: rgba(248, 250, 252, 0.9);
-  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  background: #fafafa;
+  border-bottom: 1px solid #e4e4e7;
   font-size: 11.5px;
   font-weight: 600;
-  color: #64748b;
+  color: #71717a;
   letter-spacing: 0.02em;
 }
 
@@ -2587,7 +2586,7 @@ body {
   display: flex;
   align-items: center;
   gap: 6px;
-  color: #0f172a;
+  color: #18181b;
   font-weight: 700;
 }
 
@@ -2603,7 +2602,7 @@ body {
   width: 5px;
 }
 .slash-command-list::-webkit-scrollbar-thumb {
-  background: rgba(148, 163, 184, 0.35);
+  background: #d4d4d8;
   border-radius: 4px;
 }
 
@@ -2612,17 +2611,18 @@ body {
   align-items: flex-start;
   gap: 12px;
   padding: 8px 12px;
-  border-radius: 10px;
+  border-radius: 9px;
   cursor: pointer;
-  transition: all 0.12s ease;
+  transition: all 0.1s ease;
   user-select: none;
   border: 1px solid transparent;
+  background: transparent;
 }
 
 .slash-command-item:hover,
 .slash-command-item.active {
-  background: #f1f5f9;
-  border-color: rgba(59, 130, 246, 0.25);
+  background: #f4f4f5;
+  border-color: #18181b;
 }
 
 .slash-cmd-icon-box {
@@ -2632,11 +2632,13 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 15px;
-  background: #f8fafc;
-  border: 1px solid rgba(0, 0, 0, 0.06);
+  font-size: 14px;
+  background: #f4f4f5;
+  border: 1px solid #e4e4e7;
   flex-shrink: 0;
   margin-top: 1px;
+  filter: grayscale(100%);
+  color: #18181b;
 }
 
 .slash-cmd-body {
@@ -2657,43 +2659,58 @@ body {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 13px;
   font-weight: 700;
-  color: #2563eb;
+  color: #09090b;
 }
 
 .slash-cmd-label {
   font-size: 13px;
   font-weight: 600;
-  color: #1e293b;
+  color: #18181b;
 }
 
 .slash-cmd-badge {
-  font-size: 10.5px;
+  font-size: 10px;
   font-weight: 500;
   padding: 2px 7px;
-  border-radius: 999px;
+  border-radius: 6px;
   margin-left: auto;
   letter-spacing: 0.01em;
+  background: #f4f4f5;
+  color: #52525b;
+  border: 1px solid #e4e4e7;
 }
 
-.slash-badge-phan-tich { background: #e0f2fe; color: #0284c7; }
-.slash-badge-ky-thuat { background: #fef3c7; color: #d97706; }
-.slash-badge-kiem-chung { background: #dcfce7; color: #16a34a; }
-.slash-badge-hoc-thuat { background: #f3e8ff; color: #9333ea; }
-.slash-badge-he-thong { background: #f1f5f9; color: #475569; }
+/* Strictly monochrome black/white/gray tags */
+.slash-badge-phan-tich,
+.slash-badge-ky-thuat,
+.slash-badge-kiem-chung,
+.slash-badge-hoc-thuat,
+.slash-badge-he-thong {
+  background: #f4f4f5;
+  color: #52525b;
+  border: 1px solid #e4e4e7;
+}
+
+.slash-command-item:hover .slash-cmd-badge,
+.slash-command-item.active .slash-cmd-badge {
+  background: #ffffff;
+  color: #09090b;
+  border-color: #d4d4d8;
+}
 
 .slash-cmd-desc {
   font-size: 12px;
-  color: #64748b;
+  color: #71717a;
   line-height: 1.4;
   white-space: normal;
 }
 
 .slash-command-footer {
-  padding: 8px 16px;
-  background: rgba(248, 250, 252, 0.9);
-  border-top: 1px solid rgba(0, 0, 0, 0.06);
+  padding: 8px 14px;
+  background: #fafafa;
+  border-top: 1px solid #e4e4e7;
   font-size: 11px;
-  color: #64748b;
+  color: #71717a;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -2707,12 +2724,13 @@ body {
 
 .slash-command-footer kbd {
   background: #ffffff;
-  border: 1px solid #cbd5e1;
+  border: 1px solid #d4d4d8;
   border-radius: 4px;
   padding: 1px 5px;
   font-family: inherit;
   font-size: 10px;
   font-weight: 600;
+  color: #18181b;
   box-shadow: 0 1px 1px rgba(0, 0, 0, 0.06);
 }
 
@@ -2720,55 +2738,67 @@ body {
   padding: 24px;
   text-align: center;
   font-size: 12.5px;
-  color: #94a3b8;
+  color: #71717a;
 }
 
-/* Dark mode */
+/* Dark mode: strict monochrome inverted */
 [data-theme="dark"] .slash-command-popup,
 body.dark .slash-command-popup {
-  background: rgba(24, 24, 27, 0.97);
-  border-color: rgba(255, 255, 255, 0.1);
-  box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.7);
+  background: #18181b;
+  border-color: #27272a;
+  box-shadow: 0 16px 36px -8px rgba(0, 0, 0, 0.7);
 }
 [data-theme="dark"] .slash-command-header,
 [data-theme="dark"] .slash-command-footer,
 body.dark .slash-command-header,
 body.dark .slash-command-footer {
-  background: rgba(18, 18, 21, 0.92);
-  border-color: rgba(255, 255, 255, 0.07);
+  background: #121215;
+  border-color: #27272a;
   color: #a1a1aa;
 }
 [data-theme="dark"] .slash-command-header .slash-title,
 body.dark .slash-command-header .slash-title {
-  color: #f4f4f5;
+  color: #fafafa;
 }
 [data-theme="dark"] .slash-command-item:hover,
 [data-theme="dark"] .slash-command-item.active,
 body.dark .slash-command-item:hover,
 body.dark .slash-command-item.active {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(96, 165, 250, 0.3);
+  background: #27272a;
+  border-color: #52525b;
 }
 [data-theme="dark"] .slash-cmd-icon-box,
 body.dark .slash-cmd-icon-box {
   background: #27272a;
-  border-color: rgba(255, 255, 255, 0.08);
+  border-color: #3f3f46;
+  color: #fafafa;
 }
 [data-theme="dark"] .slash-cmd-name,
 body.dark .slash-cmd-name {
-  color: #60a5fa;
+  color: #fafafa;
 }
 [data-theme="dark"] .slash-cmd-label,
 body.dark .slash-cmd-label {
-  color: #f4f4f5;
+  color: #fafafa;
 }
 [data-theme="dark"] .slash-cmd-desc,
 body.dark .slash-cmd-desc {
   color: #a1a1aa;
 }
+[data-theme="dark"] .slash-cmd-badge,
+body.dark .slash-cmd-badge,
+[data-theme="dark"] .slash-badge-phan-tich,
+[data-theme="dark"] .slash-badge-ky-thuat,
+[data-theme="dark"] .slash-badge-kiem-chung,
+[data-theme="dark"] .slash-badge-hoc-thuat,
+[data-theme="dark"] .slash-badge-he-thong {
+  background: #27272a;
+  color: #d4d4d8;
+  border-color: #3f3f46;
+}
 [data-theme="dark"] .slash-command-footer kbd,
 body.dark .slash-command-footer kbd {
   background: #27272a;
   border-color: #3f3f46;
-  color: #d4d4d8;
+  color: #fafafa;
 }

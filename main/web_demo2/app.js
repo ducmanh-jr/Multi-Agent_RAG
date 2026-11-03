@@ -2347,22 +2347,22 @@ function initSlashCommandsAutosuggest({ textarea, container, onAction }) {
       return;
     }
 
-    if (item.prompt) {
-      const val = textarea.value;
-      const pos = textarea.selectionStart;
-      const before = val.substring(0, pos);
-      const after = val.substring(pos);
-      const slashIdx = before.lastIndexOf("/");
-      const prefix = slashIdx !== -1 ? before.substring(0, slashIdx) : "";
-      
-      textarea.value = prefix + item.prompt + after;
-      close();
+    // Show ONLY item.cmd (e.g. "/tom-tat ") in input box, NOT the entire long prompt!
+    const val = textarea.value;
+    const pos = textarea.selectionStart;
+    const before = val.substring(0, pos);
+    const after = val.substring(pos);
+    const slashIdx = before.lastIndexOf("/");
+    const prefix = slashIdx !== -1 ? before.substring(0, slashIdx) : "";
+    
+    const insertion = item.cmd + " ";
+    textarea.value = prefix + insertion + after;
+    close();
 
-      textarea.dispatchEvent(new Event("input", { bubbles: true }));
-      textarea.focus();
-      const newPos = prefix.length + item.prompt.length;
-      textarea.setSelectionRange(newPos, newPos);
-    }
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    textarea.focus();
+    const newPos = prefix.length + insertion.length;
+    textarea.setSelectionRange(newPos, newPos);
   }
 
   // Keydown capture to intercept navigation and selection before form submissions

@@ -16,9 +16,9 @@ flowchart TD
     C --> D["Lọc theo từ khóa người dùng gõ (Fuzzy filter)"]
     D --> E["Điều hướng bằng phím: Mũi tên Lên/Xuống"]
     E --> F{"Nhấn Enter hoặc Tab hoặc Click"}
-    F -->|Nhóm Prompt| G["Tự động điền Prompt học thuật chuẩn xác & Focus con trỏ"]
+    F -->|Nhóm Prompt| G["Điền chính xác từ khóa /command (ví dụ /tom-tat ) để người dùng dễ kiểm soát"]
     F -->|Nhóm Action| H["Thực thi hành động hệ thống: Chuyển CPU Min / Max / Xuất file"]
-    G --> I["Người dùng nhấn Bắt đầu nghiên cứu"]
+    G --> I["Người dùng nhấn Gửi ngay hoặc gõ thêm câu hỏi chi tiết"]
     H --> J["Cập nhật UI & Gửi thông báo Toast thành công"]
 ```
 
@@ -26,7 +26,8 @@ flowchart TD
 - **100% Không Mock Data**: Mọi lệnh phân tích đều truy vấn trực tiếp vào kho tài liệu PDF/DOCX/TXT thật thông qua mạng lưới 5 Multi-Agents đã đạt benchmark 30/30 (100%).
 - **Trải nghiệm phím tắt đỉnh cao**: Hỗ trợ đầy đủ `↑`, `↓`, `Tab`, `Enter`, `Esc`. Cơ chế *Event Capture* chặn triệt để tình trạng submit nhầm form khi đang chọn lệnh.
 - **Tương thích hoàn hảo cả 2 giao diện**: Hoạt động đồng bộ trên cả **Research Desk Classic** (`/`) và **Research Desk Modern Mono-Dock** (`/demo2`).
-- **Giao diện Glassmorphism 2 giao diện**: Hỗ trợ đầy đủ Light Mode và Dark Mode với thẻ màu phân loại rõ ràng (Phân tích, Kỹ thuật, Kiểm chứng, Học thuật, Hệ thống).
+- **Giao diện Tối giản Đen Trắng (Monochrome)**: Thiết kế chuẩn phong cách Apple & Antigravity 2.0 tối giản, thanh lịch, trung tính không màu mè, tương thích hoàn hảo cả Light Mode lẫn Dark Mode.
+- **Nhập lệnh gọn gàng**: Khi chọn lệnh từ bảng gợi ý, hệ thống chỉ điền mã lệnh ngắn gọn (ví dụ `/tom-tat `) thay vì chèn cả đoạn văn bản dài, giúp khung nhập luôn thoáng đãng và người dùng có thể bấm Enter ngay hoặc gõ thêm câu hỏi chi tiết tùy ý.
 
 ---
 
@@ -71,9 +72,10 @@ flowchart TD
 - Phím <kbd>⎋ Esc</kbd>: Đóng ngay bảng gợi ý nếu muốn quay lại nhập liệu thông thường.
 - *Chuột*: Rê chuột lên lệnh bất kỳ và click để áp dụng ngay lập tức.
 
-### Bước 4: Tinh chỉnh câu hỏi (nếu có)
-- Với các lệnh như `/kiem-chung` hoặc `/trich-dan`, con trỏ chuột sẽ tự động nằm ở cuối câu để bạn nhập thêm chủ đề cần kiểm tra hoặc trích dẫn.
-- Nhấn nút **Bắt đầu nghiên cứu** (hoặc `Ctrl + Enter` trên giao diện Classic / `Enter` trên giao diện Modern Mono-Dock) để gửi yêu cầu đến hệ thống Multi-Agent RAG.
+### Bước 4: Nhập thêm câu hỏi hoặc nhấn Gửi ngay
+- Khung nhập sẽ chỉ hiển thị ngắn gọn mã lệnh bạn vừa chọn (ví dụ `/tom-tat `).
+- Bạn có thể **nhấn Enter ngay** để hệ thống tóm tắt toàn bộ tài liệu đã chọn, hoặc gõ thêm nội dung cụ thể phía sau (ví dụ `/tom-tat cấu hình upstream NGINX`).
+- Nhấn phím `Enter` (hoặc `Ctrl + Enter` trên giao diện Classic) để gửi yêu cầu đến hệ thống Multi-Agent RAG.
 
 ---
 

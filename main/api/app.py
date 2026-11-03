@@ -1717,16 +1717,62 @@ SLASH_PREFIX_MAP = {
     "/scout": ("Dò quét nhanh cấu trúc, mục lục và các đề mục chính trong tài liệu", "Dò quét nhanh cấu trúc, mục lục, phạm vi chủ đề và các phần chính trong toàn bộ tài liệu."),
 }
 
+SLASH_ALIASES = {
+    "/tóm-tắt": "/tom-tat", "/tóm_tắt": "/tom-tat", "/tom_tat": "/tom-tat",
+    "/so-sánh": "/so-sanh", "/so_sánh": "/so-sanh", "/so_sanh": "/so-sanh",
+    "/đóng-góp": "/dong-gop", "/đóng_góp": "/dong-gop", "/dong_gop": "/dong-gop",
+    "/phương-pháp": "/phuong-phap", "/phương_pháp": "/phuong-phap", "/phuong_phap": "/phuong-phap",
+    "/kiểm-chứng": "/kiem-chung", "/kiểm_chứng": "/kiem-chung", "/kiem_chung": "/kiem-chung",
+    "/số-liệu": "/so-lieu", "/số_liệu": "/so-lieu", "/so_lieu": "/so-lieu",
+    "/thuật-ngữ": "/thuat-ngu", "/thuật_ngữ": "/thuat-ngu", "/thuat_ngu": "/thuat-ngu",
+    "/trích-dẫn": "/trich-dan", "/trích_dẫn": "/trich-dan", "/trich_dan": "/trich-dan",
+    "/khoảng-trống": "/khoang-trong", "/khoảng_trống": "/khoang-trong", "/khoang_trong": "/khoang-trong",
+    "/câu-hỏi": "/cau-hoi", "/câu_hỏi": "/cau-hoi", "/cau_hoi": "/cau-hoi",
+    "/quet": "/scout", "/quét": "/scout",
+}
+
 def resolve_slash_prompt(p: str) -> str:
     p_clean = (p or "").strip()
-    if not p_clean.startswith("/"):
+    if not p_clean:
         return p_clean
+    # Normalize multiple leading slashes (e.g. ///tom-tat -> /tom-tat)
+    if p_clean.startswith("/"):
+        p_clean = "/" + p_clean.lstrip("/")
+        
+    # Edge case: If user entered only "/" or "/  "
+    if p_clean == "/":
+        return "Tóm tắt tổng quan nội dung, các đóng góp cốt lõi và kết quả chính của tài liệu nghiên cứu."
+
+    # Extract command part
+    parts = p_clean.split(maxsplit=1)
+    first_token = parts[0].lower()
+    rest = parts[1] if len(parts) > 1 else ""
+
+    # Check aliases
+    if first_token in SLASH_ALIASES:
+        first_token = SLASH_ALIASES[first_token]
+    elif first_token.replace("_", "-") in SLASH_PREFIX_MAP:
+        first_token = first_token.replace("_", "-")
+
+    if first_token in SLASH_PREFIX_MAP:
+        prefix, default_prompt = SLASH_PREFIX_MAP[first_token]
+        rest_clean = rest.strip().lstrip(":+ -=")
+        if rest_clean:
+            return f"{prefix}: {rest_clean}"
+        return default_prompt
+
+    # Also handle if slash command is used with colon without space, e.g. /tom-tat:noi-dung
     for cmd, (prefix, default_prompt) in SLASH_PREFIX_MAP.items():
-        if p_clean.lower().startswith(cmd):
-            rest = p_clean[len(cmd):].strip().lstrip(":+ -")
-            if rest:
-                return f"{prefix}: {rest}"
+        if p_clean.lower().startswith(cmd + ":") or p_clean.lower().startswith(cmd + "-"):
+            rest_clean = p_clean[len(cmd):].strip().lstrip(":+ -=")
+            if rest_clean:
+                return f"{prefix}: {rest_clean}"
             return default_prompt
+
+    # Limit query length to 3000 chars to avoid memory exhaustion
+    if len(p_clean) > 3000:
+        p_clean = p_clean[:3000]
+
     return p_clean
 
 @app.post("/api/runs")
