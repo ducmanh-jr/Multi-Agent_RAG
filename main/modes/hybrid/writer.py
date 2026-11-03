@@ -20,7 +20,7 @@ class HybridWriterAgent(BaseAgent):
         super().__init__(name="HybridWriterAgent", max_internal_retry=max_internal_retry)
 
     def run(self, state: AgentState) -> dict[str, Any]:
-        query = state.get("query", "")
+        query = state.get("query") or state.get("question", "")
         verified_claims = state.get("verified_claims", []) or []
         rejected_claims = state.get("rejected_claims", []) or []
         retrieved_docs = state.get("retrieved_docs", []) or []
@@ -47,7 +47,7 @@ class HybridWriterAgent(BaseAgent):
         report_data["verifier_model_family"] = ver_family
 
         trace = self.log_action(
-            "hybrid_report_written",
+            "Ký duyệt báo cáo học thuật hoàn chỉnh kèm huy hiệu kiểm toán xuất xứ L4",
             {
                 "report_length": len(final_report),
                 "generator_model_family": gen_family,

@@ -163,10 +163,14 @@ class FactCheckJudge:
         Trả về (expanded_tokens, normalized_numbers, has_negation, matched_entities).
         """
         clean_text = text.lower()
-        raw_numbers = re.findall(r"\b\d+(?:[,\.]\d+)?\b", clean_text)
+        # Strip citation brackets [1], [2], [1, 2] and bullet markers 1., 2., 1) so they are not treated as quantitative metrics
+        sanitized_for_nums = re.sub(r"\[\s*\d+(?:\s*,\s*\d+)*\s*\]", " ", clean_text)
+        sanitized_for_nums = re.sub(r"^\s*\d+[\.\)]\s*", " ", sanitized_for_nums)
+        sanitized_for_nums = re.sub(r"\b(?:mục|phần|bước|trang|slide|figure|table|bảng|hình)\s+\d+\b", " ", sanitized_for_nums, flags=re.I)
+        raw_numbers = re.findall(r"\b\d+(?:[,\.]\d+)?\b", sanitized_for_nums)
         normalized_numbers = {n.replace(",", "").replace(".", "") for n in raw_numbers}
 
-        masked_text = re.sub(r"\b(không\s+(?:khí|gian|hàng|lực|phận|độ)|chân\s+không)\b", " ", clean_text)
+        masked_text = re.sub(r"\b(không\s+(?:khí|gian|hàng|lực|phận|độ|chỉ\s+định|cần)|chân\s+không|chưa\s+cấu\s+hình|nếu\s+không|khi\s+chưa|mà\s+không)\b", " ", clean_text)
         words = set(re.findall(r"\w+", masked_text))
         has_neg = bool(words.intersection(self.NEGATION_WORDS_VN) or words.intersection(self.NEGATION_WORDS_EN))
         entities = words.intersection(self.AI_CORE_ENTITIES)
@@ -245,8 +249,26 @@ class FactCheckJudge:
                 best_matched_kws = list(overlap_set)
 
         # 1. Phát hiện CONTRADICT
-        # TH A: Chia sẻ cùng chủ đề (score >= 0.18 hoặc overlap >= 3 từ khóa) nhưng mâu thuẫn phủ định
-        if (best_score >= 0.18 or best_overlap_count >= 3) and (claim_neg != best_ev_neg):
+        # TH A: Xung đột số liệu cụ thể (chỉ khi có xung đột trực tiếp trên cùng chỉ số định lượng)
+        # Nếu claim_nums khác best_ev_nums nhưng cùng chủ đề, xem là not_enough_info thay vì contradict để tránh loop retry sai lệch.
+        if claim_nums and best_ev_nums and (best_score >= 0.35 and best_overlap_count >= 4):
+            # Check if there is an explicit metric conflict (e.g., both contain %, ms, gb, point, etc.)
+            has_metric_symbol = any(m in claim.lower() for m in ["%", "point", "ms", "s", "node", "gb", "mb", "bước"])
+            if has_metric_symbol and not claim_nums.intersection(best_ev_nums):
+                return {
+                    "status": "contradict",
+                    "confidence": 0.85,
+                    "evidence": best_span,
+                    "matched_keywords": best_matched_kws,
+                    "reason": f"Xung đột số liệu định lượng: claim chứa {list(claim_nums)} nhưng evidence có {list(best_ev_nums)}."
+                }
+
+        # TH B: Chia sẻ cùng chủ đề nhưng mâu thuẫn phủ định trực tiếp
+        # Không xem là mâu thuẫn nếu:
+        # - Trùng khớp số liệu định lượng (common_nums), HOẶC
+        # - Điểm tương đồng rất cao (best_score >= 0.35 hoặc best_overlap_count >= 5)
+        has_common_nums = bool(claim_nums and claim_nums.intersection(best_ev_nums))
+        if (best_score >= 0.18 or best_overlap_count >= 3) and (claim_neg != best_ev_neg) and not has_common_nums and best_score < 0.35 and best_overlap_count < 5:
             return {
                 "status": "contradict",
                 "confidence": 0.88,
@@ -254,17 +276,6 @@ class FactCheckJudge:
                 "matched_keywords": best_matched_kws,
                 "reason": "Mâu thuẫn khẳng định/phủ định giữa luận điểm và chứng cứ."
             }
-
-        # TH B: Xung đột số liệu cụ thể
-        if claim_nums and best_ev_nums and (best_score >= 0.25 or best_overlap_count >= 3):
-            if not claim_nums.intersection(best_ev_nums):
-                return {
-                    "status": "contradict",
-                    "confidence": 0.85,
-                    "evidence": best_span,
-                    "matched_keywords": best_matched_kws,
-                    "reason": f"Xung đột số liệu: claim chứa {list(claim_nums)} nhưng evidence có {list(best_ev_nums)}."
-                }
 
         # 2. Phán quyết SUPPORT
         if best_score >= 0.25 or (claim_nums and claim_nums.intersection(best_ev_nums) and best_score >= 0.18):

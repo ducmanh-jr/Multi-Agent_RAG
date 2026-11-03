@@ -16,6 +16,7 @@ from core.schemas import SummarizerCriticOutput
 from core.state import AgentState, AtomicClaim, EvidenceSpan
 from core.verifier import ensure_inline_citations, evaluate_inner_critic_fast
 from utils.llm_client import llm_client
+from utils.domain_guard import check_out_of_domain, build_out_of_domain_response
 
 
 class GeminiSummarizerAgent(BaseAgent):
@@ -25,34 +26,36 @@ class GeminiSummarizerAgent(BaseAgent):
         super().__init__(name="GeminiSummarizerAgent", max_internal_retry=max_internal_retry)
 
     def run(self, state: AgentState) -> dict[str, Any]:
-        query = state.get("query", "")
+        query = state.get("query") or state.get("question", "")
         source_units = state.get("source_units", []) or []
         required_entities = state.get("required_entities", []) or []
 
-        # Kịch bản 2: Khi kho tài liệu không có văn bản nào phù hợp
-        if not source_units:
-            clean_q = query.strip()
-            no_doc_msg = (
-                f"Dựa trên các bài báo và tài liệu hiện có trong hệ thống, thông tin về \"{clean_q}\" "
-                f"**hoàn toàn không được đề cập**.\n\n"
-                f"💡 **Gợi ý**: Bạn có thể tải file PDF hoặc bài báo liên quan đến vấn đề này lên hệ thống "
-                f"để tôi có thể đọc và phân tích chi tiết cho bạn."
-            )
-            return {
-                "answer": no_doc_msg,
-                "claims": [{"id": "claim_1", "text": f"Tài liệu hiện có không đề cập đến '{clean_q}'.", "unit_id": None}],
-                "evidence_spans": [],
-                "critic_action": "approve",
-                "critic_feedback": "Approved: Out-of-domain / Document Miss",
-                "generator_model_family": "gemini_flash",
-                "reasoning_trace": [self.log_action("gemini_summarization_completed", {"status": "out_of_domain"})],
-            }
+        clean_q = query.strip()
+        is_ood, ood_reason = check_out_of_domain(clean_q, source_units)
+        if is_ood:
+            self.logger.info(f"[Gemini Summarizer] Zero-Hallucination Guard triggered: {ood_reason}")
+            res = build_out_of_domain_response(clean_q, model_family="gemini_flash")
+            trace = self.log_action("gemini_summarization_completed", {"status": "out_of_domain", "reason": ood_reason})
+            res["reasoning_trace"] = [trace]
+            return res
 
         self.logger.info(f"[Gemini Summarizer] Calling Gemini Flash for: '{query[:65]}' ({len(source_units)} units)")
 
         context_str, _ = pack_context_by_token_budget(source_units, max_tokens=6000)
 
-        prompt = f"""Bạn là Trợ lý AI Nghiên cứu Cấp cao & Thẩm định Bằng chứng (Gemini Intelligence Engine).
+        chat_context = ""
+        chat_history = state.get("chat_history") or []
+        if chat_history:
+            turns = []
+            for t in chat_history[-3:]:
+                r = "Người dùng" if t.get("role") == "user" else "Trợ lý AI"
+                c = (t.get("content") or "").strip()[:200]
+                if c:
+                    turns.append(f"{r}: {c}")
+            if turns:
+                chat_context = "\n[Ngữ cảnh trao đổi đa lượt trước đó]:\n" + "\n".join(turns) + "\n"
+
+        prompt = f"""Bạn là Trợ lý AI Nghiên cứu Cấp cao & Thẩm định Bằng chứng (Gemini Intelligence Engine).{chat_context}
 Nhiệm vụ: Dựa hoàn toàn vào Tài liệu nguồn dưới đây, hãy trả lời câu hỏi sau một cách chuẩn xác, trực diện, mạch lạc và tự nhiên như một Chatbot AI hàng đầu (như ChatGPT / NotebookLM):
 "{query}"
 
@@ -69,6 +72,10 @@ QUY TẮC TRẢ LỜI CỐT LÕI (BẮT BUỘC):
        "Dựa trên các bài báo/tài liệu hiện có trong hệ thống, thông tin về \"{query}\" **hoàn toàn không được đề cập**."
      + Thêm gợi ý: "💡 **Gợi ý**: Bạn có thể tải thêm file PDF hoặc bài báo liên quan đến vấn đề này lên hệ thống để tôi đọc và phân tích cho bạn."
      + Đặt "is_supported": true, "critic_action": "approve", "evidence_spans": [], "claims": [{{"text": "Tài liệu không đề cập đến thông tin này", "unit_id": None}}].
+5. KỊCH BẢN SO SÁNH / TỔNG HỢP NHIỀU TÀI LIỆU (MULTI-DOCUMENT COMPARISON):
+   - Khi ngữ cảnh có nhiều tài liệu và yêu cầu là so sánh, đối chiếu (/so-sanh) hoặc tóm tắt (/tom-tat):
+     + Nếu các tài liệu thuộc các chủ đề độc lập (ví dụ NGINX vs Môi trường): KHÔNG từ chối. Mở đầu bằng nhận định: "> **Đánh giá tương quan:** Các tài liệu được chọn thuộc **các chủ đề/lĩnh vực nghiên cứu độc lập**. Vì nội dung không cùng một hệ quy chiếu chuyên môn, hệ thống không áp đặt so sánh giả tạo, mà đối chiếu khách quan phạm vi và nội dung cốt lõi của từng tài liệu:".
+     + Tiếp theo, trình bày mạch lạc từng tài liệu: Tiêu đề, Nội dung cốt lõi, Chi tiết thực nghiệm/pháp lý, kèm số trang và trích dẫn [1], [2].
 
 Tài liệu nguồn:
 {context_str}
@@ -127,14 +134,11 @@ YÊU CẦU TRẢ VỀ ĐÚNG ĐỊNH DẠNG JSON HỢP LỆ (không kèm markdow
                     answer = re.sub(r'^\s*\{\s*"answer"\s*:\s*"?', "", clean_json).strip()
 
         if not answer:
-            fallback_raw = llm_client._mock_fallback(
-                f'Câu hỏi nghiên cứu: "{query}"\n{context_str}', json_mode=True
-            )
-            fb_data = json.loads(fallback_raw)
-            answer = fb_data.get("answer", "")
-            raw_spans = fb_data.get("evidence_spans", [])
-            raw_claims = fb_data.get("claims", [])
-            critic_out = evaluate_inner_critic_fast(query, answer, source_units, required_entities)
+            self.logger.warning("[Gemini Summarizer] Primary Gemini unavailable, engaging deterministic engine.")
+            from modes.cpu_min.summarizer import CPUMinSummarizerAgent
+            cpu_agent = CPUMinSummarizerAgent()
+            cpu_res = cpu_agent.run(state)
+            return cpu_res
 
         # Normalize claims and evidence_spans to strict state contracts
         claims = [

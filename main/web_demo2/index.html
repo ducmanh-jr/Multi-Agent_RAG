@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/demo2/style.css?v=20261103_v5_robust">
+  <link rel="stylesheet" href="/demo2/style.css?v=20261104_v26_real_papers_links">
 </head>
 <body>
   <div class="workspace-layout">
@@ -256,8 +256,8 @@
                         <button class="quick-select-btn split-main" data-mode="cpu_max" title="Áp dụng CPU Max cho toàn bộ 5 Agent">
                           CPU Max
                         </button>
-                        <button class="split-action-btn offline" id="ollamaToggleBtn" title="Bật server Ollama CPU (localhost:11434)">
-                          <span class="action-icon">⚡</span><span class="action-text">Bật</span>
+                        <button class="split-action-btn offline" id="ollamaToggleBtn" title="Chuyển trạng thái server Ollama CPU (localhost:11434)">
+                          <span class="action-text">OFF</span>
                         </button>
                       </div>
                       <button class="quick-select-btn" data-mode="kaggle_fn" title="Áp dụng Kaggle FN cho toàn bộ 5 Agent">
@@ -283,6 +283,23 @@
                       <button class="config-save-btn" id="saveKaggleBtn">Lưu</button>
                     </div>
                     <div class="config-help">Kết nối cụm GPU Dual T4 trên Kaggle để tăng tốc độ suy luận.</div>
+                  </div>
+
+                  <div class="matrix-divider"></div>
+
+                  
+                  <!-- Tùy chỉnh Vòng Lặp Tự Phản Biện & Đào Sâu (Autonomous Loops) -->
+                  <div class="reflection-loops-box">
+                    <div class="loops-label-row">
+                      <label class="config-label">Vòng lặp Tự Phản Biện &amp; Đào Sâu (Autonomous Loops):</label>
+                      <span class="loops-status-val" id="reflectionLoopsStatus">2 Vòng (Khuyên dùng)</span>
+                    </div>
+                    <div class="loops-btn-group">
+                      <button type="button" class="loop-select-btn" data-loops="1" title="1 vòng lặp: Tốc độ tức thì, phù hợp tra cứu nhanh">1x Nhanh</button>
+                      <button type="button" class="loop-select-btn active" data-loops="2" title="2 vòng lặp: Tự phản biện và truy hồi bù khuyết cân bằng">2x Cân Bằng</button>
+                      <button type="button" class="loop-select-btn" data-loops="3" title="3 vòng lặp: Tự đào sâu chuyên sâu, tối đa hóa độ chính xác">3x Chuyên Sâu</button>
+                    </div>
+                    <div class="config-help">Số vòng Agent tự động rà soát, phát hiện lỗ hổng tri thức và tìm kiếm bổ sung trước khi kết luận.</div>
                   </div>
 
                   <div class="matrix-divider"></div>
@@ -407,10 +424,17 @@
           <div class="sidecar-sub" id="evidenceCountBadge">0 trích dẫn đối soát</div>
         </div>
         <div class="sidecar-header-actions">
+          <a class="icon-btn-ghost" id="downloadDocBtn" href="#" download title="Tải xuống tệp bài báo này" style="display: none;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="7 10 12 15 17 10"></polyline>
+              <line x1="12" y1="15" x2="12" y2="3"></line>
+            </svg>
+          </a>
           <a class="icon-btn-ghost" id="openExternalPdfBtn" href="#" target="_blank" title="Mở bài báo trong tab mới" style="display: none;">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
           </a>
-          <button class="icon-btn-ghost" id="closeSidecarBtn" title="Đóng tab xem bài báo (Esc)">
+          <button class="icon-btn-ghost" id="closeSidecarBtn" title="Đóng bảng xem bài báo (Esc)">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
         </div>
@@ -419,11 +443,11 @@
       <div class="sidecar-tabs">
         <button class="tab-btn active" data-tab="pdfViewerTab" id="tabPdfBtn">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 4px; vertical-align: -2px;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
-          Bài Báo PDF Gốc
+          <span id="tabPdfLabel">Bài Báo / Tài Liệu Gốc</span>
         </button>
         <button class="tab-btn" data-tab="reportViewTab" id="tabReportBtn">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 4px; vertical-align: -2px;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
-          Báo Cáo Nghiên Cứu
+          Báo Cáo Thẩm Định (AI)
         </button>
         <button class="tab-btn" data-tab="evidenceTab" id="tabEvidenceBtn">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 4px; vertical-align: -2px;"><polyline points="9 11 12 14 22 4"></polyline><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>
@@ -432,8 +456,10 @@
       </div>
 
       <div class="tab-pane active" id="pdfViewerTab">
-        <div class="pdf-viewer-frame">
+        <div class="pdf-viewer-frame" id="pdfFrameWrapper" style="flex:1; height:100%;">
           <iframe id="pdfFrame" src="about:blank" frameborder="0"></iframe>
+        </div>
+        <div class="doc-markdown-viewer" id="docMdViewer" style="display: none; flex:1; height: 100%; overflow-y: auto; padding: 24px 28px; background: #ffffff;">
         </div>
       </div>
 
@@ -463,6 +489,6 @@
 
   </div>
 
-  <script src="/demo2/app.js?v=20261103_v5_robust"></script>
+  <script src="/demo2/app.js?v=20261104_v26_real_papers_links"></script>
 </body>
 </html>

@@ -22,6 +22,8 @@ import os
 
 import sqlite3
 
+import uuid
+
 from typing import Any, Optional
 
 
@@ -35,7 +37,36 @@ from utils.logger import logger
 DB_PATH = os.path.join(settings.BASE_DIR, "data", "workspace.db")
 
 
-
+def _migrate_orphan_runs(cursor: sqlite3.Cursor):
+    """Groups existing orphan runs that lack a session_id into sessions."""
+    try:
+        cursor.execute("SELECT id, question, created_at, document_id FROM research_runs WHERE session_id IS NULL ORDER BY created_at ASC")
+        orphans = cursor.fetchall()
+        if not orphans:
+            return
+        doc_session_map = {}
+        for r in orphans:
+            r_id = r["id"] if isinstance(r, sqlite3.Row) else r[0]
+            question = r["question"] if isinstance(r, sqlite3.Row) else r[1]
+            created_at = r["created_at"] if isinstance(r, sqlite3.Row) else r[2]
+            doc_id = r["document_id"] if isinstance(r, sqlite3.Row) else r[3]
+            s_key = doc_id or f"single_{r_id}"
+            if s_key not in doc_session_map:
+                sess_id = f"session_{uuid.uuid4().hex[:10]}"
+                clean_title = (question or "Cuộc trò chuyện").strip()
+                if clean_title.startswith("/"):
+                    clean_title = clean_title.lstrip("/").replace("-", " ").capitalize()
+                if len(clean_title) > 60:
+                    clean_title = clean_title[:57] + "..."
+                cursor.execute("""
+                    INSERT OR IGNORE INTO chat_sessions (id, title, created_at, updated_at, document_id)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (sess_id, clean_title or "Đoạn nghiên cứu", created_at, created_at, doc_id))
+                doc_session_map[s_key] = sess_id
+            target_sess_id = doc_session_map[s_key]
+            cursor.execute("UPDATE research_runs SET session_id = ? WHERE id = ?", (target_sess_id, r_id))
+    except Exception as e:
+        logger.warning(f"Session migration notice: {e}")
 
 
 def _create_tables(conn: sqlite3.Connection):
@@ -98,7 +129,9 @@ def _create_tables(conn: sqlite3.Connection):
 
             error TEXT,
 
-            document_id TEXT
+            document_id TEXT,
+
+            session_id TEXT
 
         );
     """)
@@ -106,6 +139,23 @@ def _create_tables(conn: sqlite3.Connection):
         cursor.execute("ALTER TABLE research_runs ADD COLUMN document_id TEXT")
     except Exception:
         pass
+    try:
+        cursor.execute("ALTER TABLE research_runs ADD COLUMN session_id TEXT")
+    except Exception:
+        pass
+
+    # 2b. Chat Sessions Table (Conversations / Đoạn chat)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS chat_sessions (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            document_id TEXT
+        );
+    """)
+
+    _migrate_orphan_runs(cursor)
 
 
 
@@ -308,80 +358,63 @@ def delete_document(doc_id: str) -> bool:
 
 
 def save_run(
-
     run_id: str,
-
     question: str,
-
     status: str = "processing",
-
     final_report: Optional[str] = None,
-
     verified_claims: list = None,
-
     rejected_claims: list = None,
-
     evidence_spans: list = None,
-
     reasoning_trace: list = None,
-
     error: Optional[str] = None,
-
     document_id: Optional[str] = None,
-
+    session_id: Optional[str] = None,
 ) -> dict[str, Any]:
-
     conn = get_db_connection()
-
     cursor = conn.cursor()
-
     now = datetime.datetime.now().isoformat()
 
+    if not session_id:
+        session_id = f"session_{uuid.uuid4().hex[:10]}"
 
+    cursor.execute("SELECT id FROM chat_sessions WHERE id = ?", (session_id,))
+    if not cursor.fetchone():
+        clean_title = (question or "Cuộc trò chuyện").strip()
+        if clean_title.startswith("/"):
+            clean_title = clean_title.lstrip("/").replace("-", " ").capitalize()
+        if len(clean_title) > 60:
+            clean_title = clean_title[:57] + "..."
+        cursor.execute("""
+            INSERT INTO chat_sessions (id, title, created_at, updated_at, document_id)
+            VALUES (?, ?, ?, ?, ?)
+        """, (session_id, clean_title or "Đoạn nghiên cứu", now, now, document_id))
+    else:
+        cursor.execute("""
+            UPDATE chat_sessions SET updated_at = ?, document_id = COALESCE(?, document_id) WHERE id = ?
+        """, (now, document_id, session_id))
 
     cursor.execute("""
-
         INSERT OR REPLACE INTO research_runs (
-
             id, question, status, created_at, final_report,
-
-            verified_claims, rejected_claims, evidence_spans, reasoning_trace, error, document_id
-
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-
+            verified_claims, rejected_claims, evidence_spans, reasoning_trace, error, document_id, session_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
-
         run_id,
-
         question,
-
         status,
-
         now,
-
         final_report,
-
         json.dumps(verified_claims or [], ensure_ascii=False),
-
         json.dumps(rejected_claims or [], ensure_ascii=False),
-
         json.dumps(evidence_spans or [], ensure_ascii=False),
-
         json.dumps(reasoning_trace or [], ensure_ascii=False),
-
         error,
-
         document_id,
-
+        session_id,
     ))
 
-
-
     conn.commit()
-
     conn.close()
-
-
 
     return get_run(run_id)
 
@@ -499,7 +532,7 @@ def list_runs() -> list[dict[str, Any]]:
 
     cursor = conn.cursor()
 
-    cursor.execute("SELECT * FROM research_runs ORDER BY created_at DESC")
+    cursor.execute("SELECT * FROM research_runs ORDER BY created_at DESC, rowid DESC")
 
     rows = cursor.fetchall()
 
@@ -555,6 +588,102 @@ def clear_all_runs() -> int:
 
 
 
+
+
+
+
+# ==================== CHAT SESSION OPERATIONS ====================
+
+def create_session(session_id: str, title: str, document_id: Optional[str] = None) -> dict[str, Any]:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    now = datetime.datetime.now().isoformat()
+    cursor.execute("""
+        INSERT OR REPLACE INTO chat_sessions (id, title, created_at, updated_at, document_id)
+        VALUES (?, ?, ?, ?, ?)
+    """, (session_id, title, now, now, document_id))
+    conn.commit()
+    conn.close()
+    return get_session(session_id)
+
+
+def get_session(session_id: str) -> Optional[dict[str, Any]]:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM chat_sessions WHERE id = ?", (session_id,))
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        return None
+    return dict(row)
+
+
+def list_sessions() -> list[dict[str, Any]]:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT s.id, s.title, s.created_at, s.updated_at, s.document_id,
+               COUNT(r.id) as message_count
+        FROM chat_sessions s
+        LEFT JOIN research_runs r ON s.id = r.session_id
+        GROUP BY s.id
+        ORDER BY s.updated_at DESC, s.created_at DESC
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def rename_session(session_id: str, new_title: str) -> bool:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    now = datetime.datetime.now().isoformat()
+    cursor.execute("""
+        UPDATE chat_sessions SET title = ?, updated_at = ? WHERE id = ?
+    """, (new_title.strip(), now, session_id))
+    updated = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return updated
+
+
+def delete_session(session_id: str) -> bool:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM chat_sessions WHERE id = ?", (session_id,))
+    cursor.execute("DELETE FROM research_runs WHERE session_id = ?", (session_id,))
+    deleted = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return deleted
+
+
+def clear_all_sessions() -> int:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM chat_sessions")
+    cursor.execute("DELETE FROM research_runs")
+    count = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return count
+
+
+def get_session_runs(session_id: str) -> list[dict[str, Any]]:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM research_runs WHERE session_id = ? ORDER BY created_at ASC", (session_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    result = []
+    for row in rows:
+        d = dict(row)
+        d["verified_claims"] = json.loads(d.get("verified_claims") or "[]")
+        d["rejected_claims"] = json.loads(d.get("rejected_claims") or "[]")
+        d["evidence_spans"] = json.loads(d.get("evidence_spans") or "[]")
+        d["reasoning_trace"] = json.loads(d.get("reasoning_trace") or "[]")
+        result.append(d)
+    return result
 
 
 # ==================== LLM CACHE OPERATIONS ====================

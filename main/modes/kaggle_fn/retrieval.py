@@ -115,8 +115,18 @@ class KaggleFNRetrievalAgent(BaseAgent):
             if res_bm25:
                 candidate_lists.append(res_bm25)
 
+        is_summary_query = any(
+            w in query.lower()
+            for w in [
+                "tóm tắt", "tổng quan", "nội dung chính", "chính", "summary", "overview",
+                "abstract", "giới thiệu", "phương pháp", "kết quả", "đóng góp", "2 bài báo",
+                "các bài báo", "nói về gì", "nói về cái gì", "/tom-tat", "tom-tat",
+                "so sánh", "đối chiếu", "so sanh", "doi chieu", "khác nhau", "khác biệt", "so-sanh", "so_sanh", "compare", "/so-sanh"
+            ]
+        ) or bool(state.get("is_comparative_query") or state.get("intent") == "compare")
+
         fused = reciprocal_rank_fusion(candidate_lists, top_n=top_k + 2) if candidate_lists else []
-        if not fused and active_pool:
+        if not fused and active_pool and is_summary_query:
             fused = active_pool[: min(top_k, len(active_pool))]
 
         # 3. Entity priority boost

@@ -244,6 +244,9 @@ class AgentState(TypedDict, total=False):
 
     # 7. Orchestration & Budget Controls
     retry_count: int
+    max_reflection_loops: int
+    chat_history: list[dict[str, str]]
+    query_with_context: Optional[str]
     factcheck_calls: int
     confidence: Literal["high", "low"]
     no_new_evidence: bool

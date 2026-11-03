@@ -94,7 +94,7 @@ def load_generator_model():
     model = AutoModelForCausalLM.from_pretrained(
         model_id,
         quantization_config=bnb_config,
-        device_map={" ": 0} if torch.cuda.device_count() >= 1 else "auto",
+        device_map={"": 0} if torch.cuda.device_count() >= 1 else "auto",
         torch_dtype=torch.float16,
         trust_remote_code=True,
     )
@@ -193,7 +193,7 @@ def load_verifier_model():
     model = AutoModelForCausalLM.from_pretrained(
         model_id,
         quantization_config=bnb_config,
-        device_map={" ": target_device},
+        device_map={"": target_device},
         torch_dtype=torch.float16,
         trust_remote_code=True,
     )
@@ -225,8 +225,9 @@ class SummarizeRequest(BaseModel):
 class CriticRequest(BaseModel):
     context: str
     question: str
-    answer: str
-    evidence_spans: list[str]
+    answer: Optional[str] = ""
+    generated_summary: Optional[str] = None
+    evidence_spans: Optional[list[Any]] = []
 
 
 class RouterRequest(BaseModel):
@@ -306,6 +307,48 @@ def _run_inference(model, tokenizer, prompt: str, system_prompt: Optional[str] =
         ]
         return tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
 
+
+
+class RouterRequest(BaseModel):
+    query: str
+    adapter: Optional[str] = "router"
+
+@app.post("/api/router")
+def router_endpoint(req: RouterRequest):
+    """Specialized Retrieval Router endpoint using fine-tuned Router QLoRA."""
+    model, tokenizer = load_generator_model()
+    if model is None or tokenizer is None:
+        return {
+            "intent": "academic_research",
+            "sub_queries": [req.query],
+            "alpha": 0.65,
+            "top_k": 6,
+            "reasoning": "Local fallback plan."
+        }
+    system_prompt = (
+        "You are an intelligent routing agent for an Academic RAG system. "
+        "Analyze the user query and output a JSON object with: intent, sub_queries, alpha, top_k, and reasoning."
+    )
+    raw_output = _run_inference(
+        model, tokenizer,
+        prompt=req.query,
+        system_prompt=system_prompt,
+        max_tokens=256,
+        temperature=0.1,
+        adapter_name="router" if "router" in _loaded_adapters else None,
+    )
+    try:
+        cleaned = re.sub(r"^```json\s*", "", raw_output.strip(), flags=re.MULTILINE)
+        cleaned = re.sub(r"```$", "", cleaned.strip(), flags=re.MULTILINE)
+        return json.loads(cleaned)
+    except Exception:
+        return {
+            "intent": "academic_research",
+            "sub_queries": [req.query],
+            "alpha": 0.65,
+            "top_k": 6,
+            "reasoning": raw_output[:100]
+        }
 
 @app.post("/generate")
 @app.post("/api/generate")

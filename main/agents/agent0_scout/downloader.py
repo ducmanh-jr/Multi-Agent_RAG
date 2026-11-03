@@ -78,19 +78,24 @@ def download_and_register_paper(paper: dict[str, Any], timeout: int = 25) -> dic
     doc_id = paper.get("id") or f"doc_{arxiv_id}"
 
     # Register into SQLite workspace.db
+    source_url = paper.get("source_url") or f"https://arxiv.org/abs/{arxiv_id}"
+    internal_pdf_url = f"/api/documents/{doc_id}/file"
     metadata = {
         "title": title,
         "authors": paper.get("authors", []),
         "year": paper.get("year", 2024),
         "source": paper.get("source", "arXiv"),
+        "source_url": source_url,
         "abstract": paper.get("abstract", "")[:500],
-        "pdf_url": pdf_url,
+        "pdf_url": internal_pdf_url,
+        "has_pdf": True,
         "auto_scouted": True,
+        "doc_type": "pdf"
     }
     
     save_document(
         doc_id=doc_id,
-        name=f"[{paper.get('year', 2024)}] {title}",
+        name=f"[{paper.get('year', 2024)}] {title}.pdf",
         path=local_path,
         size=file_size,
         doc_type="pdf",
@@ -103,4 +108,8 @@ def download_and_register_paper(paper: dict[str, Any], timeout: int = 25) -> dic
     result["local_pdf_path"] = local_path
     result["doc_id"] = doc_id
     result["file_size"] = file_size
+    result["has_pdf"] = True
+    result["pdf_url"] = internal_pdf_url
+    result["source_url"] = source_url
+    result["doc_type"] = "pdf"
     return result

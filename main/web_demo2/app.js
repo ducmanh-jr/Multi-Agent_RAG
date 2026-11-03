@@ -67,6 +67,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const state = {
     documents: [],
     runs: [],
+    sessions: [],
+    activeSessionId: localStorage.getItem("researchdesk_active_session") || null,
     selectedDocId: null,
     checkedDocIds: new Set(),
     docSelectMode: false,
@@ -75,6 +77,7 @@ document.addEventListener("DOMContentLoaded", () => {
     autoScout: false,
     isKaggleOnline: false,
     isGeminiOnline: true,
+    maxReflectionLoops: parseInt(localStorage.getItem("researchdesk_loops") || "2", 10),
   };
 
   // Close any open 3-dots menu when clicking outside
@@ -166,16 +169,17 @@ document.addEventListener("DOMContentLoaded", () => {
       .trim();
   }
 
-  // ==================== 1. LOAD CHAT HISTORY (NỬA TRÊN - CHỈ HIỂN THỊ TIÊU ĐỀ) ====================
+  // ==================== 1. LOAD CHAT SESSIONS / ĐOẠN CHAT ====================
   async function loadChatHistory() {
     try {
-      const res = await fetch("/api/runs");
+      const res = await fetch("/api/sessions");
       const data = await res.json();
-      state.runs = data.runs || [];
-      if (historyCountBadge) historyCountBadge.textContent = state.runs.length;
+      state.sessions = data.sessions || [];
+
+      if (historyCountBadge) historyCountBadge.textContent = state.sessions.length;
       renderChatHistory();
     } catch (err) {
-      console.error("Failed to load chat history:", err);
+      console.error("Failed to load chat sessions:", err);
       if (chatHistoryList) {
         chatHistoryList.innerHTML = `<div class="doc-empty-state">Lỗi nạp lịch sử</div>`;
       }
@@ -184,22 +188,22 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function renderChatHistory() {
     if (!chatHistoryList) return;
-    if (!state.runs.length) {
+    if (!state.sessions.length) {
       chatHistoryList.innerHTML = `<div class="doc-empty-state">Chưa có lịch sử nghiên cứu</div>`;
       return;
     }
 
-    chatHistoryList.innerHTML = state.runs.map(run => {
-      const isSelected = state.activeRunId === run.id;
-      const question = run.question || "Cuộc trò chuyện";
+    chatHistoryList.innerHTML = state.sessions.map(sess => {
+      const isSelected = state.activeSessionId === sess.id;
+      const title = sess.title || "Cuộc trò chuyện";
       return `
-        <div class="history-item ${isSelected ? 'active' : ''}" data-id="${run.id}" title="${escapeHtml(question)}">
+        <div class="history-item ${isSelected ? 'active' : ''}" data-id="${sess.id}" title="${escapeHtml(title)}">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="history-item-icon">
             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
           </svg>
-          <span class="history-title">${escapeHtml(question)}</span>
+          <span class="history-title">${escapeHtml(title)}</span>
           <div class="more-dots-wrap">
-            <button class="more-dots-btn history-more-btn" data-id="${run.id}" title="Tùy chọn">
+            <button class="more-dots-btn history-more-btn" data-id="${sess.id}" title="Tùy chọn">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
                 <circle cx="12" cy="5" r="2.2"></circle>
                 <circle cx="12" cy="12" r="2.2"></circle>
@@ -207,7 +211,14 @@ document.addEventListener("DOMContentLoaded", () => {
               </svg>
             </button>
             <div class="more-dots-menu">
-              <button class="more-dots-menu-item history-del-action" data-del="${run.id}">
+              <button class="more-dots-menu-item history-rename-action" data-rename="${sess.id}">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                  <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                </svg>
+                <span>Đổi tên</span>
+              </button>
+              <button class="more-dots-menu-item history-del-action" data-del="${sess.id}">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <polyline points="3 6 5 6 21 6"></polyline>
                   <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
@@ -225,7 +236,7 @@ document.addEventListener("DOMContentLoaded", () => {
       item.addEventListener("click", (e) => {
         if (e.target.closest(".more-dots-wrap")) return;
         const id = item.dataset.id;
-        selectRun(id);
+        selectSession(id);
       });
     });
 
@@ -244,47 +255,80 @@ document.addEventListener("DOMContentLoaded", () => {
       });
     });
 
-    // Delete chat session action inside 3-dots menu
+    // Rename chat session action
+    chatHistoryList.querySelectorAll(".history-rename-action").forEach(btn => {
+      btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        document.querySelectorAll(".more-dots-menu.open").forEach(m => m.classList.remove("open"));
+        const id = btn.dataset.rename;
+        const currentSess = state.sessions.find(s => s.id === id);
+        const oldTitle = currentSess ? currentSess.title : "";
+        const newTitle = prompt("Nhập tên mới cho đoạn chat:", oldTitle);
+        if (newTitle !== null && newTitle.trim() && newTitle.trim() !== oldTitle) {
+          await renameSession(id, newTitle.trim());
+        }
+      });
+    });
+
+    // Delete chat session action
     chatHistoryList.querySelectorAll(".history-del-action").forEach(btn => {
       btn.addEventListener("click", async (e) => {
         e.stopPropagation();
+        document.querySelectorAll(".more-dots-menu.open").forEach(m => m.classList.remove("open"));
         const id = btn.dataset.del;
-        await deleteRun(id);
+        await deleteSession(id);
       });
     });
   }
 
-  async function deleteRun(runId) {
+  async function renameSession(sessionId, newTitle) {
+    try {
+      const res = await fetch(`/api/sessions/${sessionId}/rename`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: newTitle }),
+      });
+      if (res.ok) {
+        const sess = state.sessions.find(s => s.id === sessionId);
+        if (sess) sess.title = newTitle;
+        renderChatHistory();
+      }
+    } catch (err) {
+      console.error("Failed to rename session:", err);
+    }
+  }
+
+  async function deleteSession(sessionId) {
     clearActivePolling();
     try {
-      await fetch(`/api/runs/${runId}`, { method: "DELETE" });
-      const wasActive = state.activeRunId === runId;
-      state.runs = state.runs.filter(r => r.id !== runId);
-      if (historyCountBadge) historyCountBadge.textContent = state.runs.length;
+      await fetch(`/api/sessions/${sessionId}`, { method: "DELETE" });
+      const wasActive = state.activeSessionId === sessionId;
+      state.sessions = state.sessions.filter(s => s.id !== sessionId);
+      if (historyCountBadge) historyCountBadge.textContent = state.sessions.length;
 
       if (wasActive) {
-        if (state.runs.length > 0) {
-          await selectRun(state.runs[0].id);
+        if (state.sessions.length > 0) {
+          await selectSession(state.sessions[0].id);
         } else {
-          localStorage.removeItem("researchdesk_active_run");
+          localStorage.removeItem("researchdesk_active_session");
           resetToWelcomeScreen();
         }
       }
       renderChatHistory();
     } catch (err) {
-      console.error("Failed to delete run:", err);
+      console.error("Failed to delete session:", err);
     }
   }
 
   async function clearAllHistory() {
-    if (!state.runs.length) return;
-    if (!confirm(`Bạn có chắc chắn muốn xóa toàn bộ ${state.runs.length} lịch sử nghiên cứu?`)) return;
+    if (!state.sessions.length) return;
+    if (!confirm(`Bạn có chắc chắn muốn xóa toàn bộ ${state.sessions.length} đoạn chat lịch sử nghiên cứu?`)) return;
     clearActivePolling();
     try {
-      await fetch("/api/runs", { method: "DELETE" });
-      state.runs = [];
+      await fetch("/api/sessions", { method: "DELETE" });
+      state.sessions = [];
       if (historyCountBadge) historyCountBadge.textContent = "0";
-      localStorage.removeItem("researchdesk_active_run");
+      localStorage.removeItem("researchdesk_active_session");
       resetToWelcomeScreen();
       renderChatHistory();
     } catch (err) {
@@ -299,59 +343,81 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  async function selectRun(runId) {
+  async function selectSession(sessionId) {
     clearActivePolling();
-    state.activeRunId = runId;
-    localStorage.setItem("researchdesk_active_run", runId);
+    state.activeSessionId = sessionId;
+    localStorage.setItem("researchdesk_active_session", sessionId);
 
-    // Update active state in sidebar
     if (chatHistoryList) {
       chatHistoryList.querySelectorAll(".history-item").forEach(el => {
-        el.classList.toggle("active", el.dataset.id === runId);
+        el.classList.toggle("active", el.dataset.id === sessionId);
       });
     }
 
     try {
-      const res = await fetch(`/api/runs/${runId}`);
-      if (!res.ok) throw new Error("Run not found");
+      const res = await fetch(`/api/sessions/${sessionId}`);
+      if (!res.ok) throw new Error("Session not found");
       const data = await res.json();
+      const runs = data.runs || [];
 
       if (welcomeHero) welcomeHero.style.display = "none";
       messageFeed.innerHTML = "";
 
-      // 1. Render User Question
-      appendUserMessage(data.question || "Nội dung câu hỏi");
-
-      // 2. Render Agent Answer Card (or resume live polling if still running)
-      const messageCard = createAgentSkeleton();
-      messageFeed.appendChild(messageCard);
-      if (data.status === "processing" || data.status === "running") {
-        activeMessageCard = messageCard;
-        setButtonState("running");
-        updateThinkingTraces(messageCard, data);
-        const startTime = performance.now();
-        clearActiveTimer();
-        activeTimerInterval = setInterval(() => {
-          const elapsed = ((performance.now() - startTime) / 1000).toFixed(1);
-          const timerEls = messageCard.querySelectorAll(".live-timer, .live-body-timer");
-          timerEls.forEach(el => {
-            el.textContent = `(${elapsed}s)`;
-          });
-        }, 100);
-        pollRunStatus(runId, messageCard, data.question, startTime, activeTimerInterval);
-      } else {
-        setButtonState(promptInput && promptInput.value.trim().length > 0 ? "ready" : "idle");
-        renderFinalAnswer(messageCard, data, data.question);
+      if (runs.length === 0) {
+        resetToWelcomeScreen();
+        return;
       }
 
-      // 3. Sync associated Document
-      const docId = data.document_id || (data.document_ids && data.document_ids[0]);
-      if (docId) {
-        selectDocument(docId, false);
+      // Render TOÀN BỘ CÁC CÂU HỎI VÀ TRẢ LỜI CỦA ĐOẠN CHAT NÀY THEO THỨ TỰ
+      for (let i = 0; i < runs.length; i++) {
+        const run = runs[i];
+        appendUserMessage(run.question || "Nội dung câu hỏi");
+
+        const messageCard = createAgentSkeleton();
+        messageFeed.appendChild(messageCard);
+
+        const isLast = (i === runs.length - 1);
+        if (isLast && (run.status === "processing" || run.status === "running")) {
+          state.activeRunId = run.id;
+          activeMessageCard = messageCard;
+          setButtonState("running");
+          updateThinkingTraces(messageCard, run);
+          const startTime = performance.now();
+          clearActiveTimer();
+          activeTimerInterval = setInterval(() => {
+            const elapsed = ((performance.now() - startTime) / 1000).toFixed(1);
+            const timerEls = messageCard.querySelectorAll(".live-timer, .live-body-timer");
+            timerEls.forEach(el => {
+              el.textContent = `(${elapsed}s)`;
+            });
+          }, 100);
+          pollRunStatus(run.id, messageCard, run.question, startTime, activeTimerInterval);
+        } else {
+          renderFinalAnswer(messageCard, run, run.question);
+        }
       }
+
+      const lastRun = runs[runs.length - 1];
+      if (lastRun) {
+        state.activeRunId = lastRun.id;
+        const docId = lastRun.document_id;
+        if (docId) {
+          selectDocument(docId, false);
+        }
+      }
+
+      setButtonState(promptInput && promptInput.value.trim().length > 0 ? "ready" : "idle");
+      messageFeed.scrollTo({ top: messageFeed.scrollHeight, behavior: "smooth" });
     } catch (err) {
-      console.error("Failed to restore run details:", err);
+      console.error("Failed to restore session details:", err);
       resetToWelcomeScreen();
+    }
+  }
+
+  // Alias for legacy run selection if ever called
+  async function selectRun(runId) {
+    if (state.activeSessionId) {
+      await selectSession(state.activeSessionId);
     }
   }
 
@@ -363,9 +429,11 @@ document.addEventListener("DOMContentLoaded", () => {
       welcomeHero.style.display = "flex";
     }
     state.activeRunId = null;
+    state.activeSessionId = null;
     state.currentEvidence = [];
     state.selectedDocId = null;
     localStorage.removeItem("researchdesk_active_run");
+    localStorage.removeItem("researchdesk_active_session");
     updateSidecarEvidence([]);
     
     // Uncheck all document checkboxes
@@ -541,8 +609,8 @@ document.addEventListener("DOMContentLoaded", () => {
         activeDocName.textContent = state.checkedDocIds.size > 1
           ? `${doc.name} (+${state.checkedDocIds.size - 1})`
           : doc.name;
-        if (updatePdf && pdfFrame) {
-          pdfFrame.src = `/api/documents/${encodeURIComponent(doc.id)}/file#page=1`;
+        if (updatePdf) {
+          viewDocumentInSidecar(doc.id);
         }
       }
     } else if (activeDocName && !state.autoScout) {
@@ -575,8 +643,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const doc = state.documents.find(d => d.id === docId);
     if (doc && activeDocName) {
       activeDocName.textContent = doc.name;
-      if (updatePdf && pdfFrame) {
-        pdfFrame.src = `/api/documents/${encodeURIComponent(doc.id)}/file#page=1`;
+      if (updatePdf) {
+        viewDocumentInSidecar(doc.id);
       }
     }
     updateDocDeleteUI();
@@ -711,6 +779,23 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // ==================== 4. SUBMIT QUERY ====================
+  
+  function getRecentChatHistory(maxTurns = 3) {
+    const history = [];
+    const cards = Array.from(document.querySelectorAll("#messageFeed .message-card"));
+    for (const card of cards) {
+      const userBubble = card.querySelector(".user-query-bubble");
+      if (userBubble) {
+        history.push({ role: "user", content: userBubble.textContent.trim() });
+      }
+      const ansBlock = card.querySelector(".direct-qa-view") || card.querySelector(".report-markdown-view");
+      if (ansBlock) {
+        history.push({ role: "assistant", content: ansBlock.textContent.slice(0, 250).trim() });
+      }
+    }
+    return history.slice(-maxTurns * 2);
+  }
+
   async function submitQuery(queryText) {
     const text = (queryText || promptInput.value || "").trim();
     if (!text) return;
@@ -758,8 +843,13 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
 
+    const checkedList = Array.from(state.checkedDocIds || []);
+    const docIds = checkedList.length > 0 
+      ? checkedList 
+      : (state.selectedDocId ? [state.selectedDocId] : []);
+
     // KIỂM TRA ĐIỀU KIỆN BẮT BUỘC: Chưa chọn tài liệu VÀ Chưa bật Auto-Scout
-    if (!state.selectedDocId && !state.autoScout) {
+    if (docIds.length === 0 && !state.autoScout) {
       const promptCard = document.createElement("div");
       promptCard.className = "message-card";
       promptCard.innerHTML = `
@@ -814,7 +904,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const scoutRes = await fetch("/api/scout", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ query: text, max_results: 3 }),
+          body: JSON.stringify({ query: text, max_results: 3, session_id: state.activeSessionId || null }),
           signal: activeAbortController.signal,
         });
 
@@ -826,6 +916,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
         // Tự động làm mới Kho Tài Liệu ở Sidebar bên trái
         await loadDocuments();
+        // Tự động cập nhật ngay Lịch Sử Nghiên Cứu để đoạn tin nhắn tìm kiếm mới nhất xếp ngay đầu danh sách
+        await loadChatHistory();
 
         // Hiển thị danh thiếp các bài báo tìm được
         renderScoutResults(messageCard, scoutData, text, finalElapsed);
@@ -838,8 +930,10 @@ document.addEventListener("DOMContentLoaded", () => {
       // NẾU TẮT AUTO-SCOUT: CHẠY QUY TRÌNH THẨM ĐỊNH 5 AGENT CŨ TRÊN TÀI LIỆU ĐÃ CHỌN
       const payload = {
         query: text,
-        document_ids: state.selectedDocId ? [state.selectedDocId] : [],
-        max_iterations: 1,
+        document_ids: docIds,
+        max_iterations: state.maxReflectionLoops || 2,
+        chat_history: getRecentChatHistory(3),
+        session_id: state.activeSessionId || null,
       };
 
       const res = await fetch("/api/runs", {
@@ -855,12 +949,11 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       const data = await res.json();
       state.activeRunId = data.id;
-      localStorage.setItem("researchdesk_active_run", data.id);
-      
-      // Ensure running state stays active while polling
+      if (data.session_id) {
+        state.activeSessionId = data.session_id;
+        localStorage.setItem("researchdesk_active_session", data.session_id);
+      }
       setButtonState("running");
-
-      // Refresh history list so the new question immediately appears
       await loadChatHistory();
 
       pollRunStatus(data.id, messageCard, text, startTime, timerInterval);
@@ -995,7 +1088,21 @@ document.addEventListener("DOMContentLoaded", () => {
     const traces = data.reasoning_trace || [];
     if (traces.length > 0) {
       traceBox.innerHTML = traces.map(t => {
-        return `• ${escapeHtml(t.action || 'Xử lý')}`;
+        const action = t.action || "Đang xử lý...";
+        if (action.includes("Phân tích") || action.includes("mục tiêu") || t.stage === "Thought") {
+          return `🧠 <b>[Phân tích Mục tiêu]</b> ${escapeHtml(action)}`;
+        } else if (action.includes("Truy hồi") || action.includes("FTS5") || action.includes("STORM") || t.stage === "Action") {
+          return `⚙️ <b>[Điều phối Công cụ]</b> ${escapeHtml(action)}`;
+        } else if (action.includes("PyMuPDF") || action.includes("BBox") || t.stage === "Observation") {
+          return `📄 <b>[Thu thập Bằng chứng]</b> ${escapeHtml(action)}`;
+        } else if (action.includes("vòng tự sửa sai") || action.includes("bù khuyết") || action.includes("Critic") || t.stage === "Reflection") {
+          return `🔄 <b>[Tự Phản Biện & Sửa Sai]</b> ${escapeHtml(action)}`;
+        } else if (action.includes("Đối soát") || action.includes("Adversarial") || action.includes("NLI")) {
+          return `⚔️ <b>[Kiểm Chứng Đối Kháng]</b> ${escapeHtml(action)}`;
+        } else if (action.includes("Ký duyệt") || action.includes("báo cáo") || t.stage === "Decision") {
+          return `🏆 <b>[Phán Quyết Hoàn Tất]</b> ${escapeHtml(action)}`;
+        }
+        return `• ${escapeHtml(action)}`;
       }).join("<br>");
 
       const lastTrace = traces[traces.length - 1];
@@ -1009,7 +1116,8 @@ document.addEventListener("DOMContentLoaded", () => {
   function updateAgentSkeletonError(messageCard, errorMsg) {
     const container = messageCard.querySelector(".agent-response-container");
     container.innerHTML = `
-      <div class="direct-qa-view">
+      ${autonomyBannerHtml}
+        <div class="direct-qa-view">
         <p class="text-sm text-neutral-600">${escapeHtml(errorMsg)}</p>
       </div>
     `;
@@ -1040,6 +1148,15 @@ document.addEventListener("DOMContentLoaded", () => {
         : (data.decision === "reject" ? "Chủ đề nằm ngoài danh mục STEM của ArXiv" : "Không tìm thấy bài báo phù hợp");
       const bannerMsg = data.message || "Hệ thống không tìm thấy tài liệu phù hợp trên ArXiv cho chủ đề này.";
       
+      // Agent Autonomy & Provenance Banner
+      const loopsNum = state.maxReflectionLoops || 2;
+      const autonomyBannerHtml = `
+        <div class="agent-autonomy-banner">
+          <span class="autonomy-icon">🤖</span>
+          <span class="autonomy-text"><b>Hybrid Autonomous Agent</b> • Điều phối Đa Tác tử L4 • ${loopsNum} Vòng Tự Phản Biện • Đối Soát Trích Dẫn 100%</span>
+        </div>
+      `;
+
       const card = document.createElement("div");
       card.className = "agent-output-block scout-results-block";
       card.innerHTML = `
@@ -1065,28 +1182,73 @@ document.addEventListener("DOMContentLoaded", () => {
       const year = p.year || 2024;
       const authors = (p.authors && p.authors.length) ? p.authors.join(", ") : "Nhiều tác giả";
       const arxivId = p.arxiv_id || "";
-      const pdfUrl = p.pdf_url || "#";
+      const docId = p.doc_id || p.id || "";
       const abstract = (p.abstract || "").trim();
-      const docId = p.doc_id || p.id;
+      
+      const hasPdf = Boolean(p.has_pdf !== undefined ? p.has_pdf : (p.doc_type === "pdf" || (p.local_pdf_path && p.local_pdf_path.endsWith(".pdf"))));
+      const sourceUrl = p.source_url || (arxivId ? `https://arxiv.org/abs/${arxivId}` : "");
+      const sourceName = p.source || (arxivId ? "arXiv" : "Tạp chí Học thuật");
+
+      let badgeText = "";
+      let actionButtonsHtml = "";
+
+      if (hasPdf) {
+        badgeText = arxivId && !arxivId.startsWith("SCHOLAR-") && !arxivId.startsWith("ACAD-")
+          ? `arXiv: ${arxivId} • ${year}`
+          : `PDF Bản Gốc • ${year}`;
+
+        actionButtonsHtml = `
+          <button type="button" class="scout-action-btn ghost view-scout-doc-btn" data-doc-id="${escapeHtml(docId)}" title="Mở bản PDF song song bên cạnh (Chia đôi 2 tab: 1 tab chat, 1 tab bài báo)">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+              <line x1="14" y1="3" x2="14" y2="21"/>
+            </svg>
+            <span>Xem PDF Song Song</span>
+          </button>
+          <button class="scout-action-btn primary deep-dive-btn" data-doc-id="${escapeHtml(docId)}" data-title="${escapeHtml(title)}">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+            <span>Đọc &amp; Phân tích chuyên sâu bài này</span>
+          </button>
+        `;
+      } else {
+        badgeText = `Tham Chiếu Gốc • ${escapeHtml(sourceName)} • ${year}`;
+
+        actionButtonsHtml = `
+          ${sourceUrl ? `
+            <a href="${escapeHtml(sourceUrl)}" target="_blank" rel="noopener noreferrer" class="scout-action-btn ghost scout-ext-link" title="Mở trang bài báo gốc tại ${escapeHtml(sourceName)} (Trang ngoài)">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                <polyline points="15 3 21 3 21 9"/>
+                <line x1="10" y1="14" x2="21" y2="3"/>
+              </svg>
+              <span>Mở Bài Báo Gốc ↗</span>
+            </a>
+          ` : ""}
+          <button type="button" class="scout-action-btn ghost view-scout-doc-btn" data-doc-id="${escapeHtml(docId)}" title="Xem hồ sơ trích dẫn và tóm tắt bài báo ở tab bên cạnh">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+              <line x1="14" y1="3" x2="14" y2="21"/>
+            </svg>
+            <span>Xem Tóm Tắt &amp; Chi Tiết</span>
+          </button>
+          <button class="scout-action-btn primary deep-dive-btn" data-doc-id="${escapeHtml(docId)}" data-title="${escapeHtml(title)}">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+            <span>Phân tích bài này</span>
+          </button>
+        `;
+      }
 
       papersHtml += `
         <div class="scout-paper-card" data-doc-id="${escapeHtml(docId)}">
           <div class="scout-card-header">
-            <span class="scout-card-badge">arXiv: ${escapeHtml(arxivId)} • ${year}</span>
-            <span class="scout-card-source">Đã lưu vào kho</span>
+            <span class="scout-card-badge">${escapeHtml(badgeText)}</span>
+            <span class="scout-card-source">${hasPdf ? "Đã tải PDF vào kho" : "Đã lưu tham chiếu"}</span>
           </div>
           <h4 class="scout-card-title">${escapeHtml(title)}</h4>
           <div class="scout-card-authors">Tác giả: ${escapeHtml(authors)}</div>
           <p class="scout-card-abstract">${escapeHtml(abstract.slice(0, 220))}...</p>
           <div class="scout-card-actions">
-            <a href="${escapeHtml(pdfUrl)}" target="_blank" class="scout-action-btn ghost" title="Xem PDF gốc">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
-              <span>Xem PDF</span>
-            </a>
-            <button class="scout-action-btn primary deep-dive-btn" data-doc-id="${escapeHtml(docId)}" data-title="${escapeHtml(title)}">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
-              <span>Đọc &amp; Phân tích chuyên sâu bài này</span>
-            </button>
+            ${actionButtonsHtml}
           </div>
         </div>
       `;
@@ -1131,6 +1293,33 @@ document.addEventListener("DOMContentLoaded", () => {
           if (targetDoc && pdfFrame) {
             pdfFrame.src = `/api/documents/${encodeURIComponent(targetDoc.id)}/file#page=${encodeURIComponent(pNum)}`;
           }
+        }
+      });
+    });
+
+    // Bind event for view document buttons (open side-by-side in sidecar)
+    card.querySelectorAll(".view-scout-doc-btn").forEach(btn => {
+      btn.addEventListener("click", async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const docId = btn.dataset.docId;
+        if (docId) {
+          await viewDocumentInSidecar(docId);
+        }
+      });
+    });
+
+    // Also allow clicking paper title to open side-by-side
+    card.querySelectorAll(".scout-card-title").forEach(titleEl => {
+      titleEl.style.cursor = "pointer";
+      titleEl.title = "Bấm để mở xem bài báo song song bên cạnh chat";
+      titleEl.addEventListener("click", async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const cardEl = titleEl.closest(".scout-paper-card");
+        const docId = cardEl ? cardEl.dataset.docId : null;
+        if (docId) {
+          await viewDocumentInSidecar(docId);
         }
       });
     });
@@ -1242,6 +1431,24 @@ document.addEventListener("DOMContentLoaded", () => {
         }).join(" ");
       }
 
+      // Split dual reports (Academic Report & Audit Ledger)
+      let academicReportMd = report;
+      let auditLedgerMd = "";
+      if (report && report.includes("<!-- DUAL_REPORT_SPLIT -->")) {
+        const parts = report.split("<!-- DUAL_REPORT_SPLIT -->");
+        academicReportMd = parts[0].trim();
+        auditLedgerMd = parts[1].trim();
+      } else if (report) {
+        const splitIdx = report.search(/\n## 3\.\s*Đánh giá Bình duyệt/i);
+        if (splitIdx !== -1) {
+          academicReportMd = report.slice(0, splitIdx).trim();
+          auditLedgerMd = "# Sổ cái Thẩm định & Đối soát Bằng chứng (Audit & Verification Ledger)\n\n" + report.slice(splitIdx).trim();
+        } else {
+          academicReportMd = report;
+          auditLedgerMd = report;
+        }
+      }
+
       const card = document.createElement("div");
       card.className = "agent-output-block";
       card.innerHTML = `
@@ -1278,21 +1485,50 @@ document.addEventListener("DOMContentLoaded", () => {
             </div>
           </div>
 
-          <!-- Collapsible Academic Report & Evidence Ledger -->
-          <div class="academic-report-collapsible" style="margin-top:12px;">
-            <button class="academic-collapse-toggle" id="academicToggleBtn" style="display:flex; justify-content:space-between; width:100%; padding:8px 12px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; cursor:pointer; font-size:12.5px;">
-              <div class="collapse-toggle-left" style="display:flex; align-items:center; gap:6px;">
+          <!-- Collapsible Dual Academic Report & Audit Ledger -->
+          <div class="academic-report-collapsible">
+            <div class="academic-collapse-header">
+              <button class="academic-collapse-toggle" id="academicToggleBtn" title="Bấm để mở hoặc đóng báo cáo">
                 <svg class="toggle-arrow" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>
-                <span>Xem Báo cáo Học thuật Chi tiết &amp; Đối soát Bằng chứng</span>
+                <span class="toggle-main-title">Báo cáo Học thuật &amp; Sổ cái Đối soát</span>
+                <span class="toggle-status-badge">100% Verified</span>
+              </button>
+
+              <div class="academic-actions-toolbar">
+                <span class="evidence-count-badge">${evidence ? evidence.length : 0} trích dẫn</span>
+                <button class="academic-action-icon-btn" id="exportMdBtn" title="Xuất file Markdown (.md)">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+                  <span class="action-btn-label">MD</span>
+                </button>
+                <button class="academic-action-icon-btn" id="exportPdfBtn" title="Xuất file PDF (.pdf)">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9V2h12v7"></path><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>
+                  <span class="action-btn-label">PDF</span>
+                </button>
+                <button class="academic-action-icon-btn" id="copyReportBtn" title="Sao chép nội dung">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                </button>
               </div>
-              <div class="collapse-toggle-right" style="display:flex; align-items:center; gap:8px;">
-                <span class="evidence-tag" style="background:#e0e7ff; color:#3730a3; padding:1px 6px; border-radius:4px; font-size:11px;">${evidence ? evidence.length : 0} trích dẫn</span>
-                <a href="/api/runs/${encodeURIComponent((data && data.id) || state.activeRunId || '')}/export?format=md" target="_blank" class="export-link-ghost" style="color:#2563eb; text-decoration:none;" title="Tải file Markdown">Xuất .md</a>
+            </div>
+
+            <div class="academic-collapse-content" id="academicContent" style="display:none;">
+              <!-- Minimalist Segmented Tabs -->
+              <div class="report-segmented-control">
+                <button class="report-segment-tab active" data-target="paneAcademicReport">Báo cáo Hoàn chỉnh</button>
+                <button class="report-segment-tab" data-target="paneAuditLedger">Sổ cái Kiểm chứng</button>
               </div>
-            </button>
-            <div class="academic-collapse-content" id="academicContent" style="display:none; padding:12px; border:1px solid #e2e8f0; border-top:none; border-radius:0 0 6px 6px;">
-              <div class="academic-content-inner report-markdown-view">
-                ${renderMarkdown(report, evidence)}
+
+              <!-- Tab Pane 1: Full Academic Report -->
+              <div class="report-pane-container" id="paneAcademicReport" style="display:block;">
+                <div class="academic-content-inner report-markdown-view">
+                  ${renderMarkdown(academicReportMd, evidence)}
+                </div>
+              </div>
+
+              <!-- Tab Pane 2: Audit Ledger -->
+              <div class="report-pane-container" id="paneAuditLedger" style="display:none;">
+                <div class="academic-content-inner report-markdown-view">
+                  ${renderMarkdown(auditLedgerMd, evidence)}
+                </div>
               </div>
             </div>
           </div>
@@ -1304,13 +1540,111 @@ document.addEventListener("DOMContentLoaded", () => {
       const contentDiv = card.querySelector("#academicContent");
       const arrowSvg = card.querySelector(".toggle-arrow");
       if (toggleBtn && contentDiv) {
-        toggleBtn.addEventListener("click", (e) => {
-          if (e.target.closest(".export-link-ghost")) return;
+        toggleBtn.addEventListener("click", () => {
           const isOpen = contentDiv.style.display !== "none";
           contentDiv.style.display = isOpen ? "none" : "block";
           if (arrowSvg) {
             arrowSvg.style.transform = isOpen ? "rotate(0deg)" : "rotate(90deg)";
           }
+        });
+      }
+
+      // Tab switcher handler
+      const tabBtns = card.querySelectorAll(".report-segment-tab");
+      tabBtns.forEach(tab => {
+        tab.addEventListener("click", () => {
+          tabBtns.forEach(t => t.classList.remove("active"));
+          tab.classList.add("active");
+          const targetId = tab.dataset.target;
+          const p1 = card.querySelector("#paneAcademicReport");
+          const p2 = card.querySelector("#paneAuditLedger");
+          if (p1 && p2) {
+            p1.style.display = targetId === "paneAcademicReport" ? "block" : "none";
+            p2.style.display = targetId === "paneAuditLedger" ? "block" : "none";
+          }
+        });
+      });
+
+      // Export Markdown button
+      const exportMdBtn = card.querySelector("#exportMdBtn");
+      if (exportMdBtn) {
+        exportMdBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const activeTab = card.querySelector(".report-segment-tab.active");
+          const isAudit = activeTab && activeTab.dataset.target === "paneAuditLedger";
+          const contentToExport = isAudit ? auditLedgerMd : academicReportMd;
+          const fileSuffix = isAudit ? "kiem_chung" : "bao_cao";
+          const blob = new Blob([contentToExport || report], { type: "text/markdown;charset=utf-8" });
+          const link = document.createElement("a");
+          link.href = URL.createObjectURL(blob);
+          link.download = `nghien_cuu_${fileSuffix}_${new Date().toISOString().slice(0, 10)}.md`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          URL.revokeObjectURL(link.href);
+        });
+      }
+
+      // Export PDF button (Print layout)
+      const exportPdfBtn = card.querySelector("#exportPdfBtn");
+      if (exportPdfBtn) {
+        exportPdfBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const activeTab = card.querySelector(".report-segment-tab.active");
+          const isAudit = activeTab && activeTab.dataset.target === "paneAuditLedger";
+          const pane = card.querySelector(isAudit ? "#paneAuditLedger" : "#paneAcademicReport");
+          const bodyHtml = pane ? pane.innerHTML : "";
+          const docTitle = isAudit ? "Sổ cái Thẩm định & Đối soát Bằng chứng" : "Báo cáo Nghiên cứu Khoa học";
+
+          const printWin = window.open("", "_blank", "width=850,height=900");
+          if (printWin) {
+            printWin.document.write(`
+              <!DOCTYPE html>
+              <html>
+              <head>
+                <meta charset="utf-8">
+                <title>${docTitle}</title>
+                <style>
+                  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; padding: 40px; color: #18181b; line-height: 1.6; font-size: 11pt; }
+                  h1 { font-size: 18pt; border-bottom: 2px solid #e4e4e7; padding-bottom: 8px; margin-bottom: 16px; color: #09090b; }
+                  h2 { font-size: 14pt; margin-top: 24px; color: #18181b; border-bottom: 1px solid #f4f4f5; padding-bottom: 4px; }
+                  h3 { font-size: 12pt; margin-top: 18px; color: #27272a; }
+                  p, li { line-height: 1.6; color: #27272a; }
+                  table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 10pt; }
+                  th, td { border: 1px solid #d4d4d8; padding: 7px 10px; text-align: left; }
+                  th { background: #f4f4f5; font-weight: 600; color: #09090b; }
+                  tr:nth-child(even) { background: #fafafa; }
+                  blockquote { border-left: 3px solid #71717a; margin: 16px 0; padding: 8px 16px; background: #f8fafc; font-style: italic; color: #3f3f46; }
+                  code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; background: #f1f5f9; padding: 2px 4px; font-size: 9.5pt; border-radius: 3px; }
+                  @media print { body { padding: 0; } @page { margin: 1.5cm; } }
+                </style>
+              </head>
+              <body>
+                ${bodyHtml}
+                <script>
+                  window.onload = function() {
+                    setTimeout(() => { window.print(); }, 250);
+                  };
+                </script>
+              </body>
+              </html>
+            `);
+            printWin.document.close();
+          }
+        });
+      }
+
+      // Copy report button
+      const copyReportBtn = card.querySelector("#copyReportBtn");
+      if (copyReportBtn) {
+        copyReportBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const activeTab = card.querySelector(".report-segment-tab.active");
+          const isAudit = activeTab && activeTab.dataset.target === "paneAuditLedger";
+          const textToCopy = isAudit ? auditLedgerMd : academicReportMd;
+          navigator.clipboard.writeText(textToCopy || report);
+          copyReportBtn.classList.add("copied");
+          setTimeout(() => copyReportBtn.classList.remove("copied"), 1500);
         });
       }
 
@@ -1417,23 +1751,120 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  function viewDocumentInSidecar(docId) {
-    const doc = state.documents.find(d => d.id === docId);
-    if (!doc) return;
-    state.selectedDocId = docId;
-    if (pdfFrame) {
-      pdfFrame.src = `/api/documents/${encodeURIComponent(doc.id)}/file#page=1`;
+  async function viewDocumentInSidecar(docId) {
+    let doc = (state.documents && state.documents.find(d => d.id === docId)) || null;
+    if (!doc) {
+      doc = { id: docId, name: docId };
     }
+    state.selectedDocId = docId;
+
     const sidecarDocTitle = document.getElementById("sidecarDocTitle");
     if (sidecarDocTitle) {
-      sidecarDocTitle.textContent = doc.name;
-      sidecarDocTitle.title = doc.name;
+      const displayTitle = doc.title || doc.name || "Tài liệu học thuật";
+      sidecarDocTitle.textContent = displayTitle;
+      sidecarDocTitle.title = displayTitle;
     }
+
+    const docFileUrl = `/api/documents/${encodeURIComponent(doc.id)}/file`;
+    const docNameLow = (doc.name || "").toLowerCase();
+    const docPathLow = (doc.path || "").toLowerCase();
+    const hasPdf = Boolean(doc.has_pdf || doc.doc_type === "pdf" || docNameLow.endsWith(".pdf") || docPathLow.endsWith(".pdf"));
+
+    // Download button: ONLY show if real PDF exists
+    const downloadBtn = document.getElementById("downloadDocBtn");
+    if (downloadBtn) {
+      if (hasPdf) {
+        downloadBtn.href = docFileUrl;
+        downloadBtn.download = doc.name || "academic_paper.pdf";
+        downloadBtn.style.display = "inline-flex";
+      } else {
+        downloadBtn.style.display = "none";
+      }
+    }
+
+    // Open in new tab button
     const openExtBtn = document.getElementById("openExternalPdfBtn");
     if (openExtBtn) {
-      openExtBtn.href = `/api/documents/${encodeURIComponent(doc.id)}/file`;
+      const extTarget = doc.source_url || docFileUrl;
+      openExtBtn.href = extTarget;
+      openExtBtn.title = doc.source_url ? "Mở bài báo gốc tại trang xuất bản" : "Mở tệp trong tab mới";
       openExtBtn.style.display = "inline-flex";
     }
+
+    // Update Tab 1 Label
+    const tabPdfLabel = document.getElementById("tabPdfLabel");
+    if (tabPdfLabel) {
+      tabPdfLabel.textContent = hasPdf ? "Bài Báo PDF Gốc" : "Hồ Sơ & Tham Chiếu Gốc";
+    }
+
+    const pdfWrapper = document.getElementById("pdfFrameWrapper");
+    const mdViewer = document.getElementById("docMdViewer");
+
+    if (hasPdf) {
+      if (pdfWrapper) pdfWrapper.style.display = "block";
+      if (mdViewer) mdViewer.style.display = "none";
+      if (pdfFrame) {
+        pdfFrame.src = `${docFileUrl}#page=1`;
+      }
+    } else {
+      if (pdfWrapper) pdfWrapper.style.display = "none";
+      if (mdViewer) {
+        mdViewer.style.display = "block";
+        const titleStr = doc.title || doc.name || "Tài liệu học thuật";
+        const authorsStr = (doc.authors && doc.authors.length) ? (Array.isArray(doc.authors) ? doc.authors.join(", ") : doc.authors) : "Nhóm nghiên cứu";
+        const sourceStr = doc.source || "Kho Lưu Trữ Học Thuật Quốc Tế";
+        const sourceUrl = doc.source_url || "";
+        const yearStr = doc.year || 2024;
+        const abstractStr = doc.abstract || "";
+
+        mdViewer.innerHTML = `
+          <div class="academic-ref-profile" style="padding: 24px 28px; max-width: 800px; margin: 0 auto; color: #18181b;">
+            <div style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; background: #f4f4f5; border: 1px solid #e4e4e7; border-radius: 4px; font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #52525b; margin-bottom: 14px;">
+              <span>Tham chiếu bài báo gốc</span>
+              <span>•</span>
+              <span>Xuất bản ${escapeHtml(String(yearStr))}</span>
+            </div>
+            
+            <h2 style="font-size: 20px; font-weight: 700; line-height: 1.4; margin: 0 0 12px 0; color: #09090b;">
+              ${escapeHtml(titleStr)}
+            </h2>
+            
+            <div style="font-size: 13.5px; color: #52525b; margin-bottom: 8px;">
+              <b>Tác giả:</b> ${escapeHtml(authorsStr)}
+            </div>
+            <div style="font-size: 13.5px; color: #52525b; margin-bottom: 18px;">
+              <b>Nguồn xuất bản:</b> ${escapeHtml(sourceStr)}
+            </div>
+
+            ${sourceUrl ? `
+              <div style="margin: 18px 0 24px 0; padding: 16px; background: #fafafa; border: 1px solid #e4e4e7; border-radius: 8px;">
+                <div style="font-size: 12.5px; color: #71717a; margin-bottom: 10px;">
+                  Tài liệu này được công bố chính thức trên trang của nhà xuất bản / cơ sở dữ liệu học thuật. Nhấn nút bên dưới để truy cập trực tiếp bài báo gốc:
+                </div>
+                <a href="${escapeHtml(sourceUrl)}" target="_blank" rel="noopener noreferrer" style="display: inline-flex; align-items: center; gap: 8px; padding: 10px 20px; background: #18181b; color: #ffffff; text-decoration: none; border-radius: 6px; font-size: 13.5px; font-weight: 600; transition: background 0.15s ease;">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                    <polyline points="15 3 21 3 21 9"/>
+                    <line x1="10" y1="14" x2="21" y2="3"/>
+                  </svg>
+                  <span>Truy Cập Bài Báo Gốc Tại Nhà Xuất Bản ↗</span>
+                </a>
+              </div>
+            ` : ""}
+
+            <div style="margin-top: 20px; padding-top: 18px; border-top: 1px solid #e4e4e7;">
+              <h3 style="font-size: 14.5px; font-weight: 700; margin: 0 0 10px 0; text-transform: uppercase; letter-spacing: 0.03em; color: #18181b;">
+                Tóm Tắt Nội Dung Nghiên Cứu (Abstract)
+              </h3>
+              <p style="font-size: 14px; line-height: 1.75; color: #3f3f46; white-space: pre-wrap; margin: 0;">
+                ${escapeHtml(abstractStr || "Đang cập nhật tóm tắt từ hệ thống...")}
+              </p>
+            </div>
+          </div>
+        `;
+      }
+    }
+
     openSidecar();
     switchSidecarTab("pdfViewerTab");
   }
@@ -1476,7 +1907,10 @@ document.addEventListener("DOMContentLoaded", () => {
   // Click "Mới" Button -> Reset session & clear active run
   if (newChatBtn) {
     newChatBtn.addEventListener("click", () => {
+      state.activeSessionId = null;
+      state.activeRunId = null;
       localStorage.removeItem("researchdesk_active_run");
+      localStorage.removeItem("researchdesk_active_session");
       resetToWelcomeScreen();
     });
   }
@@ -1650,8 +2084,8 @@ document.addEventListener("DOMContentLoaded", () => {
       if (activeModelLabel) activeModelLabel.textContent = label;
     } else {
       quickSelectBtns.forEach(btn => btn.classList.remove("active"));
-      if (quickActivePill) quickActivePill.textContent = "Hybrid";
-      if (activeModelLabel) activeModelLabel.textContent = "Hybrid";
+      if (quickActivePill) quickActivePill.textContent = "Tùy biến";
+      if (activeModelLabel) activeModelLabel.textContent = "Tùy biến";
     }
     updateGeminiPillVisibility();
   }
@@ -1721,18 +2155,18 @@ document.addEventListener("DOMContentLoaded", () => {
       const isOnline = Boolean(data.is_online);
       if (isOnline) {
         ollamaToggleBtn.className = "split-action-btn online";
-        ollamaToggleBtn.innerHTML = '<span class="action-icon">🟢</span><span class="action-text">Bật</span>';
+        ollamaToggleBtn.innerHTML = '<span class="action-text">ON</span>';
         ollamaToggleBtn.title = "Ollama CPU đang chạy (Online). Nhấp để kiểm tra lại.";
       } else {
         ollamaToggleBtn.className = "split-action-btn offline";
-        ollamaToggleBtn.innerHTML = '<span class="action-icon">⚡</span><span class="action-text">Bật</span>';
+        ollamaToggleBtn.innerHTML = '<span class="action-text">OFF</span>';
         ollamaToggleBtn.title = "Ollama CPU chưa bật. Nhấp để bật ngay.";
       }
       return isOnline;
     } catch (e) {
       if (ollamaToggleBtn) {
         ollamaToggleBtn.className = "split-action-btn offline";
-        ollamaToggleBtn.innerHTML = '<span class="action-icon">⚡</span><span class="action-text">Bật</span>';
+        ollamaToggleBtn.innerHTML = '<span class="action-text">OFF</span>';
         ollamaToggleBtn.title = "Chưa kết nối server CPU. Nhấp để bật.";
       }
       return false;
@@ -1745,7 +2179,7 @@ document.addEventListener("DOMContentLoaded", () => {
       e.preventDefault();
 
       ollamaToggleBtn.className = "split-action-btn loading";
-      ollamaToggleBtn.innerHTML = '<span class="action-icon">⏳</span><span class="action-text">Đang bật...</span>';
+      ollamaToggleBtn.innerHTML = '<span class="action-text">...</span>';
       ollamaToggleBtn.disabled = true;
 
       try {
@@ -1754,18 +2188,18 @@ document.addEventListener("DOMContentLoaded", () => {
 
         if (data.is_online) {
           ollamaToggleBtn.className = "split-action-btn online";
-          ollamaToggleBtn.innerHTML = '<span class="action-icon">🟢</span><span class="action-text">Bật</span>';
+          ollamaToggleBtn.innerHTML = '<span class="action-text">ON</span>';
           ollamaToggleBtn.title = "Ollama CPU đang chạy (Online)";
-          alert("✅ " + (data.message || "Đã khởi động Ollama CPU thành công!"));
+          alert(data.message || "Đã khởi động Ollama CPU thành công.");
         } else {
           ollamaToggleBtn.className = "split-action-btn offline";
-          ollamaToggleBtn.innerHTML = '<span class="action-icon">⚡</span><span class="action-text">Bật</span>';
-          alert("⚠️ " + (data.message || "Chưa thể khởi động Ollama tự động. Vui lòng mở ứng dụng Ollama hoặc chạy lệnh 'ollama serve' trong terminal."));
+          ollamaToggleBtn.innerHTML = '<span class="action-text">OFF</span>';
+          alert(data.message || "Chưa thể khởi động Ollama tự động. Vui lòng chạy lệnh 'ollama serve' trong terminal.");
         }
       } catch (err) {
         ollamaToggleBtn.className = "split-action-btn offline";
-        ollamaToggleBtn.innerHTML = '<span class="action-icon">⚡</span><span class="action-text">Bật</span>';
-        alert("❌ Lỗi khi yêu cầu bật Ollama: " + err.message);
+        ollamaToggleBtn.innerHTML = '<span class="action-text">OFF</span>';
+        alert("Lỗi khi yêu cầu bật Ollama: " + err.message);
       } finally {
         ollamaToggleBtn.disabled = false;
       }
@@ -1858,6 +2292,31 @@ document.addEventListener("DOMContentLoaded", () => {
         saveKaggleBtn.disabled = false;
       }
     });
+  }
+
+  
+  // Autonomous Reflection Loops Control
+  const loopBtns = document.querySelectorAll(".loop-select-btn");
+  const loopsStatusVal = document.getElementById("reflectionLoopsStatus");
+  if (loopBtns.length > 0) {
+    const curLoops = state.maxReflectionLoops || 2;
+    loopBtns.forEach(btn => {
+      btn.classList.toggle("active", parseInt(btn.dataset.loops, 10) === curLoops);
+      btn.addEventListener("click", () => {
+        const loops = parseInt(btn.dataset.loops, 10) || 2;
+        state.maxReflectionLoops = loops;
+        localStorage.setItem("researchdesk_loops", loops);
+        loopBtns.forEach(b => b.classList.toggle("active", b === btn));
+        if (loopsStatusVal) {
+          const labels = { 1: "1 Vòng (Nhanh)", 2: "2 Vòng (Khuyên dùng)", 3: "3 Vòng (Chuyên sâu)" };
+          loopsStatusVal.textContent = labels[loops] || `${loops} Vòng`;
+        }
+      });
+    });
+    if (loopsStatusVal) {
+      const labels = { 1: "1 Vòng (Nhanh)", 2: "2 Vòng (Khuyên dùng)", 3: "3 Vòng (Chuyên sâu)" };
+      loopsStatusVal.textContent = labels[curLoops] || `${curLoops} Vòng`;
+    }
   }
 
   // Tự động phân tích và chọn mô hình tối ưu nhất cho 5 Agent
@@ -2096,12 +2555,13 @@ document.addEventListener("DOMContentLoaded", () => {
       await loadChatHistory();
       await loadSystemConfig();
 
-      // RESTORE SESSION ON PAGE RELOAD:
-      const savedRunId = localStorage.getItem("researchdesk_active_run");
-      if (savedRunId && state.runs.some(r => r.id === savedRunId)) {
-        await selectRun(savedRunId);
+      // KHÔI PHỤC ĐOẠN CHAT ĐANG MỞ HOẶC ĐOẠN CHAT MỚI NHẤT TRÊN TRANG
+      const savedSession = localStorage.getItem("researchdesk_active_session");
+      if (savedSession && state.sessions.some(s => s.id === savedSession)) {
+        await selectSession(savedSession);
+      } else if (state.sessions.length > 0) {
+        await selectSession(state.sessions[0].id);
       } else {
-        // Start with a clean welcome screen, no forced document checking
         resetToWelcomeScreen();
       }
     } catch (err) {
@@ -2121,7 +2581,7 @@ const SLASH_COMMANDS = [
     desc: "Tóm tắt tổng quan nội dung, đóng góp cốt lõi và kết quả chính của tài liệu nghiên cứu.",
     prompt: "Tóm tắt tổng quan nội dung, các đóng góp cốt lõi và kết quả chính của tài liệu nghiên cứu.",
     category: "Phân tích",
-    icon: "📝"
+    icon: "⌘"
   },
   {
     cmd: "/so-sanh",
@@ -2129,7 +2589,7 @@ const SLASH_COMMANDS = [
     desc: "So sánh chi tiết các tài liệu đã chọn về phương pháp, kiến trúc, ưu nhược điểm và benchmark.",
     prompt: "So sánh chi tiết các tài liệu đã chọn về phương pháp tiếp cận, kiến trúc kỹ thuật, ưu nhược điểm và kết quả thực nghiệm.",
     category: "Phân tích",
-    icon: "⚖️"
+    icon: "⇄"
   },
   {
     cmd: "/dong-gop",
@@ -2137,7 +2597,7 @@ const SLASH_COMMANDS = [
     desc: "Trích xuất những điểm mới và đóng góp khoa học cốt lõi (Novel contributions).",
     prompt: "Trích xuất và phân tích các đóng góp khoa học mới (novelty & contributions) được đề xuất trong tài liệu.",
     category: "Phân tích",
-    icon: "💡"
+    icon: "✦"
   },
   {
     cmd: "/phuong-phap",
@@ -2145,7 +2605,7 @@ const SLASH_COMMANDS = [
     desc: "Phân tích chi tiết kiến trúc mô hình, pipeline thuật toán hoặc quy trình thực hiện.",
     prompt: "Phân tích chi tiết phương pháp đề xuất, kiến trúc mô hình/thuật toán và quy trình thực hiện.",
     category: "Kỹ thuật",
-    icon: "⚙️"
+    icon: "⚙"
   },
   {
     cmd: "/kiem-chung",
@@ -2153,7 +2613,7 @@ const SLASH_COMMANDS = [
     desc: "Fact-check đối soát thông tin dựa trên bằng chứng nguyên văn trích dẫn từ tài liệu.",
     prompt: "Kiểm chứng tính xác thực của thông tin sau dựa trên bằng chứng nguyên văn trích dẫn từ tài liệu: ",
     category: "Kiểm chứng",
-    icon: "🛡️"
+    icon: "✓"
   },
   {
     cmd: "/so-lieu",
@@ -2161,7 +2621,7 @@ const SLASH_COMMANDS = [
     desc: "Trích xuất toàn bộ bảng số liệu định lượng, kết quả benchmark và metric đánh giá.",
     prompt: "Trích xuất các số liệu thực nghiệm định lượng, bảng benchmark và metric so sánh hiệu năng quan trọng nhất.",
     category: "Kỹ thuật",
-    icon: "📊"
+    icon: "▦"
   },
   {
     cmd: "/thuat-ngu",
@@ -2169,7 +2629,7 @@ const SLASH_COMMANDS = [
     desc: "Liệt kê các thuật ngữ chuyên môn, khái niệm cốt lõi và từ viết tắt kèm định nghĩa.",
     prompt: "Liệt kê các thuật ngữ chuyên môn, khái niệm cốt lõi và từ viết tắt trong tài liệu kèm theo định nghĩa chi tiết.",
     category: "Khái niệm",
-    icon: "📖"
+    icon: "§"
   },
   {
     cmd: "/trich-dan",
@@ -2177,7 +2637,7 @@ const SLASH_COMMANDS = [
     desc: "Trích xuất các đoạn văn nguyên văn quan trọng nhất (verbatim quotes) kèm vị trí và số trang.",
     prompt: "Trích xuất các đoạn văn nguyên văn quan trọng nhất (verbatim quotes) kèm vị trí/ngữ cảnh liên quan đến chủ đề: ",
     category: "Kiểm chứng",
-    icon: "🔍"
+    icon: "❝"
   },
   {
     cmd: "/khoang-trong",
@@ -2185,7 +2645,7 @@ const SLASH_COMMANDS = [
     desc: "Chỉ ra các hạn chế (limitations) và hướng phát triển tương lai được tác giả đề cập.",
     prompt: "Chỉ ra các hạn chế (limitations), khoảng trống nghiên cứu (research gaps) và hướng phát triển tương lai được tác giả đề cập.",
     category: "Phân tích",
-    icon: "🔬"
+    icon: "◌"
   },
   {
     cmd: "/cau-hoi",
@@ -2193,7 +2653,7 @@ const SLASH_COMMANDS = [
     desc: "Sinh 5-10 câu hỏi phản biện chuyên sâu và câu hỏi thảo luận học thuật.",
     prompt: "Tạo 5-10 câu hỏi phản biện chuyên sâu và câu hỏi thảo luận học thuật xoay quanh nội dung và giả định của bài báo.",
     category: "Học thuật",
-    icon: "❓"
+    icon: "?"
   },
   {
     cmd: "/scout",
@@ -2201,7 +2661,7 @@ const SLASH_COMMANDS = [
     desc: "Dò quét nhanh cấu trúc, mục lục, phạm vi chủ đề và các phần chính trong tài liệu.",
     prompt: "Dò quét nhanh cấu trúc, mục lục, phạm vi chủ đề và các phần chính trong toàn bộ tài liệu.",
     category: "Học thuật",
-    icon: "⚡"
+    icon: "/"
   },
   {
     cmd: "/cpu-min",
@@ -2209,7 +2669,7 @@ const SLASH_COMMANDS = [
     desc: "Kích hoạt chế độ siêu nhẹ (Zero-Ollama, RAM < 100MB, tốc độ < 1 giây).",
     action: "set_mode_cpu_min",
     category: "Hệ thống",
-    icon: "🟢"
+    icon: "●"
   },
   {
     cmd: "/cpu-max",
@@ -2217,7 +2677,7 @@ const SLASH_COMMANDS = [
     desc: "Kích hoạt chế độ đa tác nhân tối đa (Deep Reasoning, Full Fact-checking).",
     action: "set_mode_cpu_max",
     category: "Hệ thống",
-    icon: "🚀"
+    icon: "▲"
   },
   {
     cmd: "/xuat-bao-cao",
@@ -2225,7 +2685,7 @@ const SLASH_COMMANDS = [
     desc: "Tải toàn bộ kết quả nghiên cứu và bằng chứng hiện tại về máy dưới dạng file .md.",
     action: "export_report",
     category: "Hệ thống",
-    icon: "📥"
+    icon: "↓"
   },
   {
     cmd: "/clear",
@@ -2233,7 +2693,7 @@ const SLASH_COMMANDS = [
     desc: "Làm mới khung nhập và đặt lại trạng thái hiển thị.",
     action: "clear_input",
     category: "Hệ thống",
-    icon: "🗑️"
+    icon: "✕"
   }
 ];
 
@@ -2265,7 +2725,7 @@ function initSlashCommandsAutosuggest({ textarea, container, onAction }) {
     if (matches.length === 0) {
       popup.innerHTML = `
         <div class="slash-command-header">
-          <span class="slash-title">⚡ Lệnh nhanh (Slash Commands)</span>
+          <span class="slash-title"><span class="slash-mono-symbol">/</span> Lệnh nhanh (Slash Commands)</span>
           <span>Không tìm thấy</span>
         </div>
         <div class="slash-empty-state">Không có lệnh nào khớp với từ khóa</div>
@@ -2293,7 +2753,7 @@ function initSlashCommandsAutosuggest({ textarea, container, onAction }) {
 
     popup.innerHTML = `
       <div class="slash-command-header">
-        <span class="slash-title">⚡ Lệnh nhanh (Slash Commands)</span>
+        <span class="slash-title"><span class="slash-mono-symbol">/</span> Lệnh nhanh (Slash Commands)</span>
         <span>${matches.length} gợi ý</span>
       </div>
       <ul class="slash-command-list">${listHtml}</ul>

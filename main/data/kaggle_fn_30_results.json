@@ -1,0 +1,484 @@
+{
+  "total_questions": 30,
+  "passed": 0,
+  "pass_rate": 0.0,
+  "total_time": 1060.9918546676636,
+  "results": [
+    {
+      "index": 1,
+      "question": "Trong kiến trúc hệ thống, vai trò cơ bản của NGINX khi đóng vai trò là Reverse Proxy là gì?",
+      "status": "processing",
+      "elapsed": 35.38244271278381,
+      "report_len": 0,
+      "matched_keywords": [],
+      "total_keywords": [
+        "reverse proxy",
+        "backend",
+        "client",
+        "chuyển tiếp",
+        "phân phối"
+      ],
+      "passed": false,
+      "preview": "No report"
+    },
+    {
+      "index": 2,
+      "question": "Kịch bản dùng một domain duy nhất phục vụ cả frontend ở / và backend ở /api/ nhằm giải quyết triệt để vấn đề gì ở phía client?",
+      "status": "processing",
+      "elapsed": 35.50581622123718,
+      "report_len": 0,
+      "matched_keywords": [],
+      "total_keywords": [
+        "cors",
+        "origin",
+        "frontend",
+        "backend"
+      ],
+      "passed": false,
+      "preview": "No report"
+    },
+    {
+      "index": 3,
+      "question": "Cổng (port) mặc định trong NGINX dành cho kết nối HTTP không bảo mật và HTTPS có mã hóa là bao nhiêu?",
+      "status": "processing",
+      "elapsed": 35.45993661880493,
+      "report_len": 0,
+      "matched_keywords": [],
+      "total_keywords": [
+        "80",
+        "443",
+        "http",
+        "https"
+      ],
+      "passed": false,
+      "preview": "No report"
+    },
+    {
+      "index": 4,
+      "question": "File /etc/hosts có vai trò gì trong quá trình phát triển và kiểm thử hệ thống local?",
+      "status": "processing",
+      "elapsed": 35.42644643783569,
+      "report_len": 0,
+      "matched_keywords": [],
+      "total_keywords": [
+        "hosts",
+        "domain",
+        "127.0.0.1",
+        "local",
+        "ánh xạ"
+      ],
+      "passed": false,
+      "preview": "No report"
+    },
+    {
+      "index": 5,
+      "question": "Lệnh OpenSSL chính xác được tài liệu hướng dẫn dùng để tạo cặp key/chứng chỉ SSL tự ký là gì?",
+      "status": "processing",
+      "elapsed": 35.40421986579895,
+      "report_len": 0,
+      "matched_keywords": [],
+      "total_keywords": [
+        "openssl",
+        "req",
+        "x509",
+        "newkey",
+        "rsa:2048",
+        "365"
+      ],
+      "passed": false,
+      "preview": "No report"
+    },
+    {
+      "index": 6,
+      "question": "Để chuyển tiếp toàn bộ request từ đường dẫn /api/... đến backend chạy cổng 5000, chỉ thị location và proxy_pass được viết như thế nào?",
+      "status": "processing",
+      "elapsed": 35.41254186630249,
+      "report_len": 0,
+      "matched_keywords": [],
+      "total_keywords": [
+        "proxy_pass",
+        "5000",
+        "/api/"
+      ],
+      "passed": false,
+      "preview": "No report"
+    },
+    {
+      "index": 7,
+      "question": "Bốn header quan trọng bắt buộc cần khai báo trong proxy_set_header là gì và biến giá trị tương ứng của chúng?",
+      "status": "processing",
+      "elapsed": 35.448946475982666,
+      "report_len": 0,
+      "matched_keywords": [],
+      "total_keywords": [
+        "host",
+        "x-real-ip",
+        "x-forwarded-for",
+        "x-forwarded-proto"
+      ],
+      "passed": false,
+      "preview": "No report"
+    },
+    {
+      "index": 8,
+      "question": "Nếu thiếu khai báo proxy_set_header X-Real-IP $remote_addr, backend sẽ nhìn thấy địa chỉ IP của client là gì?",
+      "status": "processing",
+      "elapsed": 35.39552354812622,
+      "report_len": 0,
+      "matched_keywords": [],
+      "total_keywords": [
+        "127.0.0.1",
+        "nginx",
+        "remote_addr",
+        "ip"
+      ],
+      "passed": false,
+      "preview": "No report"
+    },
+    {
+      "index": 9,
+      "question": "Cú pháp khai báo khối upstream my_backends mẫu trong tài liệu gồm những server và địa chỉ nào?",
+      "status": "processing",
+      "elapsed": 35.48786473274231,
+      "report_len": 0,
+      "matched_keywords": [],
+      "total_keywords": [
+        "my_backends",
+        "10.0.0.11",
+        "10.0.0.12",
+        "5001",
+        "upstream"
+      ],
+      "passed": false,
+      "preview": "No report"
+    },
+    {
+      "index": 10,
+      "question": "Khi muốn NGINX chuyển tiếp request vào cụm upstream my_backends, chỉ thị proxy_pass được viết ra sao?",
+      "status": "processing",
+      "elapsed": 35.34035634994507,
+      "report_len": 0,
+      "matched_keywords": [],
+      "total_keywords": [
+        "proxy_pass",
+        "http://my_backends",
+        "upstream"
+      ],
+      "passed": false,
+      "preview": "No report"
+    },
+    {
+      "index": 11,
+      "question": "Thuật toán cân bằng tải mặc định của NGINX khi khai báo upstream mà không chỉ định thuật toán khác là gì?",
+      "status": "processing",
+      "elapsed": 35.34044361114502,
+      "report_len": 0,
+      "matched_keywords": [],
+      "total_keywords": [
+        "round-robin",
+        "lần lượt",
+        "mặc định"
+      ],
+      "passed": false,
+      "preview": "No report"
+    },
+    {
+      "index": 12,
+      "question": "Thuật toán least_conn hoạt động theo nguyên lý nào theo mô tả trong bài giảng?",
+      "status": "processing",
+      "elapsed": 35.370232582092285,
+      "report_len": 0,
+      "matched_keywords": [],
+      "total_keywords": [
+        "least_conn",
+        "ít kết nối",
+        "kết nối"
+      ],
+      "passed": false,
+      "preview": "No report"
+    },
+    {
+      "index": 13,
+      "question": "Khi các node backend có cấu hình phần cứng không đồng đều (máy mạnh, máy yếu), NGINX cung cấp tham số nào để ưu tiên tải?",
+      "status": "processing",
+      "elapsed": 35.3256299495697,
+      "report_len": 0,
+      "matched_keywords": [],
+      "total_keywords": [
+        "weight",
+        "trọng số",
+        "phần cứng"
+      ],
+      "passed": false,
+      "preview": "No report"
+    },
+    {
+      "index": 14,
+      "question": "Mục đích chính của việc chạy nhiều instance backend/nhiều node server song song sau NGINX là gì?",
+      "status": "processing",
+      "elapsed": 35.292253255844116,
+      "report_len": 0,
+      "matched_keywords": [],
+      "total_keywords": [
+        "chịu tải",
+        "sự cố",
+        "song song",
+        "chết",
+        "instance"
+      ],
+      "passed": false,
+      "preview": "No report"
+    },
+    {
+      "index": 15,
+      "question": "Khi NGINX và Frontend/Backend cùng đóng gói trong Docker network, proxy_pass trỏ đến địa chỉ nào thay vì localhost?",
+      "status": "processing",
+      "elapsed": 35.36514759063721,
+      "report_len": 0,
+      "matched_keywords": [],
+      "total_keywords": [
+        "docker",
+        "service",
+        "frontend:80",
+        "backend:5000"
+      ],
+      "passed": false,
+      "preview": "No report"
+    },
+    {
+      "index": 16,
+      "question": "Kích thước body tối đa (client_max_body_size) mặc định của NGINX là bao nhiêu nếu không khai báo cấu hình?",
+      "status": "processing",
+      "elapsed": 35.39108371734619,
+      "report_len": 0,
+      "matched_keywords": [],
+      "total_keywords": [
+        "1mb",
+        "1 mb",
+        "mặc định"
+      ],
+      "passed": false,
+      "preview": "No report"
+    },
+    {
+      "index": 17,
+      "question": "Khi người dùng upload một file hoặc ảnh vượt quá 1MB mà chưa cấu hình tăng kích thước body, NGINX trả về mã lỗi HTTP nào?",
+      "status": "processing",
+      "elapsed": 35.38491082191467,
+      "report_len": 0,
+      "matched_keywords": [],
+      "total_keywords": [
+        "413",
+        "entity too large",
+        "request entity"
+      ],
+      "passed": false,
+      "preview": "No report"
+    },
+    {
+      "index": 18,
+      "question": "Khi chạy NGINX native trên Windows, file hosts nằm ở đường dẫn chính xác nào và yêu cầu quyền hạn gì để lưu file?",
+      "status": "processing",
+      "elapsed": 35.18498086929321,
+      "report_len": 0,
+      "matched_keywords": [],
+      "total_keywords": [
+        "system32",
+        "drivers",
+        "etc",
+        "hosts",
+        "administrator"
+      ],
+      "passed": false,
+      "preview": "No report"
+    },
+    {
+      "index": 19,
+      "question": "Trên môi trường WSL2, tại sao các dòng cấu hình domain thêm thủ công vào /etc/hosts lại bị mất sau khi khởi động lại máy?",
+      "status": "processing",
+      "elapsed": 35.35557150840759,
+      "report_len": 0,
+      "matched_keywords": [],
+      "total_keywords": [
+        "wsl2",
+        "tự động sinh",
+        "khởi động",
+        "mạng"
+      ],
+      "passed": false,
+      "preview": "No report"
+    },
+    {
+      "index": 20,
+      "question": "Làm cách nào để tắt vĩnh viễn tính năng tự động sinh lại file /etc/hosts trên WSL2?",
+      "status": "processing",
+      "elapsed": 35.381370306015015,
+      "report_len": 0,
+      "matched_keywords": [],
+      "total_keywords": [
+        "generatehosts",
+        "false",
+        "wsl.conf",
+        "network"
+      ],
+      "passed": false,
+      "preview": "No report"
+    },
+    {
+      "index": 21,
+      "question": "Tại sao trình duyệt lại cảnh báo Not Secure hoặc NET::ERR_CERT_AUTHORITY_INVALID khi truy cập HTTPS dùng chứng chỉ tự ký?",
+      "status": "processing",
+      "elapsed": 35.47280764579773,
+      "report_len": 0,
+      "matched_keywords": [],
+      "total_keywords": [
+        "tự ký",
+        "root ca",
+        "chuỗi",
+        "trust",
+        "cảnh báo"
+      ],
+      "passed": false,
+      "preview": "No report"
+    },
+    {
+      "index": 22,
+      "question": "Chuỗi tin cậy (Chain of Trust) của chứng chỉ SSL hoạt động như thế nào giữa Trình duyệt, Root CA và Intermediate CA?",
+      "status": "processing",
+      "elapsed": 35.377856969833374,
+      "report_len": 0,
+      "matched_keywords": [],
+      "total_keywords": [
+        "chain of trust",
+        "root ca",
+        "intermediate ca",
+        "chữ ký",
+        "xác minh"
+      ],
+      "passed": false,
+      "preview": "No report"
+    },
+    {
+      "index": 23,
+      "question": "Công cụ tự động nào được tài liệu khuyến nghị sử dụng trên môi trường server thật để xin chứng chỉ SSL miễn phí và tự động gia hạn?",
+      "status": "processing",
+      "elapsed": 35.40899586677551,
+      "report_len": 0,
+      "matched_keywords": [],
+      "total_keywords": [
+        "certbot",
+        "let's encrypt",
+        "renew",
+        "miễn phí"
+      ],
+      "passed": false,
+      "preview": "No report"
+    },
+    {
+      "index": 24,
+      "question": "Thời hạn hiệu lực của chứng chỉ SSL tự ký được tạo bởi câu lệnh OpenSSL mẫu trong bài là bao nhiêu ngày?",
+      "status": "processing",
+      "elapsed": 35.35219740867615,
+      "report_len": 0,
+      "matched_keywords": [],
+      "total_keywords": [
+        "365",
+        "ngày",
+        "days"
+      ],
+      "passed": false,
+      "preview": "No report"
+    },
+    {
+      "index": 25,
+      "question": "Hai chỉ thị NGINX bắt buộc phải khai báo để nạp đường dẫn chứng chỉ SSL và private key trong server block là gì?",
+      "status": "processing",
+      "elapsed": 35.4130482673645,
+      "report_len": 0,
+      "matched_keywords": [],
+      "total_keywords": [
+        "ssl_certificate",
+        "ssl_certificate_key",
+        "listen 443"
+      ],
+      "passed": false,
+      "preview": "No report"
+    },
+    {
+      "index": 26,
+      "question": "Bài giảng Buổi 8 có hướng dẫn cấu hình cụm Apache Kafka phân tán bằng Docker Compose không?",
+      "status": "processing",
+      "elapsed": 35.356698989868164,
+      "report_len": 0,
+      "matched_keywords": [],
+      "total_keywords": [
+        "hoàn toàn không được đề cập",
+        "không được đề cập"
+      ],
+      "passed": false,
+      "preview": "No report"
+    },
+    {
+      "index": 27,
+      "question": "Cấu hình Kubernetes Ingress Controller với Traefik được bài giảng đề cập ở trang số mấy?",
+      "status": "processing",
+      "elapsed": 35.08428406715393,
+      "report_len": 0,
+      "matched_keywords": [],
+      "total_keywords": [
+        "hoàn toàn không được đề cập",
+        "không được đề cập"
+      ],
+      "passed": false,
+      "preview": "No report"
+    },
+    {
+      "index": 28,
+      "question": "Thuật toán mã hóa lượng tử hậu kỳ (Post-Quantum Cryptography Kyber) cho NGINX được giải thích ra sao?",
+      "status": "processing",
+      "elapsed": 35.46178674697876,
+      "report_len": 0,
+      "matched_keywords": [],
+      "total_keywords": [
+        "hoàn toàn không được đề cập",
+        "không được đề cập"
+      ],
+      "passed": false,
+      "preview": "No report"
+    },
+    {
+      "index": 29,
+      "question": "/tom-tat",
+      "status": "processing",
+      "elapsed": 35.32858467102051,
+      "report_len": 0,
+      "matched_keywords": [],
+      "total_keywords": [
+        "nginx",
+        "reverse proxy",
+        "upstream",
+        "cấu hình",
+        "ssl"
+      ],
+      "passed": false,
+      "preview": "No report"
+    },
+    {
+      "index": 30,
+      "question": "/dong-gop",
+      "status": "processing",
+      "elapsed": 35.079874992370605,
+      "report_len": 0,
+      "matched_keywords": [],
+      "total_keywords": [
+        "điểm mới",
+        "đóng góp",
+        "reverse proxy",
+        "upstream",
+        "cors"
+      ],
+      "passed": false,
+      "preview": "No report"
+    }
+  ]
+}

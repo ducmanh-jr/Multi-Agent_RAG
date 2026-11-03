@@ -51,8 +51,9 @@ class KaggleMaxRetrievalAgent(BaseAgent):
             self.bm25_fallback.fit(docs)
 
     def run(self, state: AgentState) -> dict[str, Any]:
-        query = state.get("query", "")
+        query = state.get("query") or state.get("question", "")
         pdf_path = state.get("pdf_path")
+        pdf_paths = state.get("pdf_paths") or ([pdf_path] if pdf_path else [])
         retry_count = state.get("retry_count", 0)
         seen_chunks = state.get("seen_chunks", []) or []
 
@@ -83,8 +84,13 @@ class KaggleMaxRetrievalAgent(BaseAgent):
             except Exception as exc:
                 self.logger.info(f"[Kaggle Max Retrieval] Using local Supervisor sub_queries ({exc})")
 
-        # 1. Scope strictly to user-selected PDF if provided
-        pdf_chunks = load_or_parse_selected_pdf(pdf_path) if pdf_path else []
+        # 1. Scope strictly to user-selected PDF(s) if provided
+        pdf_chunks: list[dict[str, Any]] = []
+        for p in pdf_paths:
+            if p and os.path.exists(p):
+                chunks = load_or_parse_selected_pdf(p)
+                if chunks:
+                    pdf_chunks.extend(chunks)
         if pdf_chunks:
             active_fts = SQLiteFTS5Searcher()
             active_bm25 = SimpleBM25()
@@ -106,8 +112,18 @@ class KaggleMaxRetrievalAgent(BaseAgent):
             if res_bm25:
                 all_lists.append(res_bm25)
 
+        is_summary_query = any(
+            w in query.lower()
+            for w in [
+                "tóm tắt", "tổng quan", "nội dung chính", "chính", "summary", "overview",
+                "abstract", "giới thiệu", "phương pháp", "kết quả", "đóng góp", "2 bài báo",
+                "các bài báo", "nói về gì", "nói về cái gì", "/tom-tat", "tom-tat",
+                "so sánh", "đối chiếu", "so sanh", "doi chieu", "khác nhau", "khác biệt", "so-sanh", "so_sanh", "compare", "/so-sanh"
+            ]
+        ) or bool(state.get("is_comparative_query") or state.get("intent") == "compare")
+
         fused = reciprocal_rank_fusion(all_lists, top_n=top_k + 2) if all_lists else []
-        if not fused and active_pool:
+        if not fused and active_pool and is_summary_query:
             fused = active_pool[: min(top_k, len(active_pool))]
 
         # 3. Entity priority boost

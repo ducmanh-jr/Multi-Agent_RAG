@@ -1,0 +1,272 @@
+[
+  {
+    "label": "1. Vai trò cơ bản của NGINX làm Reverse Proxy",
+    "run_id": "run_e812648049",
+    "status": "completed",
+    "report_len": 7992,
+    "has_citations": true,
+    "is_ood_refusal": false,
+    "preview": "# Báo cáo Nghiên cứu: Trong kiến trúc hệ thống, vai trò cơ bản của NGINX khi đóng vai trò là Reverse Proxy là gì?  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT"
+  },
+  {
+    "label": "2. Kịch bản một domain duy nhất giải quyết CORS",
+    "run_id": "run_0d73f7bf98",
+    "status": "completed",
+    "report_len": 8717,
+    "has_citations": true,
+    "is_ood_refusal": false,
+    "preview": "# Báo cáo Nghiên cứu: Kịch bản dùng một domain duy nhất phục vụ cả frontend ở / và backend ở /api/ nhằm giải quyết triệt để vấn đề gì ở phía client?  > **Trạng "
+  },
+  {
+    "label": "3. Cổng (port) mặc định HTTP và HTTPS",
+    "run_id": "run_d79f903c22",
+    "status": "completed",
+    "report_len": 6729,
+    "has_citations": true,
+    "is_ood_refusal": false,
+    "preview": "# Báo cáo Nghiên cứu: Cổng (port) mặc định cho HTTP và HTTPS trong NGINX là cổng nào?  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]   > **Câu trả lời T"
+  },
+  {
+    "label": "4. File /etc/hosts trong phát triển local",
+    "run_id": "run_6debc323e3",
+    "status": "completed",
+    "report_len": 6977,
+    "has_citations": true,
+    "is_ood_refusal": false,
+    "preview": "# Báo cáo Nghiên cứu: File /etc/hosts có vai trò gì trong quá trình phát triển và kiểm thử hệ thống local?  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`"
+  },
+  {
+    "label": "5. Lệnh OpenSSL chính xác tạo key/cert SSL",
+    "run_id": "run_751df2056d",
+    "status": "completed",
+    "report_len": 6922,
+    "has_citations": true,
+    "is_ood_refusal": false,
+    "preview": "# Báo cáo Nghiên cứu: Lệnh OpenSSL chính xác được tài liệu hướng dẫn dùng để tạo cặp key/chứng chỉ SSL tự ký là gì?  > **Trạng thái Thẩm định:** [`ANSWERED_DIRE"
+  },
+  {
+    "label": "6. Chỉ thị location và proxy_pass cho /api/",
+    "run_id": "run_e733e2479e",
+    "status": "completed",
+    "report_len": 6898,
+    "has_citations": true,
+    "is_ood_refusal": false,
+    "preview": "# Báo cáo Nghiên cứu: Để chuyển tiếp toàn bộ request từ đường dẫn /api/... đến backend chạy cổng 5000, chỉ thị location và proxy_pass được viết như thế nào?  > "
+  },
+  {
+    "label": "7. Bốn header quan trọng trong proxy_set_header",
+    "run_id": "run_927bf8dd96",
+    "status": "completed",
+    "report_len": 7823,
+    "has_citations": true,
+    "is_ood_refusal": false,
+    "preview": "# Báo cáo Nghiên cứu: Bốn header quan trọng bắt buộc cần khai báo trong proxy_set_header là gì và biến giá trị tương ứng của chúng?  > **Trạng thái Thẩm định:**"
+  },
+  {
+    "label": "8. Địa chỉ IP backend thấy nếu thiếu X-Real-IP",
+    "run_id": "run_2344f3cec3",
+    "status": "completed",
+    "report_len": 5250,
+    "has_citations": true,
+    "is_ood_refusal": false,
+    "preview": "# Báo cáo Nghiên cứu: Nếu thiếu khai báo proxy_set_header X-Real-IP $remote_addr, backend sẽ nhìn thấy địa chỉ IP của client là gì?  > **Trạng thái Thẩm định:**"
+  },
+  {
+    "label": "9. Cú pháp khai báo khối upstream my_backends",
+    "run_id": "run_4a00f9ca96",
+    "status": "completed",
+    "report_len": 6481,
+    "has_citations": true,
+    "is_ood_refusal": false,
+    "preview": "# Báo cáo Nghiên cứu: Cú pháp khai báo khối upstream my_backends mẫu trong tài liệu gồm những server và địa chỉ nào?  > **Trạng thái Thẩm định:** [`ANSWERED_DIR"
+  },
+  {
+    "label": "10. Chỉ thị proxy_pass vào upstream my_backends",
+    "run_id": "run_18ec4541bb",
+    "status": "completed",
+    "report_len": 6462,
+    "has_citations": true,
+    "is_ood_refusal": false,
+    "preview": "# Báo cáo Nghiên cứu: Khi muốn NGINX chuyển tiếp request vào cụm upstream my_backends, chỉ thị proxy_pass được viết ra sao?  > **Trạng thái Thẩm định:** [`ANSWE"
+  },
+  {
+    "label": "11. Thuật toán cân bằng tải mặc định round-robin",
+    "run_id": "run_2c71b1ff3c",
+    "status": "completed",
+    "report_len": 6686,
+    "has_citations": true,
+    "is_ood_refusal": false,
+    "preview": "# Báo cáo Nghiên cứu: Thuật toán cân bằng tải mặc định của NGINX khi khai báo upstream mà không chỉ định thuật toán khác là gì?  > **Trạng thái Thẩm định:** [`A"
+  },
+  {
+    "label": "12. Nguyên lý hoạt động least_conn",
+    "run_id": "run_b9eacbe64b",
+    "status": "completed",
+    "report_len": 7426,
+    "has_citations": true,
+    "is_ood_refusal": false,
+    "preview": "# Báo cáo Nghiên cứu: Thuật toán least_conn hoạt động theo nguyên lý nào theo mô tả trong bài giảng?  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]   > "
+  },
+  {
+    "label": "13. Tham số trọng số weight cho phần cứng không đều",
+    "run_id": "run_623f87179d",
+    "status": "completed",
+    "report_len": 7621,
+    "has_citations": true,
+    "is_ood_refusal": false,
+    "preview": "# Báo cáo Nghiên cứu: Khi các node backend có cấu hình phần cứng không đồng đều (máy mạnh, máy yếu), NGINX cung cấp tham số nào để ưu tiên tải?  > **Trạng thái "
+  },
+  {
+    "label": "14. Mục đích chạy nhiều node/instance song song",
+    "run_id": "run_36b9913926",
+    "status": "completed",
+    "report_len": 6995,
+    "has_citations": true,
+    "is_ood_refusal": false,
+    "preview": "# Báo cáo Nghiên cứu: Mục đích chính của việc chạy nhiều instance backend/nhiều node server song song sau NGINX là gì?  > **Trạng thái Thẩm định:** [`ANSWERED_D"
+  },
+  {
+    "label": "15. Tên service trong Docker network",
+    "run_id": "run_6bb356b90a",
+    "status": "completed",
+    "report_len": 6116,
+    "has_citations": true,
+    "is_ood_refusal": false,
+    "preview": "# Báo cáo Nghiên cứu: Khi NGINX và Frontend/Backend cùng đóng gói trong Docker network, proxy_pass trỏ đến địa chỉ nào thay vì localhost?  > **Trạng thái Thẩm đ"
+  },
+  {
+    "label": "16. Giá trị mặc định client_max_body_size (1MB)",
+    "run_id": "run_a2325b45d4",
+    "status": "completed",
+    "report_len": 8422,
+    "has_citations": true,
+    "is_ood_refusal": false,
+    "preview": "# Báo cáo Nghiên cứu: Chỉ thị client_max_body_size có giá trị mặc định là bao nhiêu MB?  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]   > **Câu trả lời"
+  },
+  {
+    "label": "17. Mã lỗi HTTP khi vượt quá 1MB (413 Payload Too Large)",
+    "run_id": "run_1c9d51fdca",
+    "status": "completed",
+    "report_len": 8173,
+    "has_citations": true,
+    "is_ood_refusal": false,
+    "preview": "# Báo cáo Nghiên cứu: Khi người dùng upload một file hoặc ảnh vượt quá 1MB mà chưa cấu hình tăng kích thước body, NGINX trả về mã lỗi HTTP nào?  > **Trạng thái "
+  },
+  {
+    "label": "18. File hosts trên Windows native và quyền Admin",
+    "run_id": "run_0ac2dc006e",
+    "status": "completed",
+    "report_len": 7534,
+    "has_citations": true,
+    "is_ood_refusal": false,
+    "preview": "# Báo cáo Nghiên cứu: Khi chạy NGINX native trên Windows, file hosts nằm ở đường dẫn chính xác nào và yêu cầu quyền hạn gì để lưu file?  > **Trạng thái Thẩm địn"
+  },
+  {
+    "label": "19. WSL2 tự động sinh đè /etc/hosts",
+    "run_id": "run_2ca4d62b7b",
+    "status": "completed",
+    "report_len": 8645,
+    "has_citations": true,
+    "is_ood_refusal": false,
+    "preview": "# Báo cáo Nghiên cứu: Trên môi trường WSL2, tại sao các dòng cấu hình domain thêm thủ công vào /etc/hosts lại bị mất sau khi khởi động lại máy?  > **Trạng thái "
+  },
+  {
+    "label": "20. Tắt vĩnh viễn ghi đè hosts bằng wsl.conf",
+    "run_id": "run_e0868970ad",
+    "status": "completed",
+    "report_len": 7510,
+    "has_citations": true,
+    "is_ood_refusal": false,
+    "preview": "# Báo cáo Nghiên cứu: Làm cách nào để tắt vĩnh viễn tính năng tự động sinh lại file /etc/hosts trên WSL2?  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]"
+  },
+  {
+    "label": "21. Nguyên nhân cảnh báo Not Secure với self-signed cert",
+    "run_id": "run_1773875bf2",
+    "status": "completed",
+    "report_len": 6477,
+    "has_citations": true,
+    "is_ood_refusal": false,
+    "preview": "# Báo cáo Nghiên cứu: Tại sao trình duyệt lại cảnh báo Not Secure hoặc NET::ERR_CERT_AUTHORITY_INVALID khi truy cập HTTPS dùng chứng chỉ tự ký?  > **Trạng thái "
+  },
+  {
+    "label": "22. Chuỗi tin cậy Chain of Trust Root CA -> Inter CA",
+    "run_id": "run_1135b192ec",
+    "status": "completed",
+    "report_len": 7283,
+    "has_citations": true,
+    "is_ood_refusal": false,
+    "preview": "# Báo cáo Nghiên cứu: Chuỗi tin cậy (Chain of Trust) của chứng chỉ SSL hoạt động như thế nào giữa Trình duyệt, Root CA và Intermediate CA?  > **Trạng thái Thẩm "
+  },
+  {
+    "label": "23. Công cụ Certbot / Let's Encrypt cho server thật",
+    "run_id": "run_53b56b34d1",
+    "status": "completed",
+    "report_len": 7570,
+    "has_citations": true,
+    "is_ood_refusal": false,
+    "preview": "# Báo cáo Nghiên cứu: Công cụ tự động nào được tài liệu khuyến nghị sử dụng trên môi trường server thật để xin chứng chỉ SSL miễn phí và tự động gia hạn?  > **T"
+  },
+  {
+    "label": "24. Thời hạn hiệu lực 365 ngày của cert tự ký",
+    "run_id": "run_a85fb3e196",
+    "status": "completed",
+    "report_len": 9436,
+    "has_citations": true,
+    "is_ood_refusal": false,
+    "preview": "# Báo cáo Nghiên cứu: Thời hạn hiệu lực của chứng chỉ SSL tự ký được tạo bởi câu lệnh OpenSSL mẫu trong bài là bao nhiêu ngày?  > **Trạng thái Thẩm định:** [`AN"
+  },
+  {
+    "label": "25. Hai chỉ thị ssl_certificate và ssl_certificate_key",
+    "run_id": "run_4c158fbee9",
+    "status": "completed",
+    "report_len": 7176,
+    "has_citations": true,
+    "is_ood_refusal": false,
+    "preview": "# Báo cáo Nghiên cứu: Hai chỉ thị NGINX bắt buộc phải khai báo để nạp đường dẫn chứng chỉ SSL và private key trong server block là gì?  > **Trạng thái Thẩm định"
+  },
+  {
+    "label": "26. Ngoài miền: Cụm Apache Kafka phân tán",
+    "run_id": "run_d6f7dc139d",
+    "status": "completed",
+    "report_len": 6892,
+    "has_citations": true,
+    "is_ood_refusal": false,
+    "preview": "# Báo cáo Nghiên cứu: Bài giảng Buổi 8 có hướng dẫn cấu hình cụm Apache Kafka phân tán bằng Docker Compose không?  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT"
+  },
+  {
+    "label": "27. Ngoài miền: Kubernetes Ingress Controller với Traefik",
+    "run_id": "run_39bed4486d",
+    "status": "completed",
+    "report_len": 9727,
+    "has_citations": true,
+    "is_ood_refusal": false,
+    "preview": "# Báo cáo Nghiên cứu: Cấu hình Kubernetes Ingress Controller với Traefik được bài giảng đề cập ở trang số mấy?  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QU"
+  },
+  {
+    "label": "28. Ngoài miền: Mã hóa lượng tử hậu kỳ Kyber",
+    "run_id": "run_2ab1a5c6dd",
+    "status": "completed",
+    "report_len": 6158,
+    "has_citations": true,
+    "is_ood_refusal": false,
+    "preview": "# Báo cáo Nghiên cứu: Thuật toán mã hóa lượng tử hậu kỳ (Post-Quantum Cryptography Kyber) cho NGINX được giải thích ra sao?  > **Trạng thái Thẩm định:** [`ANSWE"
+  },
+  {
+    "label": "29. Lệnh nhanh /tom-tat tài liệu NGINX",
+    "run_id": "run_4ebdb8ebe5",
+    "status": "completed",
+    "report_len": 8758,
+    "has_citations": true,
+    "is_ood_refusal": false,
+    "preview": "# Báo cáo Nghiên cứu: Tóm tắt tổng quan nội dung, các đóng góp cốt lõi và kết quả chính của tài liệu nghiên cứu.  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_"
+  },
+  {
+    "label": "30. Lệnh nhanh /dong-gop & Điểm mới",
+    "run_id": "run_2d9ea77465",
+    "status": "completed",
+    "report_len": 5899,
+    "has_citations": true,
+    "is_ood_refusal": false,
+    "preview": "# Báo cáo Nghiên cứu: Trích xuất và phân tích các đóng góp khoa học mới (novelty và contributions) được đề xuất trong tài liệu.  > **Trạng thái Thẩm định:** [`A"
+  }
+]

@@ -31,9 +31,17 @@ def orchestrator_router_node(state: AgentState) -> dict[str, Any]:
         f"Complexity={plan.complexity} | SubQueries={len(plan.sub_queries)} | Retry={retry_count}"
     )
 
+    intent_labels = {
+        "FACTOID": "Tra cứu số liệu / Thực thể",
+        "COMPARISON": "So sánh đối chiếu đa tài liệu",
+        "SYNTHESIS": "Tổng quan & Phân tích chuyên sâu",
+        "OUT_OF_DOMAIN": "Kiểm tra phạm vi dữ liệu"
+    }
+    intent_desc = intent_labels.get(plan.intent, plan.intent)
     trace = {
         "node": "SupervisorPlanner",
-        "action": "plan_and_route",
+        "stage": "Thought",
+        "action": f"Phân tích mục tiêu: Ý định '{intent_desc}' • Độ phức tạp '{plan.complexity}' • Tự động phân rã {len(plan.sub_queries)} sub-queries",
         "intent": plan.intent,
         "complexity": plan.complexity,
         "sub_queries": plan.sub_queries,
@@ -104,9 +112,11 @@ def retry_loop_node(state: AgentState) -> dict[str, Any]:
         f"với sub_queries={new_sub_queries}"
     )
 
+    max_loops = state.get("max_reflection_loops") or state.get("max_iterations") or settings.MAX_ORCHESTRATOR_RETRY
     trace = {
         "node": "Orchestrator_SelfCorrection",
-        "action": "gap_driven_requery",
+        "stage": "Reflection",
+        "action": f"Kích hoạt vòng tự sửa sai ({current_retry}/{max_loops}): Tự động phát hiện lỗ hổng & truy hồi bù khuyết cho {len(missing_points)} điểm thiếu",
         "new_retry_count": current_retry,
         "new_sub_queries": new_sub_queries,
     }
@@ -160,13 +170,14 @@ def route_after_summarizer(state: AgentState) -> Literal["fact_checker_node", "r
     critic_action = state.get("critic_action", "approve")
     retry_count = state.get("retry_count", 0)
     no_new_evidence = state.get("no_new_evidence", False)
+    max_loops = state.get("max_reflection_loops") or state.get("max_iterations") or settings.MAX_ORCHESTRATOR_RETRY
 
     if (
         critic_action == "request_more_context"
-        and retry_count < min(settings.MAX_ORCHESTRATOR_RETRY, 2)
+        and retry_count < max_loops
         and not no_new_evidence
     ):
-        logger.info("[Routing] Inner Critic yêu cầu 'request_more_context' -> Quay về Retrieval lấy thêm tài liệu.")
+        logger.info(f"[Routing] Inner Critic yêu cầu 'request_more_context' (vòng {retry_count+1}/{max_loops}) -> Quay về Retrieval lấy thêm tài liệu.")
         return "retry_loop_node"
 
     return "fact_checker_node"
@@ -177,24 +188,25 @@ def route_after_fact_check(state: AgentState) -> Literal["writer_node", "retry_l
     Outer Fact-Checker Gate:
     - Nếu support -> Sang Writer Agent
     - Nếu contradict / not_enough_info:
-        + Nếu retry_count >= MAX_ORCHESTRATOR_RETRY hoặc no_new_evidence -> Sang Escalation Node
+        + Nếu retry_count >= max_loops hoặc no_new_evidence -> Sang Escalation Node
         + Ngược lại -> Sang retry_loop_node -> Retrieval Agent
     """
     label = state.get("fact_check_label", "not_enough_info")
     retry_count = state.get("retry_count", 0)
     no_new_evidence = state.get("no_new_evidence", False)
+    max_loops = state.get("max_reflection_loops") or state.get("max_iterations") or settings.MAX_ORCHESTRATOR_RETRY
 
-    if label == "support":
+    if label in ["support", "supported"]:
         logger.info("[Routing] Fact-check: SUPPORT -> Tiến hành viết báo cáo cuối cùng.")
         return "writer_node"
 
-    if retry_count >= settings.MAX_ORCHESTRATOR_RETRY or no_new_evidence:
+    if retry_count >= max_loops or no_new_evidence:
         logger.warning(
-            f"[Routing] Dừng lặp (retry={retry_count}, no_new_evidence={no_new_evidence}) -> Chuyển sang Escalation/Writer."
+            f"[Routing] Dừng lặp (retry={retry_count}/{max_loops}, no_new_evidence={no_new_evidence}) -> Chuyển sang Escalation/Writer."
         )
         return "escalation_node"
 
-    logger.info(f"[Routing] Fact-check: {label} (retry {retry_count}/{settings.MAX_ORCHESTRATOR_RETRY}) -> Quay lại Retrieval.")
+    logger.info(f"[Routing] Fact-check: {label} (retry {retry_count}/{max_loops}) -> Quay lại Retrieval.")
     return "retry_loop_node"
 
 

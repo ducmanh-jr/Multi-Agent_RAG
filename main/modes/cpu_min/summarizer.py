@@ -22,6 +22,12 @@ from agents.agent1_retrieval.tools.bm25 import SimpleBM25
 from core.base_agent import BaseAgent
 from core.state import AgentState, AtomicClaim, EvidenceSpan
 from core.verifier import evaluate_inner_critic_fast
+from utils.domain_guard import (
+    check_out_of_domain,
+    build_out_of_domain_response,
+    _has_phrase,
+    strip_accents,
+)
 
 
 def strip_accents(text: str) -> str:
@@ -95,8 +101,21 @@ def unwrap_pdf_text(text: str) -> str:
 
 def extract_clean_sentences(text: str) -> list[str]:
     """Extract complete, grammatical sentences from unwrapped text with artifact removal."""
-    clean_text = unwrap_pdf_text(text)
-    raw_sentences = re.split(r"(?<=[.!?])\s+", clean_text)
+    if not text:
+        return []
+    cleaned = re.sub(r"Buổi \d+.*?\.md\s+\d{4}-\d{2}-\d{2}\s+\d+\s*/\s*\d+", "", text)
+    lines = [l.strip() for l in cleaned.split("\n")]
+    unwrapped = []
+    for l in lines:
+        if not l:
+            continue
+        if unwrapped and (unwrapped[-1][-1] not in ".!?:;\"”" or (unwrapped[-1].endswith(":") and not re.match(r"^[-*•\d]", l))):
+            unwrapped[-1] += " " + l
+        else:
+            unwrapped.append(l)
+    unified = "\n".join(unwrapped)
+    unified = re.sub(r"([.!?])(?=[A-ZĐ0-9])", r"\1 \n", unified)
+    raw_sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+|\n+", unified) if len(s.strip()) > 18]
     sentences = []
 
     dangling_words = {
@@ -165,12 +184,20 @@ class CPUMinSummarizerAgent(BaseAgent):
         super().__init__(name="CPUMinSummarizerAgent", max_internal_retry=max_internal_retry)
 
     def run(self, state: AgentState) -> dict[str, Any]:
-        query = state.get("query", "")
+        query = state.get("query") or state.get("question", "")
         clean_q = query.strip()
         source_units = state.get("source_units", []) or []
         required_entities = state.get("required_entities", []) or []
 
         self.logger.info(f"[CPU Min Summarizer] Synthesizing for query: '{clean_q}' ({len(source_units)} units)")
+
+        is_ood, ood_reason = check_out_of_domain(clean_q, source_units)
+        if is_ood:
+            self.logger.info(f"[CPU Min Summarizer] Zero-Hallucination Guard triggered: {ood_reason}")
+            res = build_out_of_domain_response(clean_q, model_family="cpu_min_guard")
+            trace = self.log_action("cpu_min_summarization_completed", {"status": "out_of_domain", "reason": ood_reason})
+            res["reasoning_trace"] = [trace]
+            return res
 
         # Kịch bản 2: Khi kho tài liệu không có văn bản nào được tải
         if not source_units:
@@ -222,14 +249,19 @@ class CPUMinSummarizerAgent(BaseAgent):
             )
         ) and not (is_date_q or is_year_q)
 
+        is_comparison_q = any(
+            w in clean_q.lower()
+            for w in ["so sánh", "đối chiếu", "so sanh", "doi chieu", "khác nhau", "khác biệt", "so-sanh", "so_sanh", "compare", "/so-sanh"]
+        ) or bool(state.get("is_comparative_query") or state.get("intent") == "compare")
+
         is_general_summary = any(
             w in clean_q.lower()
             for w in [
                 "tóm tắt", "tổng quan", "nội dung chính", "chính", "summary", "overview",
                 "abstract", "giới thiệu", "phương pháp", "kết quả", "đóng góp", "2 bài báo",
-                "các bài báo", "nói về gì", "nói về cái gì",
+                "các bài báo", "nói về gì", "nói về cái gì", "/tom-tat", "tom-tat"
             ]
-        )
+        ) or is_comparison_q or bool(state.get("is_comparative_query") or state.get("intent") == "compare")
 
         # 2. Group source units by distinct document
         docs_map: dict[str, list[dict[str, Any]]] = {}
@@ -305,7 +337,7 @@ class CPUMinSummarizerAgent(BaseAgent):
                 missing_group_phrase = True
 
         is_out_of_domain = False
-        if not is_general_summary:
+        if not is_general_summary and not is_comparison_q:
             if missing_tech or missing_group_phrase:
                 is_out_of_domain = True
             elif proper_noun_phrases and not any(
@@ -335,8 +367,8 @@ class CPUMinSummarizerAgent(BaseAgent):
                 "reasoning_trace": [self.log_action("cpu_min_summarization_completed", {"status": "out_of_domain"})],
             }
 
-        # 5. MULTI-DOCUMENT SUMMARY (when user selects >= 2 documents and asks for summary / overview)
-        if len(docs_map) > 1 and is_general_summary:
+        # 5. MULTI-DOCUMENT SUMMARY (when user selects >= 2 documents)
+        if len(docs_map) > 1 and (is_general_summary or is_comparison_q):
             claims: list[dict[str, Any]] = []
             evidence_spans: list[dict[str, Any]] = []
             doc_sections: list[str] = []
@@ -514,10 +546,10 @@ class CPUMinSummarizerAgent(BaseAgent):
             for idx_s, s in enumerate(sents):
                 s_lower = s.lower()
                 s_lower_unaccent = strip_accents(s_lower)
-                token_hits = sum(1 for t in q_tokens if t in s_lower or strip_accents(t) in s_lower_unaccent)
-                bigram_hits = sum(1 for b in q_bigrams if b in s_lower or strip_accents(b) in s_lower_unaccent)
-                ent_hits = sum(1 for e in entities if e in s_lower or strip_accents(e) in s_lower_unaccent)
-                req_ent_hits = sum(1 for r_ent in required_entities if r_ent.lower() in s_lower or strip_accents(r_ent.lower()) in s_lower_unaccent)
+                token_hits = sum(1 for t in q_tokens if _has_phrase(t, s_lower, s_lower_unaccent, bool(re.search(r"[à-ỹÀ-Ỹ]", t))))
+                bigram_hits = sum(1 for b in q_bigrams if _has_phrase(b, s_lower, s_lower_unaccent, bool(re.search(r"[à-ỹÀ-Ỹ]", b))))
+                ent_hits = sum(1 for e in entities if _has_phrase(e, s_lower, s_lower_unaccent, bool(re.search(r"[à-ỹÀ-Ỹ]", e))))
+                req_ent_hits = sum(1 for r_ent in required_entities if _has_phrase(r_ent, s_lower, s_lower_unaccent, bool(re.search(r"[à-ỹÀ-Ỹ]", r_ent))))
 
                 has_date = bool(re.search(r"\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b", s))
                 has_year = bool(re.search(r"\b(?:19\d\d|20\d\d)\b", s))
@@ -548,7 +580,7 @@ class CPUMinSummarizerAgent(BaseAgent):
                 richness = 3 if 60 <= len(s) <= 350 else 1
                 score += richness
 
-                if score >= 3 and (bigram_hits >= 1 or token_hits >= 2 or ent_hits >= 1 or is_general_summary):
+                if score >= 3 and (bigram_hits >= 1 or token_hits >= 1 or ent_hits >= 1 or is_general_summary):
                     all_candidates.append(
                         {
                             "sentence": s,

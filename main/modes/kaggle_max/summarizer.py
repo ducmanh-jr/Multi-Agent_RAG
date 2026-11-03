@@ -7,6 +7,7 @@ Deploys Qwen/Qwen3-32B-AWQ (or QwQ-32B-AWQ) with /think Chain-of-Thought reasoni
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from agents.agent3_summarizer.components.generator import (
@@ -23,6 +24,8 @@ from core.verifier import (
     split_answer_into_atomic_claims,
 )
 from utils.llm_client import llm_client
+from utils.domain_guard import check_out_of_domain, build_out_of_domain_response
+from modes.cpu_min.summarizer import CPUMinSummarizerAgent
 
 
 class KaggleMaxSummarizerAgent(BaseAgent):
@@ -30,11 +33,22 @@ class KaggleMaxSummarizerAgent(BaseAgent):
 
     def __init__(self, max_internal_retry: int = 2):
         super().__init__(name="KaggleMaxSummarizerAgent", max_internal_retry=max_internal_retry)
+        self.cpu_engine = CPUMinSummarizerAgent()
 
     def run(self, state: AgentState) -> dict[str, Any]:
-        query = state.get("query", "")
+        query = state.get("query") or state.get("question", "")
         source_units = state.get("source_units", []) or []
         required_entities = state.get("required_entities", []) or []
+
+        clean_q = query.strip()
+        is_ood, ood_reason = check_out_of_domain(clean_q, source_units)
+        if is_ood:
+            self.logger.info(f"[Kaggle Max Summarizer] Zero-Hallucination Guard triggered: {ood_reason}")
+            res = build_out_of_domain_response(clean_q, model_family="qwen3_32b_awq")
+            res["thinking_trace"] = f"<think>Phát hiện câu hỏi nằm ngoài phạm vi tài liệu ({ood_reason}). Kích hoạt phản hồi Zero-Hallucination Honest Refusal.</think>"
+            trace = self.log_action("kaggle_max_summarization_completed", {"status": "out_of_domain", "reason": ood_reason})
+            res["reasoning_trace"] = [trace]
+            return res
 
         self.logger.info(f"[Kaggle Max Summarizer] 32B /think CoT reasoning on Dual T4 for: '{query[:65]}'")
 
@@ -95,10 +109,11 @@ YÊU CẦU TRẢ VỀ ĐÚNG ĐỊNH DẠNG JSON:
             except Exception as e:
                 self.logger.warning(f"[Kaggle Max Summarizer] Remote 32B GPU error: {e}")
 
-        if not answer:
-            answer, fb_spans, _ = generate_summary_and_claims(query, source_units)
-            raw_spans = fb_spans
-            critic_out = evaluate_inner_critic_fast(query, answer, source_units, required_entities)
+        if not answer or len(answer.strip()) < 50 or "chế độ dự phòng" in answer:
+            self.logger.warning("[Kaggle Max Summarizer] Remote 32B GPU offline/timeout, falling back to High-Precision CPU Engine.")
+            res = self.cpu_engine.run(state)
+            res["generator_model_family"] = "kaggle_max_cpu_fallback"
+            return res
 
         evidence_spans: list[dict[str, Any]] = []
         for idx, sp in enumerate(raw_spans[:6]):

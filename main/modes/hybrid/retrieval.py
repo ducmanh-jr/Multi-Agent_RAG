@@ -52,8 +52,9 @@ class HybridRetrievalAgent(BaseAgent):
             self.bm25_fallback.fit(docs)
 
     def run(self, state: AgentState) -> dict[str, Any]:
-        query = state.get("query", "")
+        query = state.get("query") or state.get("question", "")
         pdf_path = state.get("pdf_path")
+        pdf_paths = state.get("pdf_paths") or ([pdf_path] if pdf_path else [])
         retry_count = state.get("retry_count", 0)
         seen_chunks = state.get("seen_chunks", []) or []
 
@@ -85,8 +86,13 @@ class HybridRetrievalAgent(BaseAgent):
 
         sub_queries = sub_queries[:5]
 
-        # 1. Scope strictly to user-selected PDF if provided
-        pdf_chunks = load_or_parse_selected_pdf(pdf_path) if pdf_path else []
+        # 1. Scope strictly to user-selected PDF(s) if provided
+        pdf_chunks = []
+        for p in pdf_paths:
+            if p:
+                chunks = load_or_parse_selected_pdf(p)
+                if chunks:
+                    pdf_chunks.extend(chunks)
         if pdf_chunks:
             active_fts = SQLiteFTS5Searcher()
             active_bm25 = SimpleBM25()
@@ -140,18 +146,24 @@ class HybridRetrievalAgent(BaseAgent):
         seen_ids = {c.get("id") for c in seen_chunks if isinstance(c, dict)}
         fresh_docs = [d for d in fused if d.get("id") not in seen_ids]
         no_new_evidence = len(fresh_docs) == 0 and retry_count > 0
-        if not fresh_docs and fused:
-            fresh_docs = fused[:top_k]
+
+        # Preserve cumulative context: merged_docs combines fresh_docs with previous seen_chunks
+        # so reader and summarizer have the full cumulative evidence pool across reflection loops
+        merged_docs = list(fresh_docs) if fresh_docs else list(fused[:top_k])
+        for sc in seen_chunks:
+            if isinstance(sc, dict) and sc.get("id") not in {d.get("id") for d in merged_docs}:
+                merged_docs.append(sc)
 
         all_seen = list(seen_chunks) + [d for d in fresh_docs if d.get("id") not in seen_ids]
 
         trace = self.log_action(
-            "hybrid_retrieval_completed",
+            f"Truy hồi FTS5 + BM25 C-Engine & Mở rộng đa góc nhìn STORM ({len(merged_docs)} đoạn trích)",
             {
                 "engine": "Hybrid_Local_FTS5_BM25_STORM_RRF",
                 "scoped_to_selected_pdf": bool(pdf_chunks),
                 "sub_queries": sub_queries,
-                "retrieved_count": len(fresh_docs),
+                "retrieved_count": len(merged_docs),
+                "fresh_count": len(fresh_docs),
             },
         )
 
@@ -159,7 +171,7 @@ class HybridRetrievalAgent(BaseAgent):
             "perspectives": perspectives,
             "sub_queries": sub_queries,
             "required_entities": required_entities,
-            "retrieved_docs": fresh_docs,
+            "retrieved_docs": merged_docs[: top_k + 4],
             "seen_chunks": all_seen,
             "no_new_evidence": no_new_evidence,
             "reasoning_trace": [trace],

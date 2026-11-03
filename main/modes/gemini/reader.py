@@ -23,6 +23,7 @@ class GeminiReaderAgent(BaseAgent):
 
     def run(self, state: AgentState) -> dict[str, Any]:
         pdf_path = state.get("pdf_path")
+        pdf_paths = state.get("pdf_paths") or ([pdf_path] if pdf_path else [])
         retrieved_docs = state.get("retrieved_docs", []) or []
 
         self.logger.info(
@@ -70,9 +71,12 @@ class GeminiReaderAgent(BaseAgent):
                     curr_offset += len(table_md) + 1
 
             if not source_units:
-                schema, units = parse_pdf_document(pdf_path)
-                document_schema = schema
-                source_units.extend([u.to_dict() for u in units[:12]])
+                for p in pdf_paths:
+                    if p and os.path.exists(p):
+                        schema, units = parse_pdf_document(p)
+                        if not document_schema:
+                            document_schema = schema
+                        source_units.extend([u.to_dict() for u in units[:8]])
 
         if not document_schema:
             document_schema = {

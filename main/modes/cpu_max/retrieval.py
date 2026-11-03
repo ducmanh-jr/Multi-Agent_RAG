@@ -71,15 +71,16 @@ class CPUMaxRetrievalAgent(BaseAgent):
             required_entities = plan.required_entities
             top_k = plan.top_k
 
-        # Detect summary / overview intent
+        # Detect summary / overview / comparison intent
         is_summary_query = any(
             w in clean_q.lower()
             for w in [
                 "tóm tắt", "tổng quan", "nội dung chính", "chính", "summary", "overview",
                 "abstract", "giới thiệu", "phương pháp", "kết quả", "đóng góp", "2 bài báo",
-                "các bài báo", "nói về gì", "nói về cái gì",
+                "các bài báo", "nói về gì", "nói về cái gì", "/tom-tat", "tom-tat",
+                "so sánh", "đối chiếu", "so sanh", "doi chieu", "khác nhau", "khác biệt", "so-sanh", "so_sanh", "compare", "/so-sanh"
             ]
-        )
+        ) or bool(state.get("is_comparative_query") or state.get("intent") == "compare")
 
         self.logger.info(
             f"[CPU Max Retrieval] Running STORM + Hybrid RRF for: '{clean_q[:65]}' "

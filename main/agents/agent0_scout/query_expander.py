@@ -70,19 +70,51 @@ OUT_OF_DOMAIN_PATTERNS = [
 ]
 
 
+NON_STEM_PATTERNS = [
+    (r"\b(ô\s*tô|xe\s*hơi|người\s*phát\s*minh|phát\s*minh\s*ra|lịch\s*sử|karl\s*benz|daimler|đại\s*học\s*xây\s*dựng|tô\s*lâm|chính\s*trị|văn\s*học|triết\s*học|luật)\b",
+     "Lịch sử / Khoa học Xã hội / Nhân văn"),
+]
+
 def _rule_based_fallback(user_query: str) -> dict[str, Any]:
-    """Fast local fallback if LLM is unreachable."""
+    """Fast local rule engine."""
     q_lower = user_query.strip().lower()
     
-    if not q_lower or q_lower in {"ai", "trí tuệ nhân tạo", "tri tue nhan tao"}:
+    if not q_lower:
         return {
-            "decision": "CLARIFY" if q_lower else "REJECT",
-            "domain": "STEM" if q_lower else "NON_STEM",
-            "reason": "too_broad" if q_lower else "empty",
+            "decision": "REJECT",
+            "domain": "NON_STEM",
+            "reason": "empty",
+            "message": "Vui lòng nhập chủ đề hoặc từ khóa tìm kiếm.",
+            "academic_query": "",
+            "perspectives": []
+        }
+
+    if q_lower in {"ai", "trí tuệ nhân tạo", "tri tue nhan tao"}:
+        return {
+            "decision": "CLARIFY",
+            "domain": "STEM",
+            "reason": "too_broad",
             "message": "Từ khóa 'AI' quá rộng. Bạn muốn tìm về mảng nào: LLM, Computer Vision, hay Reinforcement Learning?",
             "academic_query": "",
             "perspectives": []
         }
+
+    for pat, domain_name in NON_STEM_PATTERNS:
+        if re.search(pat, q_lower):
+            words = re.findall(r"[a-zA-Z0-9_-]+", user_query)
+            clean_kw = " ".join(words[:5]) if words else "scholarly work"
+            return {
+                "decision": "SEARCH",
+                "domain": "NON_STEM",
+                "reason": "non_stem_scholarly",
+                "message": f"Chủ đề học thuật về {domain_name}.",
+                "academic_query": clean_kw,
+                "perspectives": [
+                    {"angle": "Architecture", "query": clean_kw},
+                    {"angle": "Benchmark", "query": clean_kw},
+                    {"angle": "Recent", "query": clean_kw}
+                ]
+            }
 
     for pat, domain_name in OUT_OF_DOMAIN_PATTERNS:
         if re.search(pat, q_lower):
@@ -113,8 +145,7 @@ def _rule_based_fallback(user_query: str) -> dict[str, Any]:
 
 def analyze_intent(user_query: str) -> dict[str, Any]:
     """
-    Executes SOTA 3-way intent classification using LLM Intent Engine.
-    Cached persistently in SQLite.
+    Fast rule-first intent classification with graceful fallback.
     """
     clean_q = user_query.strip()
     if not clean_q:
@@ -127,45 +158,28 @@ def analyze_intent(user_query: str) -> dict[str, Any]:
             "perspectives": []
         }
 
-    # First check obvious out-of-domain patterns to save LLM calls
+    # Fast check: If matches non-STEM or STEM directly, return in <1ms without hitting LLM rate limits
     q_lower = clean_q.lower()
-    if not any(stem in q_lower for stem in ["ai", "machine learning", "deep learning", "học máy", "học sâu", "dữ liệu", "algorithm"]):
-        for pat, domain_name in OUT_OF_DOMAIN_PATTERNS:
-            if re.search(pat, q_lower):
-                return {
-                    "decision": "REJECT",
-                    "domain": "NON_STEM",
-                    "reason": "out_of_domain",
-                    "message": f"Chủ đề về {domain_name} nằm ngoài phạm vi lưu trữ của ArXiv (Khoa học máy tính, AI, Toán học, Vật lý...). Bạn vui lòng tải trực tiếp tài liệu PDF vào Kho Tài Liệu bên trái.",
-                    "academic_query": "",
-                    "perspectives": []
-                }
+    for pat, domain_name in NON_STEM_PATTERNS:
+        if re.search(pat, q_lower):
+            return _rule_based_fallback(clean_q)
 
-    prompt = f"Analyze this user query:\n\"{clean_q}\""
-    try:
-        raw = llm_client.generate(
-            prompt=prompt, 
-            system_instruction=SYSTEM_PROMPT, 
-            json_mode=True, 
-            temperature=0.1
-        )
-        raw_clean = raw.strip()
-        if raw_clean.startswith("```json"):
-            raw_clean = raw_clean[7:]
-        if raw_clean.endswith("```"):
-            raw_clean = raw_clean[:-3]
-        parsed = json.loads(raw_clean.strip())
-        
-        decision = parsed.get("decision", "SEARCH").upper()
-        if decision not in ("SEARCH", "CLARIFY", "REJECT"):
-            decision = "SEARCH"
-            
-        parsed["decision"] = decision
-        logger.info(f"[Scout Intent Engine] Query: '{clean_q}' -> Decision: {decision} | Domain: {parsed.get('domain')}")
-        return parsed
-    except Exception as e:
-        logger.warning(f"[Scout Intent Engine] LLM call failed ({e}). Falling back to rule engine.")
-        return _rule_based_fallback(clean_q)
+    # If it has standard STEM indicators (transformer, attention, deep learning, cnn, llm, neural, rna, protein, math)
+    if any(stem in q_lower for stem in ["attention", "transformer", "bert", "gpt", "lora", "diffusion", "ai", "machine learning", "deep learning", "học máy", "học sâu", "algorithm"]):
+        return {
+            "decision": "SEARCH",
+            "domain": "STEM",
+            "reason": "stem_academic",
+            "message": "Chủ đề học thuật STEM hợp lệ.",
+            "academic_query": clean_q,
+            "perspectives": [
+                {"angle": "Architecture", "query": f"{clean_q} architecture"},
+                {"angle": "Benchmark", "query": f"{clean_q} benchmark"},
+                {"angle": "Recent", "query": f"{clean_q} 2024"}
+            ]
+        }
+
+    return _rule_based_fallback(clean_q)
 
 
 def translate_to_academic_english(user_query: str) -> str:

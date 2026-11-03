@@ -143,9 +143,13 @@ class CreateRunRequest(BaseModel):
     profile: Optional[str] = "balanced"
 
     model: Optional[str] = None
+    max_iterations: Optional[int] = 2
+    chat_history: Optional[list[dict[str, str]]] = None
+    session_id: Optional[str] = None
 
 
-
+class RenameSessionRequest(BaseModel):
+    title: str
 
 
 class DirectResearchRequest(BaseModel):
@@ -1029,32 +1033,32 @@ def _format_doc(doc: dict[str, Any]) -> dict[str, Any]:
 
 
 
+    has_pdf = meta.get("has_pdf") if "has_pdf" in meta else (doc_type == "pdf" or name.lower().endswith(".pdf"))
+    source_url = meta.get("source_url") or ""
+    source = meta.get("source") or ("arXiv" if "arxiv" in str(doc.get("id", "")).lower() else "Học thuật")
+    authors = meta.get("authors") or []
+    year = meta.get("year") or 2024
+    abstract = meta.get("abstract") or ""
+
     formatted = dict(doc)
-
     formatted.update({
-
         "id": doc.get("id"),
-
         "filename": name,
-
         "name": name,
-
         "title": title,
-
         "kind": kind,
-
         "doc_type": doc_type,
-
         "chunk_count": chunk_count,
-
         "page_count": page_count,
-
         "size": doc.get("size", 0),
-
         "uploaded_at": doc.get("uploaded_at"),
-
+        "has_pdf": has_pdf,
+        "source_url": source_url,
+        "source": source,
+        "authors": authors,
+        "year": year,
+        "abstract": abstract,
     })
-
     return formatted
 
 
@@ -1072,18 +1076,23 @@ def list_documents():
 
 
 @app.get("/api/documents/{doc_id}/file")
-
 def get_document_file(doc_id: str):
-
     doc = db.get_document(doc_id)
-
     if not doc or not os.path.exists(doc.get("path", "")):
-
         raise HTTPException(status_code=404, detail="Document file not found")
+    
+    file_path = doc.get("path", "")
+    name = doc.get("name", "")
+    doc_type = doc.get("doc_type", "")
 
-    media_type = "application/pdf" if doc.get("name", "").endswith(".pdf") else "text/plain"
+    if name.endswith(".pdf") or file_path.endswith(".pdf") or doc_type == "pdf":
+        media_type = "application/pdf"
+    elif name.endswith(".md") or file_path.endswith(".md") or doc_type == "md":
+        media_type = "text/markdown; charset=utf-8"
+    else:
+        media_type = "text/plain; charset=utf-8"
 
-    return FileResponse(doc["path"], filename=doc.get("name", "document"), media_type=media_type, content_disposition_type="inline")
+    return FileResponse(file_path, filename=name or "document", media_type=media_type, content_disposition_type="inline")
 
 
 
@@ -1347,6 +1356,47 @@ def get_upload_status(upload_id: str):
 
 
 
+
+
+
+# ==================== CHAT SESSIONS (ĐOẠN CHAT) ====================
+
+@app.get("/api/sessions")
+def list_chat_sessions():
+    return {"sessions": db.list_sessions()}
+
+
+@app.get("/api/sessions/{session_id}")
+def get_chat_session(session_id: str):
+    sess = db.get_session(session_id)
+    if not sess:
+        raise HTTPException(status_code=404, detail="Session not found.")
+    runs = db.get_session_runs(session_id)
+    return {"session": sess, "runs": runs}
+
+
+@app.post("/api/sessions/{session_id}/rename")
+@app.patch("/api/sessions/{session_id}")
+def rename_chat_session(session_id: str, req: RenameSessionRequest):
+    new_title = req.title.strip()
+    if not new_title:
+        raise HTTPException(status_code=400, detail="Title cannot be empty.")
+    ok = db.rename_session(session_id, new_title)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Session not found.")
+    return {"status": "success", "session_id": session_id, "title": new_title}
+
+
+@app.delete("/api/sessions/{session_id}")
+def delete_chat_session(session_id: str):
+    ok = db.delete_session(session_id)
+    return {"status": "success", "deleted": ok}
+
+
+@app.delete("/api/sessions")
+def clear_all_chat_sessions():
+    deleted = db.clear_all_sessions()
+    return {"status": "success", "deleted_count": deleted}
 
 
 # ==================== RUNS & ORCHESTRATION ====================
@@ -1811,6 +1861,7 @@ async def create_run(req: CreateRunRequest):
             question=prompt,
             status="completed",
             document_id=None,
+            session_id=req.session_id,
         )
         db.update_run_result(
             run_id=run_id,
@@ -1834,6 +1885,7 @@ async def create_run(req: CreateRunRequest):
         question=prompt,
         status="processing",
         document_id=doc_id,
+        session_id=req.session_id,
     )
 
     # Asynchronously execute graph and persist result
@@ -1850,7 +1902,7 @@ async def create_run(req: CreateRunRequest):
 
                 graph.invoke,
 
-                {"query": prompt, "pdf_path": pdf_path, "pdf_paths": pdf_paths, "retry_count": 0},
+                {"query": prompt, "pdf_path": pdf_path, "pdf_paths": pdf_paths, "retry_count": 0, "max_reflection_loops": req.max_iterations or 2, "chat_history": req.chat_history or []},
 
             )
 
@@ -1897,6 +1949,7 @@ async def create_run(req: CreateRunRequest):
 class ScoutRequest(BaseModel):
     query: str
     max_results: int = 3
+    session_id: Optional[str] = None
 
 
 @app.post("/api/scout")
@@ -1955,6 +2008,23 @@ async def execute_standalone_scout(req: ScoutRequest):
         logger.info(f"[Standalone Scout] Non-STEM topic detected: '{user_query}'. Routing to Gemini Academic Explorer...")
         gemini_papers = search_gemini_academic_papers(user_query, max_results=req.max_results)
         if gemini_papers:
+            try:
+                scout_run_id = f"run_scout_{uuid.uuid4().hex[:8]}"
+                summary_md = f"### Agent 0 (Literature Scout): {user_query}\n\nĐã phát hiện và nạp vào kho {len(gemini_papers)} bài báo khoa học tiêu biểu:\n\n"
+                for p in gemini_papers:
+                    summary_md += f"- **[{p.get('year', 2024)}] {p.get('title')}**\n"
+                first_doc = gemini_papers[0].get("doc_id") or gemini_papers[0].get("id")
+                db.save_run(
+                    run_id=scout_run_id,
+                    question=user_query,
+                    status="completed",
+                    final_report=summary_md,
+                    document_id=first_doc,
+                    session_id=req.session_id,
+                )
+            except Exception as e:
+                logger.warning(f"[Scout] Could not record scout run in db: {e}")
+
             return {
                 "query": user_query,
                 "decision": "search",
@@ -1975,22 +2045,22 @@ async def execute_standalone_scout(req: ScoutRequest):
                 "papers": [],
             }
 
-    # 3. STEM ROUTE: ArXiv Official SDK with Multi-Perspectives
-    perspectives = generate_search_perspectives(user_query)
+    # 3. STEM ROUTE: ArXiv Official SDK with Fast Academic Search
     academic_query = translate_to_academic_english(user_query)
+    all_candidates = search_arxiv_papers(academic_query, max_results=req.max_results + 2)
+    seen_ids = {p.get("arxiv_id") or p.get("id") for p in all_candidates}
 
-    all_candidates = []
-    seen_ids = set()
-    for p in perspectives:
-        p_papers = search_arxiv_papers(p["query"], max_results=3)
-        for pap in p_papers:
-            pid = pap.get("arxiv_id") or pap.get("id")
-            if pid not in seen_ids:
-                seen_ids.add(pid)
-                all_candidates.append(pap)
-
-    if not all_candidates:
-        all_candidates = search_arxiv_papers(academic_query, max_results=req.max_results)
+    if len(all_candidates) < req.max_results:
+        perspectives = generate_search_perspectives(user_query)
+        for p in perspectives:
+            p_papers = search_arxiv_papers(p["query"], max_results=2)
+            for pap in p_papers:
+                pid = pap.get("arxiv_id") or pap.get("id")
+                if pid not in seen_ids:
+                    seen_ids.add(pid)
+                    all_candidates.append(pap)
+            if len(all_candidates) >= req.max_results:
+                break
 
     # 4. Enforce Semantic Relevance Gatekeeper
     top_papers = rank_and_select_papers(
@@ -2034,6 +2104,24 @@ async def execute_standalone_scout(req: ScoutRequest):
         except Exception as e:
             logger.error(f"[Standalone Scout] Failed to download {paper.get('title')}: {e}")
             downloaded_papers.append(paper)
+
+    if downloaded_papers:
+        try:
+            scout_run_id = f"run_scout_{uuid.uuid4().hex[:8]}"
+            summary_md = f"### Agent 0 (Literature Scout): {user_query}\n\nĐã phát hiện và tải về {len(downloaded_papers)} bài báo học thuật đạt chuẩn:\n\n"
+            for p in downloaded_papers:
+                summary_md += f"- **[{p.get('year', 2024)}] {p.get('title')}**\n"
+            first_doc = downloaded_papers[0].get("doc_id") or downloaded_papers[0].get("id")
+            db.save_run(
+                run_id=scout_run_id,
+                question=user_query,
+                status="completed",
+                final_report=summary_md,
+                document_id=first_doc,
+                session_id=req.session_id,
+            )
+        except Exception as e:
+            logger.warning(f"[Scout] Could not record scout run in db: {e}")
 
     return {
         "query": user_query,

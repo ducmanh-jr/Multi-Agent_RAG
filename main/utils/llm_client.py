@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 import re
+import time
 from typing import Any, Optional
 import httpx
 
@@ -29,6 +30,7 @@ class UnifiedLLMClient:
     def __init__(self):
         self.settings = settings
         self.http_client = httpx.Client(timeout=120.0)
+        self._circuit_breaker_until: float = 0.0
 
     def generate(
         self,
@@ -173,13 +175,15 @@ class UnifiedLLMClient:
         clean_ep = endpoint.lstrip("/")
         try:
             url = f"{base_url}/{clean_ep}"
-            resp = self.http_client.post(url, json=payload, timeout=max(self.settings.REMOTE_TIMEOUT_SECONDS, 45))
+            resp = self.http_client.post(url, json=payload, timeout=float(self.settings.REMOTE_TIMEOUT_SECONDS))
             if resp.status_code == 200:
                 data = resp.json()
                 if isinstance(data, dict):
                     return data
         except Exception as exc:
             logger.info(f"[Kaggle Specialist] Dedicated endpoint /{clean_ep} fallback to /generate ({exc})")
+            if "timeout" in str(exc).lower() or "timed out" in str(exc).lower():
+                raise exc
 
         # Fallback to /generate with canonical adapter name ('router', 'generator', 'critic')
         raw_out = self._call_remote_kaggle(
@@ -432,14 +436,20 @@ class UnifiedLLMClient:
 
     def _call_remote_kaggle(self, task: str, payload: dict[str, Any]) -> Any:
         """
-        Send task to remote Kaggle GPU server.
+        Send task to remote Kaggle GPU server with Circuit Breaker resilience.
         Supports:
           1. /generate (FastAPI server in kaggle_worker.ipynb)
           2. /api/{task} (Unified API router)
           3. /v1/chat/completions (vLLM Dual T4 server for Qwen3-32B-AWQ / QwQ-32B-AWQ)
         """
         base_url = self.settings.REMOTE_INFERENCE_URL.rstrip("/")
-        timeout = max(float(self.settings.REMOTE_TIMEOUT_SECONDS), 45.0)
+        timeout = min(2.0, float(self.settings.REMOTE_TIMEOUT_SECONDS))
+
+        # Circuit Breaker: Fail fast in 0.001s if remote recently timed out
+        now = time.time()
+        if now < self._circuit_breaker_until:
+            rem = int(self._circuit_breaker_until - now)
+            raise RuntimeError(f"Kaggle GPU Worker đang offline hoặc không phản hồi (Circuit Breaker active {rem}s).")
 
         # Normalize adapter name so 'generator_qlora' -> 'generator', 'critic_qlora' -> 'critic', etc.
         if "adapter" in payload and payload["adapter"] not in (None, "none"):
@@ -447,28 +457,35 @@ class UnifiedLLMClient:
 
         # 1. Try /generate (primary endpoint in kaggle_worker.ipynb)
         if task == "generate":
-            for ep in [f"{base_url}/generate", f"{base_url}/api/generate"]:
-                try:
-                    resp = self.http_client.post(ep, json=payload, timeout=timeout)
-                    if resp.status_code == 200:
-                        result = resp.json()
-                        if isinstance(result, dict):
-                            return (
-                                result.get("text")
-                                or result.get("output")
-                                or result.get("response")
-                                or json.dumps(result, ensure_ascii=False)
-                            )
-                        return str(result)
-                except Exception:
-                    pass
+            try:
+                resp = self.http_client.post(f"{base_url}/generate", json=payload, timeout=timeout)
+                if resp.status_code == 200:
+                    self._circuit_breaker_until = 0.0  # Reset breaker on success
+                    result = resp.json()
+                    if isinstance(result, dict):
+                        return (
+                            result.get("text")
+                            or result.get("output")
+                            or result.get("response")
+                            or json.dumps(result, ensure_ascii=False)
+                        )
+                    return str(result)
+            except (httpx.TimeoutException, httpx.ConnectError) as exc:
+                self._circuit_breaker_until = time.time() + 60.0
+                raise RuntimeError(f"Không thể kết nối tới Kaggle GPU Worker tại {base_url}.") from exc
+            except Exception:
+                pass
         else:
             try:
                 url = f"{base_url}/api/{task}"
                 resp = self.http_client.post(url, json=payload, timeout=timeout)
                 if resp.status_code == 200:
+                    self._circuit_breaker_until = 0.0  # Reset breaker on success
                     result = resp.json()
                     return result.get("output", result)
+            except (httpx.TimeoutException, httpx.ConnectError) as exc:
+                self._circuit_breaker_until = time.time() + 60.0
+                raise RuntimeError(f"Không thể kết nối tới Kaggle GPU Worker tại {base_url}.") from exc
             except Exception:
                 pass
 
@@ -479,31 +496,28 @@ class UnifiedLLMClient:
             messages.append({"role": "system", "content": payload["system_instruction"]})
         messages.append({"role": "user", "content": payload.get("prompt", "")})
 
-        candidate_models = [
-            payload.get("model"),
-            "Qwen/Qwen3-32B-AWQ",
-            "Qwen/QwQ-32B-AWQ",
-            "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B-AWQ",
-        ]
-        for model_id in candidate_models:
-            if not model_id:
-                continue
-            v1_payload: dict[str, Any] = {
-                "model": model_id,
-                "messages": messages,
-                "temperature": payload.get("temperature", 0.2),
-                "max_tokens": payload.get("max_tokens", 2048),
-            }
-            if payload.get("json_mode"):
-                v1_payload["response_format"] = {"type": "json_object"}
-            try:
-                resp = self.http_client.post(v1_url, json=v1_payload, timeout=timeout)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    return data["choices"][0]["message"]["content"]
-            except Exception:
-                continue
+        model_id = payload.get("model") or "Qwen/Qwen3-32B-AWQ"
+        v1_payload: dict[str, Any] = {
+            "model": model_id,
+            "messages": messages,
+            "temperature": payload.get("temperature", 0.2),
+            "max_tokens": payload.get("max_tokens", 2048),
+        }
+        if payload.get("json_mode"):
+            v1_payload["response_format"] = {"type": "json_object"}
+        try:
+            resp = self.http_client.post(v1_url, json=v1_payload, timeout=timeout)
+            if resp.status_code == 200:
+                self._circuit_breaker_until = 0.0
+                data = resp.json()
+                return data["choices"][0]["message"]["content"]
+        except (httpx.TimeoutException, httpx.ConnectError) as exc:
+            self._circuit_breaker_until = time.time() + 60.0
+            raise RuntimeError(f"Không thể kết nối tới Kaggle GPU Worker tại {base_url}.") from exc
+        except Exception:
+            pass
 
+        self._circuit_breaker_until = time.time() + 60.0
         raise RuntimeError(f"Không thể kết nối tới Kaggle GPU Worker tại {base_url}.")
 
     def _clean_and_parse_json(self, raw_text: str) -> dict[str, Any]:
@@ -573,9 +587,9 @@ class UnifiedLLMClient:
 
         def is_complete_sentence(s: str) -> bool:
             s_clean = clean_caption_credit(s).strip()
-            if len(s_clean) < 30:
+            if len(s_clean) < 25:
                 return False
-            if s_clean[-1] not in '.!?:\u201c\u201d':
+            if s_clean[-1] not in '.!?:\u201c\u201d;':
                 return False
             last_tokens = re.findall(r"\w+", s_clean)
             last_word = last_tokens[-1].lower() if last_tokens else ""
@@ -586,7 +600,7 @@ class UnifiedLLMClient:
             }
             if last_word in dangling_words:
                 return False
-            if not (s_clean[0].isupper() or s_clean[0].isdigit() or s_clean[0] in '\u201c\u201d\'['):
+            if not (s_clean[0].isalnum() or s_clean[0] in '\u201c\u201d\'['):
                 return False
             return True
 
@@ -596,9 +610,11 @@ class UnifiedLLMClient:
                 return True
             if l.startswith("#") or l.startswith("---") or l.startswith("==="):
                 return True
+            if l.startswith("http://") or l.startswith("https://"):
+                return True
             bad_phrases = [
                 "Tác giả", "Năm xuất bản", "Nguồn công bố", "Liên kết tham chiếu",
-                "Quyền riêng tư", "Cookie", "Theo tư liệu", "http://", "https://",
+                "Quyền riêng tư", "Cookie", "Theo tư liệu",
                 "YÊU CẦU TRẢ VỀ", "ĐỊNH DẠNG JSON", "markdown bên ngoài",
                 "Tóm tắt nội dung nghiên cứu", "Bối cảnh và Giá trị khoa học",
             ]
@@ -650,16 +666,74 @@ class UnifiedLLMClient:
             query_tokens = expand_bilingual_tokens(user_query, query_tokens)
         except Exception:
             pass
-        is_general_summary = any(
-            w in user_query.lower()
-            for w in ["tóm tắt", "đóng góp", "phương pháp", "nội dung", "tài liệu này", "tổng quan", "summary", "overview", "chính"]
+        is_slash_cmd = user_query.strip().startswith("/")
+        is_general_summary = is_slash_cmd or any(
+            kw in user_query.lower()
+            for kw in [
+                "tóm tắt", "tổng quan", "nội dung chính", "/tom-tat", "/so-sanh",
+                "so sánh", "đóng góp", "/dong-gop", "điểm mới", "ưu nhược điểm"
+            ]
         )
         is_numeric_query = any(
-            w in user_query.lower() for w in ["bao nhiêu", "mấy", "số lượng", "định lượng", "tổng số", "tỷ lệ"]
+            kw in user_query.lower()
+            for kw in ["bao nhiêu", "mấy", "số lượng", "tỷ lệ", "phần trăm", "chi phí", "ước lượng", "point", "kích thước", "size", "cần gì"]
         )
         is_temporal_query = any(
-            w in user_query.lower() for w in ["thời điểm nào", "khi nào", "thời gian nào", "năm nào", "ngày nào", "giai đoạn nào", "từ bao giờ", "phạm vi thời gian", "từ thời điểm"]
+            kw in user_query.lower()
+            for kw in ["khi nào", "ngày", "tháng", "năm", "thời gian", "giai đoạn", "lúc nào", "khi", "lịch sử"]
         )
+        full_doc_text = " ".join(u["text"].lower() for u in units)
+        content_words = [w for w in re.findall(r"\w+", user_query.lower()) if len(w) > 2 and w not in stop_words]
+        content_overlap = [w for w in content_words if w in full_doc_text]
+        content_cov = len(content_overlap) / max(1, len(content_words)) if content_words else 1.0
+
+        KNOWN_OOD_TECH = {
+            "kafka", "traefik", "kubernetes", "kyber", "hadoop", "spark",
+            "redis", "mongodb", "rabbitmq", "cassandra", "istio", "consul",
+            "envoy", "graphql", "grpc"
+        }
+        expanded_words = set(content_words)
+        try:
+            from utils.bilingual import expand_bilingual_tokens
+            expanded_words = expand_bilingual_tokens(user_query, expanded_words)
+        except Exception:
+            pass
+        bilingual_overlap = [w for w in expanded_words if w.lower() in full_doc_text]
+
+        tech_q_tokens = [w.lower() for w in re.findall(r"\b[a-zA-Z0-9_-]{3,}\b", user_query)]
+        ood_tech_matches = [t for t in tech_q_tokens if t in KNOWN_OOD_TECH and t not in full_doc_text]
+
+        is_ood_subject = False
+        if not is_general_summary and content_words:
+            if ood_tech_matches:
+                is_ood_subject = True
+            elif len(bilingual_overlap) == 0:
+                is_ood_subject = True
+
+        if is_ood_subject and not is_general_summary:
+            clean_q = user_query.strip()
+            return json.dumps(
+                {
+                    "answer": (
+                        f"Dựa trên các bài báo và tài liệu hiện có trong hệ thống, thông tin về \"{clean_q}\" "
+                        f"**hoàn toàn không được đề cập**.\n\n"
+                        f"💡 **Gợi ý**: Bạn có thể tải file PDF hoặc bài báo liên quan đến vấn đề này lên hệ thống "
+                        f"để tôi có thể đọc và phân tích chi tiết cho bạn."
+                    ),
+                    "evidence_spans": [],
+                    "claims": [
+                        {
+                            "id": "claim_ood",
+                            "text": f"Tài liệu hiện có hoàn toàn không đề cập đến '{clean_q}'.",
+                            "evidence_unit_id": "u1",
+                        }
+                    ],
+                    "approved_claim_ids": ["claim_ood"],
+                    "perspectives": ["Từ chối trung thực (Honest Refusal)"],
+                    "sub_queries": [clean_q],
+                },
+                ensure_ascii=False,
+            )
 
         candidates = []
         for u in units:
@@ -703,9 +777,10 @@ class UnifiedLLMClient:
 
         selected = []
         seen = set()
+        min_score_required = 1 if is_general_summary else 3
         for score, s, u, has_quant in candidates:
             norm_s = re.sub(r"\s+", " ", s.lower().strip())[:90]
-            if (score > 0 or is_general_summary) and norm_s not in seen:
+            if (score >= min_score_required or is_general_summary) and norm_s not in seen:
                 seen.add(norm_s)
                 selected.append((s, u, has_quant))
                 if len(selected) >= 4:

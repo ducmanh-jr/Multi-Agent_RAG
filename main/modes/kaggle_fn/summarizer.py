@@ -10,6 +10,7 @@ trained in training_lab/agent3_summarizer/Code/node.py:
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from agents.agent3_summarizer.components.generator import (
@@ -27,6 +28,8 @@ from core.verifier import (
     split_answer_into_atomic_claims,
 )
 from utils.llm_client import llm_client
+from utils.domain_guard import check_out_of_domain, build_out_of_domain_response
+from modes.cpu_min.summarizer import CPUMinSummarizerAgent
 
 
 class KaggleFNSummarizerAgent(BaseAgent):
@@ -34,15 +37,25 @@ class KaggleFNSummarizerAgent(BaseAgent):
 
     def __init__(self, max_internal_retry: int = 2):
         super().__init__(name="KaggleFNSummarizerAgent", max_internal_retry=max_internal_retry)
+        self.cpu_engine = CPUMinSummarizerAgent()
 
     def run(self, state: AgentState) -> dict[str, Any]:
-        query = state.get("query", "")
+        query = state.get("query") or state.get("question", "")
         source_units = state.get("source_units", []) or []
 
         self.logger.info(
             f"[Kaggle FN Summarizer] Running Multi-LoRA Generator -> Critic loop for: '{query[:65]}' "
             f"({len(source_units)} units)"
         )
+
+        clean_q = query.strip()
+        is_ood, ood_reason = check_out_of_domain(clean_q, source_units)
+        if is_ood:
+            self.logger.info(f"[Kaggle FN Summarizer] Zero-Hallucination Guard triggered: {ood_reason}")
+            res = build_out_of_domain_response(clean_q, model_family="kaggle_fn_guard")
+            trace = self.log_action("kaggle_fn_summarization_completed", {"status": "out_of_domain", "reason": ood_reason})
+            res["reasoning_trace"] = [trace]
+            return res
 
         context_str, _ = pack_context_by_token_budget(source_units, max_tokens=3800)
 
@@ -54,7 +67,19 @@ class KaggleFNSummarizerAgent(BaseAgent):
 
         for attempt in range(self.max_internal_retry):
             internal_attempts = attempt + 1
-            gen_user_prompt = f'Context:\n"""\n{context_str}\n"""\n\nCâu hỏi: {query}'
+            chat_context = ""
+            chat_history = state.get("chat_history") or []
+            if chat_history:
+                turns = []
+                for t in chat_history[-3:]:
+                    r = "Người dùng" if t.get("role") == "user" else "Trợ lý AI"
+                    c = (t.get("content") or "").strip()[:200]
+                    if c:
+                        turns.append(f"{r}: {c}")
+                if turns:
+                    chat_context = "\n[Ngữ cảnh trao đổi trước đó]:\n" + "\n".join(turns) + "\n\n"
+
+            gen_user_prompt = f'Context:\n"""\n{context_str}\n"""\n\n{chat_context}Câu hỏi: {query}'
             if feedback_prompt_addition:
                 gen_user_prompt += f"\n\n{feedback_prompt_addition}"
 
@@ -86,7 +111,9 @@ class KaggleFNSummarizerAgent(BaseAgent):
                     payload={
                         "context": context_str,
                         "question": query,
+                        "answer": current_answer,
                         "generated_summary": current_answer,
+                        "evidence_spans": current_spans_raw or [],
                         "adapter": "critic",
                     },
                     fallback_prompt=critic_user_prompt,
@@ -114,9 +141,11 @@ class KaggleFNSummarizerAgent(BaseAgent):
                     f"- Bổ sung các ý chính bị bỏ sót từ Context: {critic_out.missing_key_points}"
                 )
 
-        if not current_answer:
-            current_answer, fb_spans, _ = generate_summary_and_claims(query, source_units)
-            current_spans_raw = fb_spans
+        if not current_answer or len(current_answer.strip()) < 50 or "chế độ dự phòng" in current_answer:
+            self.logger.warning("[Kaggle FN Summarizer] Remote GPU offline/timeout, falling back to High-Precision CPU Engine.")
+            res = self.cpu_engine.run(state)
+            res["generator_model_family"] = "kaggle_fn_cpu_fallback"
+            return res
 
         # Build structured EvidenceSpans & AtomicClaims
         evidence_spans: list[dict[str, Any]] = []

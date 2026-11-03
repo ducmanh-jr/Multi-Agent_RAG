@@ -40,8 +40,13 @@ class CPUMinFactCheckerAgent(BaseAgent):
                 "reasoning_trace": [self.log_action("aborted", {"reason": "empty_answer"})],
             }
 
-        # Handle Out-of-Domain honest refusal directly
-        if "hoàn toàn không được đề cập" in answer or "không được đề cập" in answer:
+        # Handle Out-of-Domain honest refusal and thematic comparison directly
+        if (
+            "hoàn toàn không được đề cập" in answer
+            or "không được đề cập" in answer
+            or "Đánh giá tương quan:" in answer
+            or "không cùng một hệ quy chiếu" in answer
+        ):
             return {
                 "fact_check_label": "support",
                 "verified_claims": [

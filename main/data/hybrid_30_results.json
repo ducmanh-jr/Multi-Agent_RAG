@@ -1,0 +1,718 @@
+{
+  "mode": "hybrid",
+  "doc_id": "doc_cfe4f779",
+  "total": 30,
+  "passed": 30,
+  "total_time_seconds": 172.3655707836151,
+  "results": [
+    {
+      "index": 1,
+      "question": "Trong kiến trúc hệ thống, vai trò cơ bản của NGINX khi đóng vai trò là Reverse Proxy là gì?",
+      "status": "completed",
+      "elapsed": 7.705338001251221,
+      "report_len": 4269,
+      "matched_keywords": [
+        "reverse proxy",
+        "backend",
+        "client",
+        "chuyển tiếp",
+        "phân phối"
+      ],
+      "total_keywords": [
+        "reverse proxy",
+        "backend",
+        "client",
+        "chuyển tiếp",
+        "phân phối"
+      ],
+      "has_citations": true,
+      "is_ood_refusal": false,
+      "verdict": "PASS",
+      "report": "# Báo cáo Nghiên cứu: Trong kiến trúc hệ thống, vai trò cơ bản của NGINX khi đóng vai trò là Reverse Proxy là gì?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Trong kiến trúc hệ thống, NGINX đóng vai trò là một Reverse Proxy nằm phía trước một hoặc nhiều server khác như web server hay API backend, đảm nhận việc nhận các request từ client rồi chuyển tiếp đến server phía sau phù hợp [1]. Cụ thể, các vai trò cơ bản của NGINX bao gồm:\n\n1. **Nhận và chuyển tiếp request**: Đứng ở trung gian giữa client và backend, nhận yêu cầu từ người dùng và định tuyến đến đúng dịch vụ xử lý (ví dụ định tuyến theo đường dẫn như `/` cho frontend và `/api/` cho backend) [1, 2].\n2. **Tăng cường bảo mật và ẩn danh hệ thống**: Giúp tăng cường bảo mật bằng cách che giấu các server backend thật ở phía sau [1].\n3. **Cân bằng tải (Load Balancing)**: Phân phối các request luân phiên hoặc theo chiến lược phù hợp đến nhiều instance/node backend khác nhau để tránh quá tải [2].\n4. **Quản lý SSL tập trung**: Hỗ trợ cấu hình chứng chỉ mã hóa và quản lý giao thức SSL/TLS tập trung ngay tại tầng proxy [1].**\n\n---\n\n## 1. Tóm tắt Tổng quan (Executive Summary)\nTrong kiến trúc hệ thống, NGINX đóng vai trò là một Reverse Proxy nằm phía trước một hoặc nhiều server khác như web server hay API backend, đảm nhận việc nhận các request từ client rồi chuyển tiếp đến server phía sau phù hợp [1]. Cụ thể, các vai trò cơ bản của NGINX bao gồm:\n\n1. **Nhận và chuyển tiếp request**: Đứng ở trung gian giữa client và backend, nhận yêu cầu từ người dùng và định tuyến đến đúng dịch vụ xử lý (ví dụ định tuyến theo đường dẫn như `/` cho frontend và `/api/` cho backend) [1, 2].\n2. **Tăng cường bảo mật và ẩn danh hệ thống**: Giúp tăng cường bảo mật bằng cách che giấu các server backend thật ở phía sau [1].\n3. **Cân bằng tải (Load Balancing)**: Phân phối các request luân phiên hoặc theo chiến lược phù hợp đến nhiều instance/node backend khác nhau để tránh quá tải [2].\n4. **Quản lý SSL tập trung**: Hỗ trợ cấu hình chứng chỉ mã hóa và quản lý giao thức SSL/TLS tập trung ngay tại tầng proxy [1].\n\n## 2. Kết quả Nghiên cứu & Luận điểm Đã Xác minh (Verified Findings)\n- **Phát hiện 1:** NGINX đóng vai trò là một Reverse Proxy nằm phía trước các server khác để nhận request từ client và chuyển tiếp đến server phía sau. [1]\n- **Phát hiện 2:** Vai trò của NGINX bao gồm tăng cường bảo mật bằng cách ẩn backend thật, cân bằng tải và quản lý SSL tập trung. [1]\n\n## 3. Đánh giá Bình duyệt Chuyên sâu (Senior Peer-Review Audit)\n- **Kiểm toán phương pháp:** Đã kiểm tra tính nhất quán số liệu và không phát hiện mâu thuẫn nội tại.\n\n## 4. Ma trận So sánh Đa bài báo (Cross-Paper Benchmark Matrix)\n| Công Trình / Tài Liệu | Nguồn Trích Dẫn | Luận Điểm Xác Minh | Kết Quả Đối Soát |\n| :--- | :--- | :--- | :--- |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | NGINX đóng vai trò là một Reverse Proxy nằm phía trước các s... | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Vai trò của NGINX bao gồm tăng cường bảo mật bằng cách ẩn ba... | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n\n## 5. Radar Khoảng trống & Giả thuyết Nghiên cứu (Research Gap Radar)\n### [OBSERVATION-01]: Phạm vi Khảo sát của Tài liệu: Buổi 8 Cấu hình NGINX reverse proxy – Upstrea\n- **Khoảng trống Nghiên cứu (Research Gap):** Tài liệu hiện tại tập trung phản ánh các sự kiện, dữ liệu và luận điểm được ghi nhận trực tiếp; chưa công bố thêm các giới hạn kỹ thuật mở rộng.\n- **Đề xuất Kiến trúc Mới (Novel Formulation):** Khuyến nghị thu thập thêm các bài báo bình luận hoặc công trình khảo sát mở rộng.\n- **Giao thức Thực nghiệm Kiểm chứng (Verification Protocol):** Đối soát chéo với các nguồn học thuật bổ sung.\n\n## 6. Danh mục Tài liệu Trích dẫn (Evidence References)\n[1] **doc_cfe4f779_Buổi 8 Cấu hình NGINX reverse proxy – Upstream nhiều backend** (Trang 1). *\"Reverse Proxy: Một server đặt phía trước một hoặc nhiều server khác (web server, API backend), nhận request từ client rồi chuyển tiếp đến se...\"*\n",
+      "preview": "# Báo cáo Nghiên cứu: Trong kiến trúc hệ thống, vai trò cơ bản của NGINX khi đóng vai trò là Reverse Proxy là gì?  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]   > **Câu trả lời Trực tiếp:** **Trong kiến trúc hệ thống, NGINX đóng vai trò là một Reverse Proxy nằm phía trước một hoặc nhiều se"
+    },
+    {
+      "index": 2,
+      "question": "Kịch bản dùng một domain duy nhất phục vụ cả frontend ở / và backend ở /api/ nhằm giải quyết triệt để vấn đề gì ở phía client?",
+      "status": "completed",
+      "elapsed": 6.151285648345947,
+      "report_len": 3128,
+      "matched_keywords": [
+        "cors",
+        "origin",
+        "frontend",
+        "backend"
+      ],
+      "total_keywords": [
+        "cors",
+        "origin",
+        "frontend",
+        "backend"
+      ],
+      "has_citations": true,
+      "is_ood_refusal": false,
+      "verdict": "PASS",
+      "report": "# Báo cáo Nghiên cứu: Kịch bản dùng một domain duy nhất phục vụ cả frontend ở / và backend ở /api/ nhằm giải quyết triệt để vấn đề gì ở phía client?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Kịch bản sử dụng một domain duy nhất phục vụ cả frontend lẫn backend giúp giải quyết triệt để các vấn đề sau ở phía client:\n\n1. **Tránh lỗi CORS**: Do client luôn gọi cùng một origin (giao thức, domain và cổng), trình duyệt không chặn các yêu cầu qua lại giữa frontend và backend API [1].\n\nCác cấu hình này thường định tuyến frontend tại `/` và chuyển tiếp các request API `/api/...` tới backend thông qua `proxy_pass` [1].**\n\n---\n\n## 1. Tóm tắt Tổng quan (Executive Summary)\nKịch bản sử dụng một domain duy nhất phục vụ cả frontend lẫn backend giúp giải quyết triệt để các vấn đề sau ở phía client:\n\n1. **Tránh lỗi CORS**: Do client luôn gọi cùng một origin (giao thức, domain và cổng), trình duyệt không chặn các yêu cầu qua lại giữa frontend và backend API [1].\n\nCác cấu hình này thường định tuyến frontend tại `/` và chuyển tiếp các request API `/api/...` tới backend thông qua `proxy_pass` [1].\n\n## 2. Kết quả Nghiên cứu & Luận điểm Đã Xác minh (Verified Findings)\n- **Phát hiện 1:** Kịch bản dùng một domain duy nhất phục vụ cả frontend lẫn backend giúp tránh vấn đề CORS vì client luôn gọi cùng một origin. [1]\n\n## 3. Đánh giá Bình duyệt Chuyên sâu (Senior Peer-Review Audit)\n- **Kiểm toán phương pháp:** Đã kiểm tra tính nhất quán số liệu và không phát hiện mâu thuẫn nội tại.\n\n## 4. Ma trận So sánh Đa bài báo (Cross-Paper Benchmark Matrix)\n| Công Trình / Tài Liệu | Nguồn Trích Dẫn | Luận Điểm Xác Minh | Kết Quả Đối Soát |\n| :--- | :--- | :--- | :--- |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Kịch bản dùng một domain duy nhất phục vụ cả frontend lẫn ba... | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n\n## 5. Radar Khoảng trống & Giả thuyết Nghiên cứu (Research Gap Radar)\n### [OBSERVATION-01]: Phạm vi Khảo sát của Tài liệu: Buổi 8 Cấu hình NGINX reverse proxy – Upstrea\n- **Khoảng trống Nghiên cứu (Research Gap):** Tài liệu hiện tại tập trung phản ánh các sự kiện, dữ liệu và luận điểm được ghi nhận trực tiếp; chưa công bố thêm các giới hạn kỹ thuật mở rộng.\n- **Đề xuất Kiến trúc Mới (Novel Formulation):** Khuyến nghị thu thập thêm các bài báo bình luận hoặc công trình khảo sát mở rộng.\n- **Giao thức Thực nghiệm Kiểm chứng (Verification Protocol):** Đối soát chéo với các nguồn học thuật bổ sung.\n\n## 6. Danh mục Tài liệu Trích dẫn (Evidence References)\n[1] **doc_cfe4f779_Buổi 8 Cấu hình NGINX reverse proxy – Upstream nhiều backend** (Trang 2). *\"Kịch bản: Một domain duy nhất phục vụ cả frontend lẫn backend API — frontend ở /, API ở /api/, tránh vấn đề CORS vì client luôn gọi cùng một...\"*\n",
+      "preview": "# Báo cáo Nghiên cứu: Kịch bản dùng một domain duy nhất phục vụ cả frontend ở / và backend ở /api/ nhằm giải quyết triệt để vấn đề gì ở phía client?  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]   > **Câu trả lời Trực tiếp:** **Kịch bản sử dụng một domain duy nhất phục vụ cả frontend lẫn ba"
+    },
+    {
+      "index": 3,
+      "question": "Cổng (port) mặc định trong NGINX dành cho kết nối HTTP không bảo mật và HTTPS có mã hóa là bao nhiêu?",
+      "status": "completed",
+      "elapsed": 2.583096504211426,
+      "report_len": 3003,
+      "matched_keywords": [
+        "80",
+        "443",
+        "http",
+        "https"
+      ],
+      "total_keywords": [
+        "80",
+        "443",
+        "http",
+        "https"
+      ],
+      "has_citations": true,
+      "is_ood_refusal": false,
+      "verdict": "PASS",
+      "report": "# Báo cáo Nghiên cứu: Cổng (port) mặc định trong NGINX dành cho kết nối HTTP không bảo mật và HTTPS có mã hóa là bao nhiêu?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Trong NGINX, cổng (port) mặc định được sử dụng cho kết nối HTTP không bảo mật là 80, trong khi cổng mặc định dành cho kết nối HTTPS có mã hóa là 443 [1, 3]. Cụ thể các thông tin liên quan bao gồm: [1]**\n\n---\n\n## 1. Tóm tắt Tổng quan (Executive Summary)\nTrong NGINX, cổng (port) mặc định được sử dụng cho kết nối HTTP không bảo mật là 80, trong khi cổng mặc định dành cho kết nối HTTPS có mã hóa là 443 [1, 3]. Cụ thể các thông tin liên quan bao gồm: [1]\n\n1. **Cổng HTTP**: Cổng giao tiếp mặc định cho kết nối HTTP không bảo mật là **80** [1, 3].\n2. **Cổng HTTPS**: Cổng giao tiếp mặc định cho kết nối HTTPS có mã hóa SSL/TLS là **443** [1, 3, 4]. [1]\n\n## 2. Kết quả Nghiên cứu & Luận điểm Đã Xác minh (Verified Findings)\n- **Phát hiện 1:** Cổng mặc định cho HTTP không bảo mật trong NGINX là 80. [1]\n- **Phát hiện 2:** Cổng mặc định cho kết nối HTTPS có mã hóa trong NGINX là 443. [1]\n\n## 3. Đánh giá Bình duyệt Chuyên sâu (Senior Peer-Review Audit)\n- **Kiểm toán phương pháp:** Đã kiểm tra tính nhất quán số liệu và không phát hiện mâu thuẫn nội tại.\n\n## 4. Ma trận So sánh Đa bài báo (Cross-Paper Benchmark Matrix)\n| Công Trình / Tài Liệu | Nguồn Trích Dẫn | Luận Điểm Xác Minh | Kết Quả Đối Soát |\n| :--- | :--- | :--- | :--- |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Cổng mặc định cho HTTP không bảo mật trong NGINX là 80. | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Cổng mặc định cho kết nối HTTPS có mã hóa trong NGINX là 443... | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n\n## 5. Radar Khoảng trống & Giả thuyết Nghiên cứu (Research Gap Radar)\n### [OBSERVATION-01]: Phạm vi Khảo sát của Tài liệu: Buổi 8 Cấu hình NGINX reverse proxy – Upstrea\n- **Khoảng trống Nghiên cứu (Research Gap):** Tài liệu hiện tại tập trung phản ánh các sự kiện, dữ liệu và luận điểm được ghi nhận trực tiếp; chưa công bố thêm các giới hạn kỹ thuật mở rộng.\n- **Đề xuất Kiến trúc Mới (Novel Formulation):** Khuyến nghị thu thập thêm các bài báo bình luận hoặc công trình khảo sát mở rộng.\n- **Giao thức Thực nghiệm Kiểm chứng (Verification Protocol):** Đối soát chéo với các nguồn học thuật bổ sung.\n\n## 6. Danh mục Tài liệu Trích dẫn (Evidence References)\n[1] **doc_cfe4f779_Buổi 8 Cấu hình NGINX reverse proxy – Upstream nhiều backend** (Trang 1). *\"Port: Cổng giao tiếp mà các ứng dụng dùng để nhận/gửi dữ liệu (ví dụ: 80 cho HTTP, 443 cho HTTPS)....\"*\n[2] **doc_cfe4f779_Buổi 8 Cấu hình NGINX reverse proxy – Upstream nhiều backend** (Trang 3). *\"listen: Port lắng nghe (80 cho HTTP, 443 cho HTTPS)....\"*\n",
+      "preview": "# Báo cáo Nghiên cứu: Cổng (port) mặc định trong NGINX dành cho kết nối HTTP không bảo mật và HTTPS có mã hóa là bao nhiêu?  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]   > **Câu trả lời Trực tiếp:** **Trong NGINX, cổng (port) mặc định được sử dụng cho kết nối HTTP không bảo mật là 80, tro"
+    },
+    {
+      "index": 4,
+      "question": "File /etc/hosts có vai trò gì trong quá trình phát triển và kiểm thử hệ thống local?",
+      "status": "completed",
+      "elapsed": 15.904353141784668,
+      "report_len": 5169,
+      "matched_keywords": [
+        "hosts",
+        "domain",
+        "127.0.0.1",
+        "local",
+        "ánh xạ"
+      ],
+      "total_keywords": [
+        "hosts",
+        "domain",
+        "127.0.0.1",
+        "local",
+        "ánh xạ"
+      ],
+      "has_citations": true,
+      "is_ood_refusal": false,
+      "verdict": "PASS",
+      "report": "# Báo cáo Nghiên cứu: File /etc/hosts có vai trò gì trong quá trình phát triển và kiểm thử hệ thống local?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **File /etc/hosts đóng vai trò là một file trên hệ điều hành dùng để ánh xạ tên miền với địa chỉ IP cục bộ, mang lại nhiều lợi ích thiết thực trong quá trình phát triển và kiểm thử hệ thống local [1]. Cụ thể, các vai trò và cách ứng dụng của file này bao gồm:\n\n1. **Giả lập domain local**: Giúp lập trình viên giả lập domain khi phát triển hoặc kiểm thử ứng dụng mà không cần phải mua domain hay cấu hình DNS thật [1]. Ví dụ, có thể thêm dòng ánh xạ domain giả về địa chỉ local như `127.0.0.1 myapp.local` để test hệ thống như đang truy cập một domain thực tế [3].\n2. **Tùy biến theo môi trường thực tế**: Tùy thuộc vào việc cấu hình hệ thống chạy trực tiếp trên Windows hay trong môi trường WSL/Linux, vị trí và cách thức sử dụng file hosts sẽ được áp dụng linh hoạt (như chỉnh sửa file `C:\\\\Windows\\\\System32\\\\drivers\\\\etc\\\\hosts` khi trình duyệt chạy trên Windows hoặc file `/etc/hosts` trong Linux thuần) để đảm bảo trình duyệt phân giải đúng domain giả lập [3].**\n\n---\n\n## 1. Tóm tắt Tổng quan (Executive Summary)\nFile /etc/hosts đóng vai trò là một file trên hệ điều hành dùng để ánh xạ tên miền với địa chỉ IP cục bộ, mang lại nhiều lợi ích thiết thực trong quá trình phát triển và kiểm thử hệ thống local [1]. Cụ thể, các vai trò và cách ứng dụng của file này bao gồm:\n\n1. **Giả lập domain local**: Giúp lập trình viên giả lập domain khi phát triển hoặc kiểm thử ứng dụng mà không cần phải mua domain hay cấu hình DNS thật [1]. Ví dụ, có thể thêm dòng ánh xạ domain giả về địa chỉ local như `127.0.0.1 myapp.local` để test hệ thống như đang truy cập một domain thực tế [3].\n2. **Tùy biến theo môi trường thực tế**: Tùy thuộc vào việc cấu hình hệ thống chạy trực tiếp trên Windows hay trong môi trường WSL/Linux, vị trí và cách thức sử dụng file hosts sẽ được áp dụng linh hoạt (như chỉnh sửa file `C:\\\\Windows\\\\System32\\\\drivers\\\\etc\\\\hosts` khi trình duyệt chạy trên Windows hoặc file `/etc/hosts` trong Linux thuần) để đảm bảo trình duyệt phân giải đúng domain giả lập [3].\n\n## 2. Kết quả Nghiên cứu & Luận điểm Đã Xác minh (Verified Findings)\n- **Phát hiện 1:** File /etc/hosts đóng vai trò là một file trên hệ điều hành dùng để ánh xạ tên miền với địa chỉ IP cục bộ, mang lại nhiều lợi ích thiết thực trong quá trình phát triển và kiểm thử hệ thống local [1] [1]\n- **Phát hiện 2:** Cụ thể, các vai trò và cách ứng dụng của file này bao gồm: [1]\n- **Phát hiện 3:** Giả lập domain local**: Giúp lập trình viên giả lập domain khi phát triển hoặc kiểm thử ứng dụng mà không cần phải mua domain hay cấu hình DNS thật [1] [1]\n- **Phát hiện 4:** Ví dụ, có thể thêm dòng ánh xạ domain giả về địa chỉ local như `127.0.0.1 myapp.local` để test hệ thống như đang truy cập một domain thực tế [3] [1]\n- **Phát hiện 5:** Tùy biến theo môi trường thực tế**: Tùy thuộc vào việc cấu hình hệ thống chạy trực tiếp trên Windows hay trong môi trường WSL/Linux, vị trí và cách thức sử dụng file hosts sẽ được áp dụng linh hoạt (như chỉnh sửa file `C:\\\\Windows\\\\System32\\\\drivers\\\\etc\\\\hosts` khi trình duyệt chạy trên Windows hoặc file `/etc/hosts` trong Linux thuần) để đảm bảo trình duyệt phân giải đúng domain giả lập [3] [1]\n\n## 3. Đánh giá Bình duyệt Chuyên sâu (Senior Peer-Review Audit)\n- **Kiểm toán phương pháp:** Đã kiểm tra tính nhất quán số liệu và không phát hiện mâu thuẫn nội tại.\n\n## 4. Ma trận So sánh Đa bài báo (Cross-Paper Benchmark Matrix)\n| Công Trình / Tài Liệu | Nguồn Trích Dẫn | Luận Điểm Xác Minh | Kết Quả Đối Soát |\n| :--- | :--- | :--- | :--- |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | File /etc/hosts đóng vai trò là một file trên hệ điều hành d... | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Cụ thể, các vai trò và cách ứng dụng của file này bao gồm: | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Giả lập domain local**: Giúp lập trình viên giả lập domain k... | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Ví dụ, có thể thêm dòng ánh xạ domain giả về địa chỉ local n... | Khớp chứng cứ gốc |\n\n## 5. Radar Khoảng trống & Giả thuyết Nghiên cứu (Research Gap Radar)\n### [OBSERVATION-01]: Phạm vi Khảo sát của Tài liệu: Buổi 8 Cấu hình NGINX reverse proxy – Upstrea\n- **Khoảng trống Nghiên cứu (Research Gap):** Tài liệu hiện tại tập trung phản ánh các sự kiện, dữ liệu và luận điểm được ghi nhận trực tiếp; chưa công bố thêm các giới hạn kỹ thuật mở rộng.\n- **Đề xuất Kiến trúc Mới (Novel Formulation):** Khuyến nghị thu thập thêm các bài báo bình luận hoặc công trình khảo sát mở rộng.\n- **Giao thức Thực nghiệm Kiểm chứng (Verification Protocol):** Đối soát chéo với các nguồn học thuật bổ sung.\n\n## 6. Danh mục Tài liệu Trích dẫn (Evidence References)\n[1] **doc_cfe4f779_Buổi 8 Cấu hình NGINX reverse proxy – Upstream nhiều backend** (Trang 1). *\"SSL/TLS: Giao thức mã hóa dữ liệu truyền tải giữa client và server, đảm bảo an toàn thông tin. File /etc/hosts: File trên hệ điều hành dùng...\"*\n",
+      "preview": "# Báo cáo Nghiên cứu: File /etc/hosts có vai trò gì trong quá trình phát triển và kiểm thử hệ thống local?  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]   > **Câu trả lời Trực tiếp:** **File /etc/hosts đóng vai trò là một file trên hệ điều hành dùng để ánh xạ tên miền với địa chỉ IP cục bộ,"
+    },
+    {
+      "index": 5,
+      "question": "Lệnh OpenSSL chính xác được tài liệu hướng dẫn dùng để tạo cặp key/chứng chỉ SSL tự ký là gì?",
+      "status": "completed",
+      "elapsed": 4.119639873504639,
+      "report_len": 3382,
+      "matched_keywords": [
+        "openssl",
+        "req",
+        "x509",
+        "newkey",
+        "365"
+      ],
+      "total_keywords": [
+        "openssl",
+        "req",
+        "x509",
+        "newkey",
+        "rsa:2048",
+        "365"
+      ],
+      "has_citations": true,
+      "is_ood_refusal": false,
+      "verdict": "PASS",
+      "report": "# Báo cáo Nghiên cứu: Lệnh OpenSSL chính xác được tài liệu hướng dẫn dùng để tạo cặp key/chứng chỉ SSL tự ký là gì?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Lệnh OpenSSL chính xác được tài liệu hướng dẫn sử dụng để tạo cặp khóa và chứng chỉ SSL tự ký (self-signed) nhằm giả lập HTTPS local là: **`openssl req -x509 -nodes -newkey rsa: 2048 -keyout myapp.key -out myapp.crt -days 365`** [1].**\n\n---\n\n## 1. Tóm tắt Tổng quan (Executive Summary)\nLệnh OpenSSL chính xác được tài liệu hướng dẫn sử dụng để tạo cặp khóa và chứng chỉ SSL tự ký (self-signed) nhằm giả lập HTTPS local là: **`openssl req -x509 -nodes -newkey rsa: 2048 -keyout myapp.key -out myapp.crt -days 365`** [1].\n\nCác thông tin chi tiết liên quan đến việc cấu hình và sử dụng lệnh này bao gồm:\n1. **Mục đích tạo chứng chỉ**: Lệnh trên dùng để giả lập HTTPS local cho việc thử nghiệm và demo, tuy nhiên sẽ khiến trình duyệt hiển thị cảnh báo không an toàn do không nằm trong chuỗi tin cậy (chain of trust) [2].\n2. **Cấu hình liên quan trong NGINX**: Sau khi tạo xong, chứng chỉ và khóa được tích hợp vào NGINX thông qua các tham số cấu hình như `listen 443 ssl;`, `ssl_certificate myapp.crt;`, và `ssl_certificate_key myapp.key;` [1].\n\n## 2. Kết quả Nghiên cứu & Luận điểm Đã Xác minh (Verified Findings)\n- **Phát hiện 1:** Lệnh OpenSSL để tạo cặp key/chứng chỉ SSL tự ký là openssl req -x509 -nodes -newkey rsa: 2048 -keyout myapp.key -out myapp.crt -days 365 [1]\n- **Phát hiện 2:** Cấu hình trong NGINX bao gồm listen 443 ssl;, ssl_certificate myapp.crt;, ssl_certificate_key myapp.key; [1]\n\n## 3. Đánh giá Bình duyệt Chuyên sâu (Senior Peer-Review Audit)\n- **Kiểm toán phương pháp:** Đã kiểm tra tính nhất quán số liệu và không phát hiện mâu thuẫn nội tại.\n\n## 4. Ma trận So sánh Đa bài báo (Cross-Paper Benchmark Matrix)\n| Công Trình / Tài Liệu | Nguồn Trích Dẫn | Luận Điểm Xác Minh | Kết Quả Đối Soát |\n| :--- | :--- | :--- | :--- |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Lệnh OpenSSL để tạo cặp key/chứng chỉ SSL tự ký là openssl r... | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Cấu hình trong NGINX bao gồm listen 443 ssl;, ssl_certificat... | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n\n## 5. Radar Khoảng trống & Giả thuyết Nghiên cứu (Research Gap Radar)\n### [OBSERVATION-01]: Phạm vi Khảo sát của Tài liệu: Buổi 8 Cấu hình NGINX reverse proxy – Upstrea\n- **Khoảng trống Nghiên cứu (Research Gap):** Tài liệu hiện tại tập trung phản ánh các sự kiện, dữ liệu và luận điểm được ghi nhận trực tiếp; chưa công bố thêm các giới hạn kỹ thuật mở rộng.\n- **Đề xuất Kiến trúc Mới (Novel Formulation):** Khuyến nghị thu thập thêm các bài báo bình luận hoặc công trình khảo sát mở rộng.\n- **Giao thức Thực nghiệm Kiểm chứng (Verification Protocol):** Đối soát chéo với các nguồn học thuật bổ sung.\n\n## 6. Danh mục Tài liệu Trích dẫn (Evidence References)\n[1] **doc_cfe4f779_Buổi 8 Cấu hình NGINX reverse proxy – Upstream nhiều backend** (Trang 3). *\"Dùng lệnh openssl req -x509 -nodes -newkey rsa: 2048 -keyout myapp.key -out myapp.crt -days 365 để tạo cặp key/cert....\"*\n",
+      "preview": "# Báo cáo Nghiên cứu: Lệnh OpenSSL chính xác được tài liệu hướng dẫn dùng để tạo cặp key/chứng chỉ SSL tự ký là gì?  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]   > **Câu trả lời Trực tiếp:** **Lệnh OpenSSL chính xác được tài liệu hướng dẫn sử dụng để tạo cặp khóa và chứng chỉ SSL tự ký (s"
+    },
+    {
+      "index": 6,
+      "question": "Để chuyển tiếp toàn bộ request từ đường dẫn /api/... đến backend chạy cổng 5000, chỉ thị location và proxy_pass được viết như thế nào?",
+      "status": "completed",
+      "elapsed": 6.164319276809692,
+      "report_len": 3660,
+      "matched_keywords": [
+        "proxy_pass",
+        "5000",
+        "/api/"
+      ],
+      "total_keywords": [
+        "proxy_pass",
+        "5000",
+        "/api/"
+      ],
+      "has_citations": true,
+      "is_ood_refusal": false,
+      "verdict": "PASS",
+      "report": "# Báo cáo Nghiên cứu: Để chuyển tiếp toàn bộ request từ đường dẫn /api/... đến backend chạy cổng 5000, chỉ thị location và proxy_pass được viết như thế nào?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Để chuyển tiếp toàn bộ request từ đường dẫn /api/... đến backend chạy cổng 5000, chỉ thị location và proxy_pass được viết bằng cách định nghĩa khối **location /api/** kèm theo câu lệnh **proxy_pass http://localhost: 5000/;** để chuyển tiếp các request này [1]. Ngoài ra, để đảm bảo backend nhận diện chính xác thông tin gốc của request từ client thay vì từ NGINX, bạn cần kết hợp khai báo các header quan trọng như **proxy_set_header Host $host;**, **proxy_set_header X-Real-IP $remote_addr;**, **proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;**, và **proxy_set_header X-Forwarded-Proto $scheme;** [1].**\n\n---\n\n## 1. Tóm tắt Tổng quan (Executive Summary)\nĐể chuyển tiếp toàn bộ request từ đường dẫn /api/... đến backend chạy cổng 5000, chỉ thị location và proxy_pass được viết bằng cách định nghĩa khối **location /api/** kèm theo câu lệnh **proxy_pass http://localhost: 5000/;** để chuyển tiếp các request này [1]. Ngoài ra, để đảm bảo backend nhận diện chính xác thông tin gốc của request từ client thay vì từ NGINX, bạn cần kết hợp khai báo các header quan trọng như **proxy_set_header Host $host;**, **proxy_set_header X-Real-IP $remote_addr;**, **proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;**, và **proxy_set_header X-Forwarded-Proto $scheme;** [1].\n\n## 2. Kết quả Nghiên cứu & Luận điểm Đã Xác minh (Verified Findings)\n- **Phát hiện 1:** Sử dụng location /api/ và proxy_pass http://localhost: 5000/; để chuyển tiếp request đến backend cổng 5000 [1]\n- **Phát hiện 2:** Cần khai báo các header quan trọng khi proxy như Host, X-Real-IP, X-Forwarded-For và X-Forwarded-Proto [1]\n\n## 3. Đánh giá Bình duyệt Chuyên sâu (Senior Peer-Review Audit)\n- **Kiểm toán phương pháp:** Đã kiểm tra tính nhất quán số liệu và không phát hiện mâu thuẫn nội tại.\n\n## 4. Ma trận So sánh Đa bài báo (Cross-Paper Benchmark Matrix)\n| Công Trình / Tài Liệu | Nguồn Trích Dẫn | Luận Điểm Xác Minh | Kết Quả Đối Soát |\n| :--- | :--- | :--- | :--- |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Sử dụng location /api/ và proxy_pass http://localhost: 5000/... | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Cần khai báo các header quan trọng khi proxy như Host, X-Rea... | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n\n## 5. Radar Khoảng trống & Giả thuyết Nghiên cứu (Research Gap Radar)\n### [OBSERVATION-01]: Phạm vi Khảo sát của Tài liệu: Buổi 8 Cấu hình NGINX reverse proxy – Upstrea\n- **Khoảng trống Nghiên cứu (Research Gap):** Tài liệu hiện tại tập trung phản ánh các sự kiện, dữ liệu và luận điểm được ghi nhận trực tiếp; chưa công bố thêm các giới hạn kỹ thuật mở rộng.\n- **Đề xuất Kiến trúc Mới (Novel Formulation):** Khuyến nghị thu thập thêm các bài báo bình luận hoặc công trình khảo sát mở rộng.\n- **Giao thức Thực nghiệm Kiểm chứng (Verification Protocol):** Đối soát chéo với các nguồn học thuật bổ sung.\n\n## 6. Danh mục Tài liệu Trích dẫn (Evidence References)\n[1] **doc_cfe4f779_Buổi 8 Cấu hình NGINX reverse proxy – Upstream nhiều backend** (Trang 2). *\"location /api/ { proxy_pass http://localhost: 5000/; } chuyển tiếp các request /api/... Các header quan trọng khi proxy: Mặc định NGINX khôn...\"*\n",
+      "preview": "# Báo cáo Nghiên cứu: Để chuyển tiếp toàn bộ request từ đường dẫn /api/... đến backend chạy cổng 5000, chỉ thị location và proxy_pass được viết như thế nào?  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]   > **Câu trả lời Trực tiếp:** **Để chuyển tiếp toàn bộ request từ đường dẫn /api/... đế"
+    },
+    {
+      "index": 7,
+      "question": "Bốn header quan trọng bắt buộc cần khai báo trong proxy_set_header là gì và biến giá trị tương ứng của chúng?",
+      "status": "completed",
+      "elapsed": 12.343520402908325,
+      "report_len": 4109,
+      "matched_keywords": [
+        "host",
+        "x-real-ip",
+        "x-forwarded-for",
+        "x-forwarded-proto"
+      ],
+      "total_keywords": [
+        "host",
+        "x-real-ip",
+        "x-forwarded-for",
+        "x-forwarded-proto"
+      ],
+      "has_citations": true,
+      "is_ood_refusal": false,
+      "verdict": "PASS",
+      "report": "# Báo cáo Nghiên cứu: Bốn header quan trọng bắt buộc cần khai báo trong proxy_set_header là gì và biến giá trị tương ứng của chúng?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Bốn header quan trọng bắt buộc cần khai báo khi cấu hình `proxy_set_header` trong NGINX kèm theo các biến giá trị tương ứng bao gồm:\n\n1. **Host**: Khai báo với biến giá trị **`$host`** để truyền thông tin tên miền gốc của request [1].\n2. **X-Real-IP**: Khai báo với biến giá trị **`$remote_addr`** nhằm giữ lại địa chỉ IP thực tế của client thay vì IP của NGINX [1].\n3. **X-Forwarded-For**: Khai báo với biến giá trị **`$proxy_add_x_forwarded_for`** giúp theo dõi toàn bộ chuỗi IP proxy mà request đã đi qua [1].\n4. **X-Forwarded-Proto**: Khai báo với biến giá trị **`$scheme`** để xác định giao thức (HTTP hoặc HTTPS) mà client sử dụng [1].\n\nViệc khai báo các header này rất quan trọng để hệ thống backend không nhận diện nhầm mọi request đều xuất phát từ chính NGINX (`127.0.0.1`), từ đó hỗ trợ tốt cho việc ghi log, kiểm soát giới hạn lưu lượng (rate-limit) hoặc phân tích IP người dùng [1].**\n\n---\n\n## 1. Tóm tắt Tổng quan (Executive Summary)\nBốn header quan trọng bắt buộc cần khai báo khi cấu hình `proxy_set_header` trong NGINX kèm theo các biến giá trị tương ứng bao gồm:\n\n1. **Host**: Khai báo với biến giá trị **`$host`** để truyền thông tin tên miền gốc của request [1].\n2. **X-Real-IP**: Khai báo với biến giá trị **`$remote_addr`** nhằm giữ lại địa chỉ IP thực tế của client thay vì IP của NGINX [1].\n3. **X-Forwarded-For**: Khai báo với biến giá trị **`$proxy_add_x_forwarded_for`** giúp theo dõi toàn bộ chuỗi IP proxy mà request đã đi qua [1].\n4. **X-Forwarded-Proto**: Khai báo với biến giá trị **`$scheme`** để xác định giao thức (HTTP hoặc HTTPS) mà client sử dụng [1].\n\nViệc khai báo các header này rất quan trọng để hệ thống backend không nhận diện nhầm mọi request đều xuất phát từ chính NGINX (`127.0.0.1`), từ đó hỗ trợ tốt cho việc ghi log, kiểm soát giới hạn lưu lượng (rate-limit) hoặc phân tích IP người dùng [1].\n\n## 2. Kết quả Nghiên cứu & Luận điểm Đã Xác minh (Verified Findings)\n- **Phát hiện 1:** Bốn header quan trọng bắt buộc cần khai báo trong proxy_set_header gồm Host $host, X-Real-IP $remote_addr, X-Forwarded-For $proxy_add_x_forwarded_for, và X-Forwarded-Proto $scheme. [1]\n\n## 3. Đánh giá Bình duyệt Chuyên sâu (Senior Peer-Review Audit)\n- **Kiểm toán phương pháp:** Đã kiểm tra tính nhất quán số liệu và không phát hiện mâu thuẫn nội tại.\n\n## 4. Ma trận So sánh Đa bài báo (Cross-Paper Benchmark Matrix)\n| Công Trình / Tài Liệu | Nguồn Trích Dẫn | Luận Điểm Xác Minh | Kết Quả Đối Soát |\n| :--- | :--- | :--- | :--- |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Bốn header quan trọng bắt buộc cần khai báo trong proxy_set_... | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n\n## 5. Radar Khoảng trống & Giả thuyết Nghiên cứu (Research Gap Radar)\n### [OBSERVATION-01]: Phạm vi Khảo sát của Tài liệu: Buổi 8 Cấu hình NGINX reverse proxy – Upstrea\n- **Khoảng trống Nghiên cứu (Research Gap):** Tài liệu hiện tại tập trung phản ánh các sự kiện, dữ liệu và luận điểm được ghi nhận trực tiếp; chưa công bố thêm các giới hạn kỹ thuật mở rộng.\n- **Đề xuất Kiến trúc Mới (Novel Formulation):** Khuyến nghị thu thập thêm các bài báo bình luận hoặc công trình khảo sát mở rộng.\n- **Giao thức Thực nghiệm Kiểm chứng (Verification Protocol):** Đối soát chéo với các nguồn học thuật bổ sung.\n\n## 6. Danh mục Tài liệu Trích dẫn (Evidence References)\n[1] **doc_cfe4f779_Buổi 8 Cấu hình NGINX reverse proxy – Upstream nhiều backend** (Trang 2). *\"proxy_set_header Host $host;\nproxy_set_header X-Real-IP $remote_addr;\nproxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\nproxy_set...\"*\n",
+      "preview": "# Báo cáo Nghiên cứu: Bốn header quan trọng bắt buộc cần khai báo trong proxy_set_header là gì và biến giá trị tương ứng của chúng?  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]   > **Câu trả lời Trực tiếp:** **Bốn header quan trọng bắt buộc cần khai báo khi cấu hình `proxy_set_header` tron"
+    },
+    {
+      "index": 8,
+      "question": "Nếu thiếu khai báo proxy_set_header X-Real-IP $remote_addr, backend sẽ nhìn thấy địa chỉ IP của client là gì?",
+      "status": "completed",
+      "elapsed": 3.611245632171631,
+      "report_len": 3819,
+      "matched_keywords": [
+        "127.0.0.1",
+        "nginx",
+        "remote_addr",
+        "ip"
+      ],
+      "total_keywords": [
+        "127.0.0.1",
+        "nginx",
+        "remote_addr",
+        "ip"
+      ],
+      "has_citations": true,
+      "is_ood_refusal": false,
+      "verdict": "PASS",
+      "report": "# Báo cáo Nghiên cứu: Nếu thiếu khai báo proxy_set_header X-Real-IP $remote_addr, backend sẽ nhìn thấy địa chỉ IP của client là gì?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Nếu thiếu khai báo proxy_set_header X-Real-IP $remote_addr trong cấu hình NGINX, backend sẽ nhìn thấy mọi request đều đến từ chính NGINX (127.0.0.1) thay vì địa chỉ IP thật của client [1], [2]. Điều này gây ra một số khó khăn cụ thể cho hệ thống:\n\n1. **Gây khó khăn cho việc log**: Backend không thể ghi nhận chính xác địa chỉ IP của người dùng thực hiện request mà chỉ thấy IP của NGINX [1], [2].\n2. **Ảnh hưởng đến tính năng rate-limit**: Hệ thống không thể giới hạn tốc độ truy cập dựa trên địa chỉ IP thực tế của từng client [1], [2].\n3. **Cản trở việc phân tích dữ liệu**: Gặp bất lợi khi cần phân tích lưu lượng truy cập, thống kê hoặc theo dõi hành vi theo IP người dùng [1], [2].**\n\n---\n\n## 1. Tóm tắt Tổng quan (Executive Summary)\nNếu thiếu khai báo proxy_set_header X-Real-IP $remote_addr trong cấu hình NGINX, backend sẽ nhìn thấy mọi request đều đến từ chính NGINX (127.0.0.1) thay vì địa chỉ IP thật của client [1], [2]. Điều này gây ra một số khó khăn cụ thể cho hệ thống:\n\n1. **Gây khó khăn cho việc log**: Backend không thể ghi nhận chính xác địa chỉ IP của người dùng thực hiện request mà chỉ thấy IP của NGINX [1], [2].\n2. **Ảnh hưởng đến tính năng rate-limit**: Hệ thống không thể giới hạn tốc độ truy cập dựa trên địa chỉ IP thực tế của từng client [1], [2].\n3. **Cản trở việc phân tích dữ liệu**: Gặp bất lợi khi cần phân tích lưu lượng truy cập, thống kê hoặc theo dõi hành vi theo IP người dùng [1], [2].\n\n## 2. Kết quả Nghiên cứu & Luận điểm Đã Xác minh (Verified Findings)\n- **Phát hiện 1:** Nếu thiếu khai báo proxy_set_header X-Real-IP $remote_addr, backend sẽ thấy mọi request đều đến từ chính NGINX (127.0.0.1) thay vì IP thật của client. [1]\n- **Phát hiện 2:** Việc thiếu thông tin IP thật gây khó khăn khi cần log, rate-limit hoặc phân tích theo IP người dùng. [1]\n\n## 3. Đánh giá Bình duyệt Chuyên sâu (Senior Peer-Review Audit)\n- **Kiểm toán phương pháp:** Đã kiểm tra tính nhất quán số liệu và không phát hiện mâu thuẫn nội tại.\n\n## 4. Ma trận So sánh Đa bài báo (Cross-Paper Benchmark Matrix)\n| Công Trình / Tài Liệu | Nguồn Trích Dẫn | Luận Điểm Xác Minh | Kết Quả Đối Soát |\n| :--- | :--- | :--- | :--- |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Nếu thiếu khai báo proxy_set_header X-Real-IP $remote_addr, ... | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Việc thiếu thông tin IP thật gây khó khăn khi cần log, rate-... | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n\n## 5. Radar Khoảng trống & Giả thuyết Nghiên cứu (Research Gap Radar)\n### [OBSERVATION-01]: Phạm vi Khảo sát của Tài liệu: Buổi 8 Cấu hình NGINX reverse proxy – Upstrea\n- **Khoảng trống Nghiên cứu (Research Gap):** Tài liệu hiện tại tập trung phản ánh các sự kiện, dữ liệu và luận điểm được ghi nhận trực tiếp; chưa công bố thêm các giới hạn kỹ thuật mở rộng.\n- **Đề xuất Kiến trúc Mới (Novel Formulation):** Khuyến nghị thu thập thêm các bài báo bình luận hoặc công trình khảo sát mở rộng.\n- **Giao thức Thực nghiệm Kiểm chứng (Verification Protocol):** Đối soát chéo với các nguồn học thuật bổ sung.\n\n## 6. Danh mục Tài liệu Trích dẫn (Evidence References)\n[1] **doc_cfe4f779_Buổi 8 Cấu hình NGINX reverse proxy – Upstream nhiều backend** (Trang 2). *\"Giải thích: nếu không có các header này, backend sẽ thấy mọi request đều đến từ chính NGINX (127.0.0.1) thay vì IP thật của client, gây khó ...\"*\n",
+      "preview": "# Báo cáo Nghiên cứu: Nếu thiếu khai báo proxy_set_header X-Real-IP $remote_addr, backend sẽ nhìn thấy địa chỉ IP của client là gì?  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]   > **Câu trả lời Trực tiếp:** **Nếu thiếu khai báo proxy_set_header X-Real-IP $remote_addr trong cấu hình NGINX,"
+    },
+    {
+      "index": 9,
+      "question": "Cú pháp khai báo khối upstream my_backends mẫu trong tài liệu gồm những server và địa chỉ nào?",
+      "status": "completed",
+      "elapsed": 2.0627825260162354,
+      "report_len": 2740,
+      "matched_keywords": [
+        "my_backends",
+        "10.0.0.11",
+        "10.0.0.12",
+        "5001",
+        "upstream"
+      ],
+      "total_keywords": [
+        "my_backends",
+        "10.0.0.11",
+        "10.0.0.12",
+        "5001",
+        "upstream"
+      ],
+      "has_citations": true,
+      "is_ood_refusal": false,
+      "verdict": "PASS",
+      "report": "# Báo cáo Nghiên cứu: Cú pháp khai báo khối upstream my_backends mẫu trong tài liệu gồm những server và địa chỉ nào?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Cú pháp khai báo khối upstream my_backends mẫu trong tài liệu bao gồm các server với các địa chỉ cụ thể như sau:\n\n1. **Server đầu tiên**: `server 10.0.0.11: 5000;` [2].\n2. **Server thứ hai**: `server 10.0.0.12: 5000;` [2].\n3. **Server thứ ba**: `server localhost: 5001;` [2].**\n\n---\n\n## 1. Tóm tắt Tổng quan (Executive Summary)\nCú pháp khai báo khối upstream my_backends mẫu trong tài liệu bao gồm các server với các địa chỉ cụ thể như sau:\n\n1. **Server đầu tiên**: `server 10.0.0.11: 5000;` [2].\n2. **Server thứ hai**: `server 10.0.0.12: 5000;` [2].\n3. **Server thứ ba**: `server localhost: 5001;` [2].\n\n## 2. Kết quả Nghiên cứu & Luận điểm Đã Xác minh (Verified Findings)\n- **Phát hiện 1:** Khối upstream my_backends mẫu khai báo các server gồm 10.0.0.11: 5000, 10.0.0.12: 5000 và localhost: 5001 [1]\n\n## 3. Đánh giá Bình duyệt Chuyên sâu (Senior Peer-Review Audit)\n- **Kiểm toán phương pháp:** Đã kiểm tra tính nhất quán số liệu và không phát hiện mâu thuẫn nội tại.\n\n## 4. Ma trận So sánh Đa bài báo (Cross-Paper Benchmark Matrix)\n| Công Trình / Tài Liệu | Nguồn Trích Dẫn | Luận Điểm Xác Minh | Kết Quả Đối Soát |\n| :--- | :--- | :--- | :--- |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Khối upstream my_backends mẫu khai báo các server gồm 10.0.0... | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n\n## 5. Radar Khoảng trống & Giả thuyết Nghiên cứu (Research Gap Radar)\n### [OBSERVATION-01]: Phạm vi Khảo sát của Tài liệu: Buổi 8 Cấu hình NGINX reverse proxy – Upstrea\n- **Khoảng trống Nghiên cứu (Research Gap):** Tài liệu hiện tại tập trung phản ánh các sự kiện, dữ liệu và luận điểm được ghi nhận trực tiếp; chưa công bố thêm các giới hạn kỹ thuật mở rộng.\n- **Đề xuất Kiến trúc Mới (Novel Formulation):** Khuyến nghị thu thập thêm các bài báo bình luận hoặc công trình khảo sát mở rộng.\n- **Giao thức Thực nghiệm Kiểm chứng (Verification Protocol):** Đối soát chéo với các nguồn học thuật bổ sung.\n\n## 6. Danh mục Tài liệu Trích dẫn (Evidence References)\n[1] **doc_cfe4f779_Buổi 8 Cấu hình NGINX reverse proxy – Upstream nhiều backend** (Trang 2). *\"upstream my_backends {\n server 10.0.0.11: 5000;\n server 10.0.0.12: 5000;\n server localhost: 5001;\n}...\"*\n",
+      "preview": "# Báo cáo Nghiên cứu: Cú pháp khai báo khối upstream my_backends mẫu trong tài liệu gồm những server và địa chỉ nào?  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]   > **Câu trả lời Trực tiếp:** **Cú pháp khai báo khối upstream my_backends mẫu trong tài liệu bao gồm các server với các địa ch"
+    },
+    {
+      "index": 10,
+      "question": "Khi muốn NGINX chuyển tiếp request vào cụm upstream my_backends, chỉ thị proxy_pass được viết ra sao?",
+      "status": "completed",
+      "elapsed": 9.769076108932495,
+      "report_len": 3123,
+      "matched_keywords": [
+        "proxy_pass",
+        "http://my_backends",
+        "upstream"
+      ],
+      "total_keywords": [
+        "proxy_pass",
+        "http://my_backends",
+        "upstream"
+      ],
+      "has_citations": true,
+      "is_ood_refusal": false,
+      "verdict": "PASS",
+      "report": "# Báo cáo Nghiên cứu: Khi muốn NGINX chuyển tiếp request vào cụm upstream my_backends, chỉ thị proxy_pass được viết ra sao?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Khi muốn NGINX chuyển tiếp request vào cụm upstream `my_backends`, chỉ thị `proxy_pass` được cấu hình trực tiếp trong khối `location` bằng cú pháp `proxy_pass http://my_backends;` thay vì trỏ trực tiếp đến một backend đơn lẻ [2].**\n\n---\n\n## 1. Tóm tắt Tổng quan (Executive Summary)\nKhi muốn NGINX chuyển tiếp request vào cụm upstream `my_backends`, chỉ thị `proxy_pass` được cấu hình trực tiếp trong khối `location` bằng cú pháp `proxy_pass http://my_backends;` thay vì trỏ trực tiếp đến một backend đơn lẻ [2]. \n\nCụ thể cấu hình bao gồm các điểm chính sau:\n1. **Định nghĩa nhóm upstream**: Khai báo cụm các server backend bên trong khối `upstream my_backends` với các địa chỉ IP hoặc cổng tương ứng [2].\n2. **Sử dụng trong location**: Đặt chỉ thị **`proxy_pass http://my_backends;`** bên trong block `location` để NGINX tự động phân phối các request đến các server trong cụm theo cơ chế cân bằng tải mặc định (round-robin) [2].\n\n## 2. Kết quả Nghiên cứu & Luận điểm Đã Xác minh (Verified Findings)\n- **Phát hiện 1:** Chỉ thị proxy_pass được viết là proxy_pass http://my_backends; để chuyển tiếp request vào cụm upstream my_backends. [1]\n\n## 3. Đánh giá Bình duyệt Chuyên sâu (Senior Peer-Review Audit)\n- **Kiểm toán phương pháp:** Đã kiểm tra tính nhất quán số liệu và không phát hiện mâu thuẫn nội tại.\n\n## 4. Ma trận So sánh Đa bài báo (Cross-Paper Benchmark Matrix)\n| Công Trình / Tài Liệu | Nguồn Trích Dẫn | Luận Điểm Xác Minh | Kết Quả Đối Soát |\n| :--- | :--- | :--- | :--- |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Chỉ thị proxy_pass được viết là proxy_pass http://my_backend... | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n\n## 5. Radar Khoảng trống & Giả thuyết Nghiên cứu (Research Gap Radar)\n### [OBSERVATION-01]: Phạm vi Khảo sát của Tài liệu: Buổi 8 Cấu hình NGINX reverse proxy – Upstrea\n- **Khoảng trống Nghiên cứu (Research Gap):** Tài liệu hiện tại tập trung phản ánh các sự kiện, dữ liệu và luận điểm được ghi nhận trực tiếp; chưa công bố thêm các giới hạn kỹ thuật mở rộng.\n- **Đề xuất Kiến trúc Mới (Novel Formulation):** Khuyến nghị thu thập thêm các bài báo bình luận hoặc công trình khảo sát mở rộng.\n- **Giao thức Thực nghiệm Kiểm chứng (Verification Protocol):** Đối soát chéo với các nguồn học thuật bổ sung.\n\n## 6. Danh mục Tài liệu Trích dẫn (Evidence References)\n[1] **doc_cfe4f779_Buổi 8 Cấu hình NGINX reverse proxy – Upstream nhiều backend** (Trang 2). *\"upstream my_backends {\n server 10.0.0.11: 5000;\n server 10.0.0.12: 5000;\n server localhost: 5001;\n}\nSử dụng trong location: proxy_pass http:...\"*\n",
+      "preview": "# Báo cáo Nghiên cứu: Khi muốn NGINX chuyển tiếp request vào cụm upstream my_backends, chỉ thị proxy_pass được viết ra sao?  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]   > **Câu trả lời Trực tiếp:** **Khi muốn NGINX chuyển tiếp request vào cụm upstream `my_backends`, chỉ thị `proxy_pass` "
+    },
+    {
+      "index": 11,
+      "question": "Thuật toán cân bằng tải mặc định của NGINX khi khai báo upstream mà không chỉ định thuật toán khác là gì?",
+      "status": "completed",
+      "elapsed": 2.589486598968506,
+      "report_len": 3089,
+      "matched_keywords": [
+        "round-robin",
+        "lần lượt",
+        "mặc định"
+      ],
+      "total_keywords": [
+        "round-robin",
+        "lần lượt",
+        "mặc định"
+      ],
+      "has_citations": true,
+      "is_ood_refusal": false,
+      "verdict": "PASS",
+      "report": "# Báo cáo Nghiên cứu: Thuật toán cân bằng tải mặc định của NGINX khi khai báo upstream mà không chỉ định thuật toán khác là gì?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Thuật toán cân bằng tải mặc định của NGINX khi khai báo upstream mà không chỉ định thuật toán khác là thuật toán **round-robin** (phân phối lần lượt các request giữa các server trong upstream) [1]. Ngoài ra, hệ thống cũng cho phép tìm hiểu và cấu hình thêm các chiến lược khác như **least_conn** (ưu tiên server ít kết nối nhất) hoặc **weight=** (ưu tiên theo trọng số nếu các node có cấu hình phần cứng khác nhau) [1].**\n\n---\n\n## 1. Tóm tắt Tổng quan (Executive Summary)\nThuật toán cân bằng tải mặc định của NGINX khi khai báo upstream mà không chỉ định thuật toán khác là thuật toán **round-robin** (phân phối lần lượt các request giữa các server trong upstream) [1]. Ngoài ra, hệ thống cũng cho phép tìm hiểu và cấu hình thêm các chiến lược khác như **least_conn** (ưu tiên server ít kết nối nhất) hoặc **weight=** (ưu tiên theo trọng số nếu các node có cấu hình phần cứng khác nhau) [1].\n\n## 2. Kết quả Nghiên cứu & Luận điểm Đã Xác minh (Verified Findings)\n- **Phát hiện 1:** Thuật toán cân bằng tải mặc định của NGINX là round-robin khi khai báo upstream mà không chỉ định thuật toán khác. [1]\n\n## 3. Đánh giá Bình duyệt Chuyên sâu (Senior Peer-Review Audit)\n- **Kiểm toán phương pháp:** Đã kiểm tra tính nhất quán số liệu và không phát hiện mâu thuẫn nội tại.\n\n## 4. Ma trận So sánh Đa bài báo (Cross-Paper Benchmark Matrix)\n| Công Trình / Tài Liệu | Nguồn Trích Dẫn | Luận Điểm Xác Minh | Kết Quả Đối Soát |\n| :--- | :--- | :--- | :--- |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Thuật toán cân bằng tải mặc định của NGINX là round-robin kh... | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n\n## 5. Radar Khoảng trống & Giả thuyết Nghiên cứu (Research Gap Radar)\n### [OBSERVATION-01]: Phạm vi Khảo sát của Tài liệu: Buổi 8 Cấu hình NGINX reverse proxy – Upstrea\n- **Khoảng trống Nghiên cứu (Research Gap):** Tài liệu hiện tại tập trung phản ánh các sự kiện, dữ liệu và luận điểm được ghi nhận trực tiếp; chưa công bố thêm các giới hạn kỹ thuật mở rộng.\n- **Đề xuất Kiến trúc Mới (Novel Formulation):** Khuyến nghị thu thập thêm các bài báo bình luận hoặc công trình khảo sát mở rộng.\n- **Giao thức Thực nghiệm Kiểm chứng (Verification Protocol):** Đối soát chéo với các nguồn học thuật bổ sung.\n\n## 6. Danh mục Tài liệu Trích dẫn (Evidence References)\n[1] **doc_cfe4f779_Buổi 8 Cấu hình NGINX reverse proxy – Upstream nhiều backend** (Trang 2). *\"Cân bằng tải (Load Balancing): Mặc định NGINX dùng round-robin (lần lượt) giữa các server trong\nupstream. Có thể tìm hiểu thêm các chiến lượ...\"*\n",
+      "preview": "# Báo cáo Nghiên cứu: Thuật toán cân bằng tải mặc định của NGINX khi khai báo upstream mà không chỉ định thuật toán khác là gì?  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]   > **Câu trả lời Trực tiếp:** **Thuật toán cân bằng tải mặc định của NGINX khi khai báo upstream mà không chỉ định t"
+    },
+    {
+      "index": 12,
+      "question": "Thuật toán least_conn hoạt động theo nguyên lý nào theo mô tả trong bài giảng?",
+      "status": "completed",
+      "elapsed": 2.064732789993286,
+      "report_len": 2542,
+      "matched_keywords": [
+        "least_conn",
+        "ít kết nối",
+        "kết nối"
+      ],
+      "total_keywords": [
+        "least_conn",
+        "ít kết nối",
+        "kết nối"
+      ],
+      "has_citations": true,
+      "is_ood_refusal": false,
+      "verdict": "PASS",
+      "report": "# Báo cáo Nghiên cứu: Thuật toán least_conn hoạt động theo nguyên lý nào theo mô tả trong bài giảng?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Theo tài liệu bài giảng, thuật toán **least_conn** là một chiến lược cân bằng tải trong NGINX hoạt động theo nguyên lý **ưu tiên phân phối request đến server có số lượng kết nối đang hoạt động ít nhất** trong nhóm upstream [2].**\n\n---\n\n## 1. Tóm tắt Tổng quan (Executive Summary)\nTheo tài liệu bài giảng, thuật toán **least_conn** là một chiến lược cân bằng tải trong NGINX hoạt động theo nguyên lý **ưu tiên phân phối request đến server có số lượng kết nối đang hoạt động ít nhất** trong nhóm upstream [2].\n\n## 2. Kết quả Nghiên cứu & Luận điểm Đã Xác minh (Verified Findings)\n- **Phát hiện 1:** Thuật toán least_conn ưu tiên chuyển request đến server có ít kết nối nhất. [1]\n\n## 3. Đánh giá Bình duyệt Chuyên sâu (Senior Peer-Review Audit)\n- **Kiểm toán phương pháp:** Đã kiểm tra tính nhất quán số liệu và không phát hiện mâu thuẫn nội tại.\n\n## 4. Ma trận So sánh Đa bài báo (Cross-Paper Benchmark Matrix)\n| Công Trình / Tài Liệu | Nguồn Trích Dẫn | Luận Điểm Xác Minh | Kết Quả Đối Soát |\n| :--- | :--- | :--- | :--- |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Thuật toán least_conn ưu tiên chuyển request đến server có í... | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n\n## 5. Radar Khoảng trống & Giả thuyết Nghiên cứu (Research Gap Radar)\n### [OBSERVATION-01]: Phạm vi Khảo sát của Tài liệu: Buổi 8 Cấu hình NGINX reverse proxy – Upstrea\n- **Khoảng trống Nghiên cứu (Research Gap):** Tài liệu hiện tại tập trung phản ánh các sự kiện, dữ liệu và luận điểm được ghi nhận trực tiếp; chưa công bố thêm các giới hạn kỹ thuật mở rộng.\n- **Đề xuất Kiến trúc Mới (Novel Formulation):** Khuyến nghị thu thập thêm các bài báo bình luận hoặc công trình khảo sát mở rộng.\n- **Giao thức Thực nghiệm Kiểm chứng (Verification Protocol):** Đối soát chéo với các nguồn học thuật bổ sung.\n\n## 6. Danh mục Tài liệu Trích dẫn (Evidence References)\n[1] **doc_cfe4f779_Buổi 8 Cấu hình NGINX reverse proxy – Upstream nhiều backend** (Trang 2). *\"least_conn (ưu tiên server ít kết nối nhất)...\"*\n",
+      "preview": "# Báo cáo Nghiên cứu: Thuật toán least_conn hoạt động theo nguyên lý nào theo mô tả trong bài giảng?  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]   > **Câu trả lời Trực tiếp:** **Theo tài liệu bài giảng, thuật toán **least_conn** là một chiến lược cân bằng tải trong NGINX hoạt động theo ng"
+    },
+    {
+      "index": 13,
+      "question": "Khi các node backend có cấu hình phần cứng không đồng đều (máy mạnh, máy yếu), NGINX cung cấp tham số nào để ưu tiên tải?",
+      "status": "completed",
+      "elapsed": 6.698200225830078,
+      "report_len": 3166,
+      "matched_keywords": [
+        "weight",
+        "trọng số",
+        "phần cứng"
+      ],
+      "total_keywords": [
+        "weight",
+        "trọng số",
+        "phần cứng"
+      ],
+      "has_citations": true,
+      "is_ood_refusal": false,
+      "verdict": "PASS",
+      "report": "# Báo cáo Nghiên cứu: Khi các node backend có cấu hình phần cứng không đồng đều (máy mạnh, máy yếu), NGINX cung cấp tham số nào để ưu tiên tải?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Khi các node backend có cấu hình phần cứng không đồng đều (máy mạnh, máy yếu), NGINX cung cấp tham số **weight=** trong khối upstream để ưu tiên phân phối tải theo trọng số tương ứng với năng lực của từng server [1].**\n\n---\n\n## 1. Tóm tắt Tổng quan (Executive Summary)\nKhi các node backend có cấu hình phần cứng không đồng đều (máy mạnh, máy yếu), NGINX cung cấp tham số **weight=** trong khối upstream để ưu tiên phân phối tải theo trọng số tương ứng với năng lực của từng server [1].\n\n- **1. Ưu tiên theo trọng số (weight=)**: Cho phép cấu hình mức độ ưu tiên nhận request cho từng node backend trong cụm upstream, giúp các máy cấu hình mạnh xử lý nhiều tải hơn và máy yếu nhận ít tải hơn dựa trên giá trị trọng số được định nghĩa [1].\n- **2. Chiến lược cân bằng tải đi kèm**: Bên cạnh chiến lược mặc định là round-robin (lần lượt), NGINX còn hỗ trợ chiến lược **least_conn** để ưu tiên chuyển request đến server đang có ít kết nối nhất [1].\n\n## 2. Kết quả Nghiên cứu & Luận điểm Đã Xác minh (Verified Findings)\n- **Phát hiện 1:** NGINX cung cấp tham số weight= để ưu tiên phân phối tải theo trọng số khi các node backend có cấu hình phần cứng khác nhau. [1]\n\n## 3. Đánh giá Bình duyệt Chuyên sâu (Senior Peer-Review Audit)\n- **Kiểm toán phương pháp:** Đã kiểm tra tính nhất quán số liệu và không phát hiện mâu thuẫn nội tại.\n\n## 4. Ma trận So sánh Đa bài báo (Cross-Paper Benchmark Matrix)\n| Công Trình / Tài Liệu | Nguồn Trích Dẫn | Luận Điểm Xác Minh | Kết Quả Đối Soát |\n| :--- | :--- | :--- | :--- |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | NGINX cung cấp tham số weight= để ưu tiên phân phối tải theo... | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n\n## 5. Radar Khoảng trống & Giả thuyết Nghiên cứu (Research Gap Radar)\n### [OBSERVATION-01]: Phạm vi Khảo sát của Tài liệu: Buổi 8 Cấu hình NGINX reverse proxy – Upstrea\n- **Khoảng trống Nghiên cứu (Research Gap):** Tài liệu hiện tại tập trung phản ánh các sự kiện, dữ liệu và luận điểm được ghi nhận trực tiếp; chưa công bố thêm các giới hạn kỹ thuật mở rộng.\n- **Đề xuất Kiến trúc Mới (Novel Formulation):** Khuyến nghị thu thập thêm các bài báo bình luận hoặc công trình khảo sát mở rộng.\n- **Giao thức Thực nghiệm Kiểm chứng (Verification Protocol):** Đối soát chéo với các nguồn học thuật bổ sung.\n\n## 6. Danh mục Tài liệu Trích dẫn (Evidence References)\n[1] **doc_cfe4f779_Buổi 8 Cấu hình NGINX reverse proxy – Upstream nhiều backend** (Trang 2). *\"Cân bằng tải (Load Balancing): Mặc định NGINX dùng round-robin (lần lượt) giữa các server trong upstream. Có thể tìm hiểu thêm các chiến lượ...\"*\n",
+      "preview": "# Báo cáo Nghiên cứu: Khi các node backend có cấu hình phần cứng không đồng đều (máy mạnh, máy yếu), NGINX cung cấp tham số nào để ưu tiên tải?  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]   > **Câu trả lời Trực tiếp:** **Khi các node backend có cấu hình phần cứng không đồng đều (máy mạnh,"
+    },
+    {
+      "index": 14,
+      "question": "Mục đích chính của việc chạy nhiều instance backend/nhiều node server song song sau NGINX là gì?",
+      "status": "completed",
+      "elapsed": 3.1102781295776367,
+      "report_len": 3294,
+      "matched_keywords": [
+        "chịu tải",
+        "sự cố",
+        "song song",
+        "chết",
+        "instance"
+      ],
+      "total_keywords": [
+        "chịu tải",
+        "sự cố",
+        "song song",
+        "chết",
+        "instance"
+      ],
+      "has_citations": true,
+      "is_ood_refusal": false,
+      "verdict": "PASS",
+      "report": "# Báo cáo Nghiên cứu: Mục đích chính của việc chạy nhiều instance backend/nhiều node server song song sau NGINX là gì?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Mục đích chính của việc chạy nhiều instance backend hoặc nhiều node server song song sau NGINX là để giải quyết các vấn đề về khả năng chịu tải và độ sẵn sàng của hệ thống [1]. Cụ thể:\n\n1. **Giải quyết vấn đề quá tải**: Khi một backend đơn lẻ không đủ sức chịu tải của lượng truy cập lớn, việc triển khai nhiều bản backend cùng chạy song song giúp phân phối khối lượng công việc [1].\n2. **Đảm bảo tính sẵn sàng cao**: Giúp hệ thống không bị gián đoạn hay \"chết\" toàn bộ nếu một node server gặp sự cố [1].**\n\n---\n\n## 1. Tóm tắt Tổng quan (Executive Summary)\nMục đích chính của việc chạy nhiều instance backend hoặc nhiều node server song song sau NGINX là để giải quyết các vấn đề về khả năng chịu tải và độ sẵn sàng của hệ thống [1]. Cụ thể:\n\n1. **Giải quyết vấn đề quá tải**: Khi một backend đơn lẻ không đủ sức chịu tải của lượng truy cập lớn, việc triển khai nhiều bản backend cùng chạy song song giúp phân phối khối lượng công việc [1].\n2. **Đảm bảo tính sẵn sàng cao**: Giúp hệ thống không bị gián đoạn hay \"chết\" toàn bộ nếu một node server gặp sự cố [1].\n\n## 2. Kết quả Nghiên cứu & Luận điểm Đã Xác minh (Verified Findings)\n- **Phát hiện 1:** Mục đích chạy nhiều instance backend song song là để đáp ứng khi một backend không đủ sức chịu tải hoặc để đảm bảo hệ thống không chết nếu một node gặp sự cố. [1]\n\n## 3. Đánh giá Bình duyệt Chuyên sâu (Senior Peer-Review Audit)\n- **Kiểm toán phương pháp:** Đã kiểm tra tính nhất quán số liệu và không phát hiện mâu thuẫn nội tại.\n\n## 4. Ma trận So sánh Đa bài báo (Cross-Paper Benchmark Matrix)\n| Công Trình / Tài Liệu | Nguồn Trích Dẫn | Luận Điểm Xác Minh | Kết Quả Đối Soát |\n| :--- | :--- | :--- | :--- |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Mục đích chạy nhiều instance backend song song là để đáp ứng... | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n\n## 5. Radar Khoảng trống & Giả thuyết Nghiên cứu (Research Gap Radar)\n### [OBSERVATION-01]: Phạm vi Khảo sát của Tài liệu: Buổi 8 Cấu hình NGINX reverse proxy – Upstrea\n- **Khoảng trống Nghiên cứu (Research Gap):** Tài liệu hiện tại tập trung phản ánh các sự kiện, dữ liệu và luận điểm được ghi nhận trực tiếp; chưa công bố thêm các giới hạn kỹ thuật mở rộng.\n- **Đề xuất Kiến trúc Mới (Novel Formulation):** Khuyến nghị thu thập thêm các bài báo bình luận hoặc công trình khảo sát mở rộng.\n- **Giao thức Thực nghiệm Kiểm chứng (Verification Protocol):** Đối soát chéo với các nguồn học thuật bổ sung.\n\n## 6. Danh mục Tài liệu Trích dẫn (Evidence References)\n[1] **doc_cfe4f779_Buổi 8 Cấu hình NGINX reverse proxy – Upstream nhiều backend** (Trang 2). *\"Khi một backend không đủ sức chịu tải, hoặc cần đảm bảo hệ thống không \"chết\" nếu một node gặp sự cố, ta cần nhiều bản backend (nhiều instan...\"*\n",
+      "preview": "# Báo cáo Nghiên cứu: Mục đích chính của việc chạy nhiều instance backend/nhiều node server song song sau NGINX là gì?  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]   > **Câu trả lời Trực tiếp:** **Mục đích chính của việc chạy nhiều instance backend hoặc nhiều node server song song sau NGIN"
+    },
+    {
+      "index": 15,
+      "question": "Khi NGINX và Frontend/Backend cùng đóng gói trong Docker network, proxy_pass trỏ đến địa chỉ nào thay vì localhost?",
+      "status": "completed",
+      "elapsed": 3.0996904373168945,
+      "report_len": 4037,
+      "matched_keywords": [
+        "docker",
+        "service",
+        "frontend:80",
+        "backend:5000"
+      ],
+      "total_keywords": [
+        "docker",
+        "service",
+        "frontend:80",
+        "backend:5000"
+      ],
+      "has_citations": true,
+      "is_ood_refusal": false,
+      "verdict": "PASS",
+      "report": "# Báo cáo Nghiên cứu: Khi NGINX và Frontend/Backend cùng đóng gói trong Docker network, proxy_pass trỏ đến địa chỉ nào thay vì localhost?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Khi NGINX và Frontend/Backend cùng được đóng gói trong một Docker network, chỉ thị `proxy_pass` sẽ trỏ đến tên service tương ứng trong mạng Docker thay vì sử dụng địa chỉ `localhost` [1], [2]. Cụ thể:\n\n1. **Trỏ đến container Frontend**: Khi frontend được chạy trong một container NGINX riêng hoặc dưới dạng service, `proxy_pass` sẽ trỏ trực tiếp đến tên service tương ứng (ví dụ: `http://frontend:80;`) [1], [2].\n2. **Trỏ đến container Backend**: Tương tự như frontend, `proxy_pass` sẽ trỏ vào tên container backend hoặc service backend trong cùng mạng Docker (ví dụ: `http://backend:5000;`) [1].\n3. **Sử dụng upstream cho nhiều backend**: Có thể cấu hình `upstream` bao gồm các tên service backend trong cùng Docker network để thực hiện service discovery và cân bằng tải giữa các node [1].**\n\n---\n\n## 1. Tóm tắt Tổng quan (Executive Summary)\nKhi NGINX và Frontend/Backend cùng được đóng gói trong một Docker network, chỉ thị `proxy_pass` sẽ trỏ đến tên service tương ứng trong mạng Docker thay vì sử dụng địa chỉ `localhost` [1], [2]. Cụ thể:\n\n1. **Trỏ đến container Frontend**: Khi frontend được chạy trong một container NGINX riêng hoặc dưới dạng service, `proxy_pass` sẽ trỏ trực tiếp đến tên service tương ứng (ví dụ: `http://frontend:80;`) [1], [2].\n2. **Trỏ đến container Backend**: Tương tự như frontend, `proxy_pass` sẽ trỏ vào tên container backend hoặc service backend trong cùng mạng Docker (ví dụ: `http://backend:5000;`) [1].\n3. **Sử dụng upstream cho nhiều backend**: Có thể cấu hình `upstream` bao gồm các tên service backend trong cùng Docker network để thực hiện service discovery và cân bằng tải giữa các node [1].\n\n## 2. Kết quả Nghiên cứu & Luận điểm Đã Xác minh (Verified Findings)\n- **Phát hiện 1:** proxy_pass trỏ đến tên service trong Docker network thay vì localhost [1]\n\n## 3. Đánh giá Bình duyệt Chuyên sâu (Senior Peer-Review Audit)\n- **Kiểm toán phương pháp:** Đã kiểm tra tính nhất quán số liệu và không phát hiện mâu thuẫn nội tại.\n\n## 4. Ma trận So sánh Đa bài báo (Cross-Paper Benchmark Matrix)\n| Công Trình / Tài Liệu | Nguồn Trích Dẫn | Luận Điểm Xác Minh | Kết Quả Đối Soát |\n| :--- | :--- | :--- | :--- |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | proxy_pass trỏ đến tên service trong Docker network thay vì ... | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n\n## 5. Radar Khoảng trống & Giả thuyết Nghiên cứu (Research Gap Radar)\n### [OBSERVATION-01]: Phạm vi Khảo sát của Tài liệu: Buổi 8 Cấu hình NGINX reverse proxy – Upstrea\n- **Khoảng trống Nghiên cứu (Research Gap):** Tài liệu hiện tại tập trung phản ánh các sự kiện, dữ liệu và luận điểm được ghi nhận trực tiếp; chưa công bố thêm các giới hạn kỹ thuật mở rộng.\n- **Đề xuất Kiến trúc Mới (Novel Formulation):** Khuyến nghị thu thập thêm các bài báo bình luận hoặc công trình khảo sát mở rộng.\n- **Giao thức Thực nghiệm Kiểm chứng (Verification Protocol):** Đối soát chéo với các nguồn học thuật bổ sung.\n\n## 6. Danh mục Tài liệu Trích dẫn (Evidence References)\n[1] **doc_cfe4f779_Buổi 8 Cấu hình NGINX reverse proxy – Upstream nhiều backend** (Trang 3). *\"trong Docker network (ví dụ proxy_pass http://frontend: 80;) thay vì localhost. Cấu hình trỏ vào container Backend: Tương tự, proxy_pass htt...\"*\n[2] **doc_cfe4f779_Buổi 8 Cấu hình NGINX reverse proxy – Upstream nhiều backend** (Trang 4). *\"Cấu hình container FE/BE (nếu nhóm đã Docker hóa ở buổi trước): Sửa proxy_pass để trỏ tới tên service trong Docker network thay vì localhost...\"*\n",
+      "preview": "# Báo cáo Nghiên cứu: Khi NGINX và Frontend/Backend cùng đóng gói trong Docker network, proxy_pass trỏ đến địa chỉ nào thay vì localhost?  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]   > **Câu trả lời Trực tiếp:** **Khi NGINX và Frontend/Backend cùng được đóng gói trong một Docker network,"
+    },
+    {
+      "index": 16,
+      "question": "Kích thước body tối đa (client_max_body_size) mặc định của NGINX là bao nhiêu nếu không khai báo cấu hình?",
+      "status": "completed",
+      "elapsed": 6.169840335845947,
+      "report_len": 3238,
+      "matched_keywords": [
+        "1mb",
+        "mặc định"
+      ],
+      "total_keywords": [
+        "1mb",
+        "1 mb",
+        "mặc định"
+      ],
+      "has_citations": true,
+      "is_ood_refusal": false,
+      "verdict": "PASS",
+      "report": "# Báo cáo Nghiên cứu: Kích thước body tối đa (client_max_body_size) mặc định của NGINX là bao nhiêu nếu không khai báo cấu hình?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Kích thước body tối đa mặc định (`client_max_body_size`) của NGINX nếu không khai báo cấu hình là **1MB**, và nếu request vượt quá giới hạn này (như khi upload file hoặc ảnh), hệ thống sẽ từ chối và trả về lỗi **413 Request Entity Too Large** [1].**\n\n---\n\n## 1. Tóm tắt Tổng quan (Executive Summary)\nKích thước body tối đa mặc định (`client_max_body_size`) của NGINX nếu không khai báo cấu hình là **1MB**, và nếu request vượt quá giới hạn này (như khi upload file hoặc ảnh), hệ thống sẽ từ chối và trả về lỗi **413 Request Entity Too Large** [1].\n\nDưới đây là các điểm cần lưu ý liên quan đến giới hạn kích thước body của NGINX:\n1. **Giới hạn mặc định**: NGINX chỉ cho phép body request tối đa là **1MB** nếu người dùng không tự thiết lập tham số này [1].\n2. **Xử lý lỗi**: Các request vượt quá kích thước trên sẽ gặp lỗi **413 Request Entity Too Large** [1].\n3. **Phạm vi cấu hình**: Có thể tăng giá trị này tại các block như `http`, `server` hoặc `location` tùy thuộc vào nhu cầu sử dụng thực tế của hệ thống (ví dụ: `client_max_body_size 20M;`) [1].\n\n## 2. Kết quả Nghiên cứu & Luận điểm Đã Xác minh (Verified Findings)\n- **Phát hiện 1:** Kích thước body tối đa mặc định (client_max_body_size) của NGINX là 1MB nếu không khai báo cấu hình. [1]\n\n## 3. Đánh giá Bình duyệt Chuyên sâu (Senior Peer-Review Audit)\n- **Kiểm toán phương pháp:** Đã kiểm tra tính nhất quán số liệu và không phát hiện mâu thuẫn nội tại.\n\n## 4. Ma trận So sánh Đa bài báo (Cross-Paper Benchmark Matrix)\n| Công Trình / Tài Liệu | Nguồn Trích Dẫn | Luận Điểm Xác Minh | Kết Quả Đối Soát |\n| :--- | :--- | :--- | :--- |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Kích thước body tối đa mặc định (client_max_body_size) của N... | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n\n## 5. Radar Khoảng trống & Giả thuyết Nghiên cứu (Research Gap Radar)\n### [OBSERVATION-01]: Phạm vi Khảo sát của Tài liệu: Buổi 8 Cấu hình NGINX reverse proxy – Upstrea\n- **Khoảng trống Nghiên cứu (Research Gap):** Tài liệu hiện tại tập trung phản ánh các sự kiện, dữ liệu và luận điểm được ghi nhận trực tiếp; chưa công bố thêm các giới hạn kỹ thuật mở rộng.\n- **Đề xuất Kiến trúc Mới (Novel Formulation):** Khuyến nghị thu thập thêm các bài báo bình luận hoặc công trình khảo sát mở rộng.\n- **Giao thức Thực nghiệm Kiểm chứng (Verification Protocol):** Đối soát chéo với các nguồn học thuật bổ sung.\n\n## 6. Danh mục Tài liệu Trích dẫn (Evidence References)\n[1] **doc_cfe4f779_Buổi 8 Cấu hình NGINX reverse proxy – Upstream nhiều backend** (Trang 3). *\"Giới hạn kích thước body tối đa (client_max_body_size): Mặc định NGINX chỉ cho phép body request tối đa 1MB, request lớn hơn (ví dụ upload f...\"*\n",
+      "preview": "# Báo cáo Nghiên cứu: Kích thước body tối đa (client_max_body_size) mặc định của NGINX là bao nhiêu nếu không khai báo cấu hình?  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]   > **Câu trả lời Trực tiếp:** **Kích thước body tối đa mặc định (`client_max_body_size`) của NGINX nếu không khai b"
+    },
+    {
+      "index": 17,
+      "question": "Khi người dùng upload một file hoặc ảnh vượt quá 1MB mà chưa cấu hình tăng kích thước body, NGINX trả về mã lỗi HTTP nào?",
+      "status": "completed",
+      "elapsed": 3.092313528060913,
+      "report_len": 3005,
+      "matched_keywords": [
+        "413",
+        "entity too large",
+        "request entity"
+      ],
+      "total_keywords": [
+        "413",
+        "entity too large",
+        "request entity"
+      ],
+      "has_citations": true,
+      "is_ood_refusal": false,
+      "verdict": "PASS",
+      "report": "# Báo cáo Nghiên cứu: Khi người dùng upload một file hoặc ảnh vượt quá 1MB mà chưa cấu hình tăng kích thước body, NGINX trả về mã lỗi HTTP nào?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Khi người dùng upload một file hoặc ảnh vượt quá giới hạn mặc định 1MB mà chưa cấu hình tăng kích thước body, NGINX sẽ từ chối request và trả về mã lỗi **413 Request Entity Too Large** [1]. Để khắc phục tình trạng này, cần cấu hình thêm tham số **client_max_body_size** (ví dụ: client_max_body_size 20M;) tại phạm vi http, server hoặc location block tùy theo nhu cầu sử dụng [1].**\n\n---\n\n## 1. Tóm tắt Tổng quan (Executive Summary)\nKhi người dùng upload một file hoặc ảnh vượt quá giới hạn mặc định 1MB mà chưa cấu hình tăng kích thước body, NGINX sẽ từ chối request và trả về mã lỗi **413 Request Entity Too Large** [1]. Để khắc phục tình trạng này, cần cấu hình thêm tham số **client_max_body_size** (ví dụ: client_max_body_size 20M;) tại phạm vi http, server hoặc location block tùy theo nhu cầu sử dụng [1].\n\n## 2. Kết quả Nghiên cứu & Luận điểm Đã Xác minh (Verified Findings)\n- **Phát hiện 1:** NGINX trả về lỗi 413 Request Entity Too Large khi request vượt quá 1MB chưa cấu hình body size [1]\n\n## 3. Đánh giá Bình duyệt Chuyên sâu (Senior Peer-Review Audit)\n- **Kiểm toán phương pháp:** Đã kiểm tra tính nhất quán số liệu và không phát hiện mâu thuẫn nội tại.\n\n## 4. Ma trận So sánh Đa bài báo (Cross-Paper Benchmark Matrix)\n| Công Trình / Tài Liệu | Nguồn Trích Dẫn | Luận Điểm Xác Minh | Kết Quả Đối Soát |\n| :--- | :--- | :--- | :--- |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | NGINX trả về lỗi 413 Request Entity Too Large khi request vư... | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n\n## 5. Radar Khoảng trống & Giả thuyết Nghiên cứu (Research Gap Radar)\n### [OBSERVATION-01]: Phạm vi Khảo sát của Tài liệu: Buổi 8 Cấu hình NGINX reverse proxy – Upstrea\n- **Khoảng trống Nghiên cứu (Research Gap):** Tài liệu hiện tại tập trung phản ánh các sự kiện, dữ liệu và luận điểm được ghi nhận trực tiếp; chưa công bố thêm các giới hạn kỹ thuật mở rộng.\n- **Đề xuất Kiến trúc Mới (Novel Formulation):** Khuyến nghị thu thập thêm các bài báo bình luận hoặc công trình khảo sát mở rộng.\n- **Giao thức Thực nghiệm Kiểm chứng (Verification Protocol):** Đối soát chéo với các nguồn học thuật bổ sung.\n\n## 6. Danh mục Tài liệu Trích dẫn (Evidence References)\n[1] **doc_cfe4f779_Buổi 8 Cấu hình NGINX reverse proxy – Upstream nhiều backend** (Trang 3). *\"Giới hạn kích thước body tối đa (client_max_body_size): Mặc định NGINX chỉ cho phép body request tối đa 1MB, request lớn hơn (ví dụ upload f...\"*\n",
+      "preview": "# Báo cáo Nghiên cứu: Khi người dùng upload một file hoặc ảnh vượt quá 1MB mà chưa cấu hình tăng kích thước body, NGINX trả về mã lỗi HTTP nào?  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]   > **Câu trả lời Trực tiếp:** **Khi người dùng upload một file hoặc ảnh vượt quá giới hạn mặc định 1"
+    },
+    {
+      "index": 18,
+      "question": "Khi chạy NGINX native trên Windows, file hosts nằm ở đường dẫn chính xác nào và yêu cầu quyền hạn gì để lưu file?",
+      "status": "completed",
+      "elapsed": 11.819265842437744,
+      "report_len": 3719,
+      "matched_keywords": [
+        "system32",
+        "drivers",
+        "etc",
+        "hosts",
+        "administrator"
+      ],
+      "total_keywords": [
+        "system32",
+        "drivers",
+        "etc",
+        "hosts",
+        "administrator"
+      ],
+      "has_citations": true,
+      "is_ood_refusal": false,
+      "verdict": "PASS",
+      "report": "# Báo cáo Nghiên cứu: Khi chạy NGINX native trên Windows, file hosts nằm ở đường dẫn chính xác nào và yêu cầu quyền hạn gì để lưu file?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Khi chạy NGINX native trên Windows, file hosts nằm ở đường dẫn chính xác là **C:\\\\Windows\\\\System32\\\\drivers\\\\etc\\\\hosts** và yêu cầu phải sử dụng Notepad chạy với quyền **Administrator** mới có thể sửa và lưu được file này [1].**\n\n---\n\n## 1. Tóm tắt Tổng quan (Executive Summary)\nKhi chạy NGINX native trên Windows, file hosts nằm ở đường dẫn chính xác là **C:\\\\Windows\\\\System32\\\\drivers\\\\etc\\\\hosts** và yêu cầu phải sử dụng Notepad chạy với quyền **Administrator** mới có thể sửa và lưu được file này [1].\n\nDưới đây là chi tiết cụ thể về trường hợp này:\n1. **Đường dẫn file hosts**: Nằm tại **C:\\\\Windows\\\\System32\\\\drivers\\\\etc\\\\hosts** khi cả server NGINX và trình duyệt đều ở môi trường Windows thuần [1].\n2. **Yêu cầu quyền hạn**: File này không cho phép chỉnh sửa hoặc lưu nếu người dùng chỉ mở bằng quyền thông thường, do đó bắt buộc phải sử dụng Notepad chạy với quyền **Administrator** [1].\n\n## 2. Kết quả Nghiên cứu & Luận điểm Đã Xác minh (Verified Findings)\n- **Phát hiện 1:** Khi chạy NGINX native trên Windows, file hosts nằm ở đường dẫn chính xác là **C:\\\\Windows\\\\System32\\\\drivers\\\\etc\\\\hosts** và yêu cầu phải sử dụng Notepad chạy với quyền **Administrator** mới có thể sửa và lưu được file này [1] [1]\n- **Phát hiện 2:** chi tiết cụ thể về trường hợp này: [1]\n- **Phát hiện 3:** Đường dẫn file hosts**: Nằm tại **C:\\\\Windows\\\\System32\\\\drivers\\\\etc\\\\hosts** khi cả server NGINX và trình duyệt đều ở môi trường Windows thuần [1] [1]\n- **Phát hiện 4:** Yêu cầu quyền hạn**: File này không cho phép chỉnh sửa hoặc lưu nếu người dùng chỉ mở bằng quyền thông thường, do đó bắt buộc phải sử dụng Notepad chạy với quyền **Administrator** [1] [1]\n\n## 3. Đánh giá Bình duyệt Chuyên sâu (Senior Peer-Review Audit)\n- **Kiểm toán phương pháp:** Đã kiểm tra tính nhất quán số liệu và không phát hiện mâu thuẫn nội tại.\n\n## 4. Ma trận So sánh Đa bài báo (Cross-Paper Benchmark Matrix)\n| Công Trình / Tài Liệu | Nguồn Trích Dẫn | Luận Điểm Xác Minh | Kết Quả Đối Soát |\n| :--- | :--- | :--- | :--- |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Khi chạy NGINX native trên Windows, file hosts nằm ở đường d... | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | chi tiết cụ thể về trường hợp này: | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đường dẫn file hosts**: Nằm tại **C:\\\\Windows\\\\System32\\\\dri... | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Yêu cầu quyền hạn**: File này không cho phép chỉnh sửa hoặc ... | Khớp chứng cứ gốc |\n\n## 5. Radar Khoảng trống & Giả thuyết Nghiên cứu (Research Gap Radar)\n### [OBSERVATION-01]: Phạm vi Khảo sát của Tài liệu: Buổi 8 Cấu hình NGINX reverse proxy – Upstrea\n- **Khoảng trống Nghiên cứu (Research Gap):** Tài liệu hiện tại tập trung phản ánh các sự kiện, dữ liệu và luận điểm được ghi nhận trực tiếp; chưa công bố thêm các giới hạn kỹ thuật mở rộng.\n- **Đề xuất Kiến trúc Mới (Novel Formulation):** Khuyến nghị thu thập thêm các bài báo bình luận hoặc công trình khảo sát mở rộng.\n- **Giao thức Thực nghiệm Kiểm chứng (Verification Protocol):** Đối soát chéo với các nguồn học thuật bổ sung.\n\n## 6. Danh mục Tài liệu Trích dẫn (Evidence References)\n[1] **doc_cfe4f779_Buổi 8 Cấu hình NGINX reverse proxy – Upstream nhiều backend** (Trang 3). *\"Cần tăng giá trị này ở http, server hoặc location block tùy phạm vi áp dụng (ví dụ:\nclient_max_body_size 20M;). Cấu hình Domain và SSL (mô p...\"*\n",
+      "preview": "# Báo cáo Nghiên cứu: Khi chạy NGINX native trên Windows, file hosts nằm ở đường dẫn chính xác nào và yêu cầu quyền hạn gì để lưu file?  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]   > **Câu trả lời Trực tiếp:** **Khi chạy NGINX native trên Windows, file hosts nằm ở đường dẫn chính xác là "
+    },
+    {
+      "index": 19,
+      "question": "Trên môi trường WSL2, tại sao các dòng cấu hình domain thêm thủ công vào /etc/hosts lại bị mất sau khi khởi động lại máy?",
+      "status": "completed",
+      "elapsed": 3.5911872386932373,
+      "report_len": 3705,
+      "matched_keywords": [
+        "wsl2",
+        "tự động sinh",
+        "khởi động",
+        "mạng"
+      ],
+      "total_keywords": [
+        "wsl2",
+        "tự động sinh",
+        "khởi động",
+        "mạng"
+      ],
+      "has_citations": true,
+      "is_ood_refusal": false,
+      "verdict": "PASS",
+      "report": "# Báo cáo Nghiên cứu: Trên môi trường WSL2, tại sao các dòng cấu hình domain thêm thủ công vào /etc/hosts lại bị mất sau khi khởi động lại máy?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Trên môi trường WSL2, các dòng cấu hình domain thêm thủ công vào file `/etc/hosts` bị mất sau khi khởi động lại máy là do **cơ chế tự động sinh lại file của WSL2**, cụ thể hệ thống mặc định sẽ tự động tạo lại file này bên trong mỗi lần khởi động dựa theo cấu hình mạng [1]. Để khắc phục tình trạng này và giữ các dòng cấu hình cố định, bạn có thể thực hiện theo các bước sau:\n\n1. **Tắt tính năng tự động sinh file hosts**: Thêm dòng cấu hình `generateHosts = false` vào mục `[network]` bên trong file `/etc/wsl.conf` [1].\n2. **Khởi động lại WSL**: Thực hiện restart lại môi trường WSL để áp dụng các thay đổi cấu hình mới [1].**\n\n---\n\n## 1. Tóm tắt Tổng quan (Executive Summary)\nTrên môi trường WSL2, các dòng cấu hình domain thêm thủ công vào file `/etc/hosts` bị mất sau khi khởi động lại máy là do **cơ chế tự động sinh lại file của WSL2**, cụ thể hệ thống mặc định sẽ tự động tạo lại file này bên trong mỗi lần khởi động dựa theo cấu hình mạng [1]. Để khắc phục tình trạng này và giữ các dòng cấu hình cố định, bạn có thể thực hiện theo các bước sau:\n\n1. **Tắt tính năng tự động sinh file hosts**: Thêm dòng cấu hình `generateHosts = false` vào mục `[network]` bên trong file `/etc/wsl.conf` [1].\n2. **Khởi động lại WSL**: Thực hiện restart lại môi trường WSL để áp dụng các thay đổi cấu hình mới [1].\n\n## 2. Kết quả Nghiên cứu & Luận điểm Đã Xác minh (Verified Findings)\n- **Phát hiện 1:** WSL2 mặc định tự động sinh lại file /etc/hosts mỗi lần khởi động dựa theo cấu hình mạng, khiến các dòng thêm thủ công bị mất. [1]\n- **Phát hiện 2:** Có thể tắt tính năng này bằng cách thêm generateHosts = false vào mục [network] trong file /etc/wsl.conf rồi restart WSL. [1]\n\n## 3. Đánh giá Bình duyệt Chuyên sâu (Senior Peer-Review Audit)\n- **Kiểm toán phương pháp:** Đã kiểm tra tính nhất quán số liệu và không phát hiện mâu thuẫn nội tại.\n\n## 4. Ma trận So sánh Đa bài báo (Cross-Paper Benchmark Matrix)\n| Công Trình / Tài Liệu | Nguồn Trích Dẫn | Luận Điểm Xác Minh | Kết Quả Đối Soát |\n| :--- | :--- | :--- | :--- |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | WSL2 mặc định tự động sinh lại file /etc/hosts mỗi lần khởi ... | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Có thể tắt tính năng này bằng cách thêm generateHosts = fals... | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n\n## 5. Radar Khoảng trống & Giả thuyết Nghiên cứu (Research Gap Radar)\n### [OBSERVATION-01]: Phạm vi Khảo sát của Tài liệu: Buổi 8 Cấu hình NGINX reverse proxy – Upstrea\n- **Khoảng trống Nghiên cứu (Research Gap):** Tài liệu hiện tại tập trung phản ánh các sự kiện, dữ liệu và luận điểm được ghi nhận trực tiếp; chưa công bố thêm các giới hạn kỹ thuật mở rộng.\n- **Đề xuất Kiến trúc Mới (Novel Formulation):** Khuyến nghị thu thập thêm các bài báo bình luận hoặc công trình khảo sát mở rộng.\n- **Giao thức Thực nghiệm Kiểm chứng (Verification Protocol):** Đối soát chéo với các nguồn học thuật bổ sung.\n\n## 6. Danh mục Tài liệu Trích dẫn (Evidence References)\n[1] **doc_cfe4f779_Buổi 8 Cấu hình NGINX reverse proxy – Upstream nhiều backend** (Trang 3). *\"Lưu ý riêng về WSL2: WSL2 mặc định tự động sinh lại file /etc/hosts bên trong mỗi lần khởi động (dựa theo cấu hình mạng), nên các dòng thêm ...\"*\n",
+      "preview": "# Báo cáo Nghiên cứu: Trên môi trường WSL2, tại sao các dòng cấu hình domain thêm thủ công vào /etc/hosts lại bị mất sau khi khởi động lại máy?  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]   > **Câu trả lời Trực tiếp:** **Trên môi trường WSL2, các dòng cấu hình domain thêm thủ công vào fil"
+    },
+    {
+      "index": 20,
+      "question": "Làm cách nào để tắt vĩnh viễn tính năng tự động sinh lại file /etc/hosts trên WSL2?",
+      "status": "completed",
+      "elapsed": 6.687774896621704,
+      "report_len": 2838,
+      "matched_keywords": [
+        "generatehosts",
+        "false",
+        "wsl.conf",
+        "network"
+      ],
+      "total_keywords": [
+        "generatehosts",
+        "false",
+        "wsl.conf",
+        "network"
+      ],
+      "has_citations": true,
+      "is_ood_refusal": false,
+      "verdict": "PASS",
+      "report": "# Báo cáo Nghiên cứu: Làm cách nào để tắt vĩnh viễn tính năng tự động sinh lại file /etc/hosts trên WSL2?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Để tắt vĩnh viễn tính năng tự động sinh lại file /etc/hosts trên WSL2, bạn cần cấu hình trực tiếp trong tệp thiết lập hệ thống của WSL [1].**\n\n---\n\n## 1. Tóm tắt Tổng quan (Executive Summary)\nĐể tắt vĩnh viễn tính năng tự động sinh lại file /etc/hosts trên WSL2, bạn cần cấu hình trực tiếp trong tệp thiết lập hệ thống của WSL [1].\n\n1. **Thêm cấu hình vào file wsl.conf**: Mở file **/etc/wsl.conf** và thêm dòng `generateHosts = false` vào mục `[network]` [1].\n2. **Khởi động lại WSL**: Sau khi lưu thay đổi, tiến hành restart lại WSL để thiết lập có hiệu lực và ngăn chặn việc các dòng thêm thủ công bị mất sau khi khởi động lại [1].\n\n## 2. Kết quả Nghiên cứu & Luận điểm Đã Xác minh (Verified Findings)\n- **Phát hiện 1:** Để tắt tính năng tự sinh file /etc/hosts trên WSL2, cần thêm generateHosts = false vào mục [network] trong file /etc/wsl.conf rồi restart WSL. [1]\n\n## 3. Đánh giá Bình duyệt Chuyên sâu (Senior Peer-Review Audit)\n- **Kiểm toán phương pháp:** Đã kiểm tra tính nhất quán số liệu và không phát hiện mâu thuẫn nội tại.\n\n## 4. Ma trận So sánh Đa bài báo (Cross-Paper Benchmark Matrix)\n| Công Trình / Tài Liệu | Nguồn Trích Dẫn | Luận Điểm Xác Minh | Kết Quả Đối Soát |\n| :--- | :--- | :--- | :--- |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Để tắt tính năng tự sinh file /etc/hosts trên WSL2, cần thêm... | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n\n## 5. Radar Khoảng trống & Giả thuyết Nghiên cứu (Research Gap Radar)\n### [OBSERVATION-01]: Phạm vi Khảo sát của Tài liệu: Buổi 8 Cấu hình NGINX reverse proxy – Upstrea\n- **Khoảng trống Nghiên cứu (Research Gap):** Tài liệu hiện tại tập trung phản ánh các sự kiện, dữ liệu và luận điểm được ghi nhận trực tiếp; chưa công bố thêm các giới hạn kỹ thuật mở rộng.\n- **Đề xuất Kiến trúc Mới (Novel Formulation):** Khuyến nghị thu thập thêm các bài báo bình luận hoặc công trình khảo sát mở rộng.\n- **Giao thức Thực nghiệm Kiểm chứng (Verification Protocol):** Đối soát chéo với các nguồn học thuật bổ sung.\n\n## 6. Danh mục Tài liệu Trích dẫn (Evidence References)\n[1] **doc_cfe4f779_Buổi 8 Cấu hình NGINX reverse proxy – Upstream nhiều backend** (Trang 3). *\"Nếu cần thêm dòng cố định vào /etc/hosts của WSL (trường hợp 3), có thể tắt tính năng tự sinh này bằng cách thêm generateHosts = false vào m...\"*\n",
+      "preview": "# Báo cáo Nghiên cứu: Làm cách nào để tắt vĩnh viễn tính năng tự động sinh lại file /etc/hosts trên WSL2?  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]   > **Câu trả lời Trực tiếp:** **Để tắt vĩnh viễn tính năng tự động sinh lại file /etc/hosts trên WSL2, bạn cần cấu hình trực tiếp trong tệ"
+    },
+    {
+      "index": 21,
+      "question": "Tại sao trình duyệt lại cảnh báo Not Secure hoặc NET::ERR_CERT_AUTHORITY_INVALID khi truy cập HTTPS dùng chứng chỉ tự ký?",
+      "status": "completed",
+      "elapsed": 3.602638006210327,
+      "report_len": 4220,
+      "matched_keywords": [
+        "tự ký",
+        "root ca",
+        "chuỗi",
+        "trust",
+        "cảnh báo"
+      ],
+      "total_keywords": [
+        "tự ký",
+        "root ca",
+        "chuỗi",
+        "trust",
+        "cảnh báo"
+      ],
+      "has_citations": true,
+      "is_ood_refusal": false,
+      "verdict": "PASS",
+      "report": "# Báo cáo Nghiên cứu: Tại sao trình duyệt lại cảnh báo Not Secure hoặc NET::ERR_CERT_AUTHORITY_INVALID khi truy cập HTTPS dùng chứng chỉ tự ký?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Trình duyệt hiển thị cảnh báo Not Secure hoặc NET::ERR_CERT_AUTHORITY_INVALID khi truy cập HTTPS sử dụng chứng chỉ tự ký là do chứng chỉ này không có mắt xích nào trong chuỗi tin cậy (chain of trust) vì nó tự đóng vai trò là cơ quan cấp phép (CA) cho chính nó [1]. Cụ thể các nguyên nhân và cơ chế được giải thích như sau:\n\n1. **Thiếu chuỗi tin cậy (Chain of trust)**: Hệ điều hành và trình duyệt có sẵn một danh sách các **Root CA (Certificate Authority)** đáng tin cậy trong kho lưu trữ tin cậy (trust store) [1]. Khi kết nối, trình duyệt sẽ xác minh chữ ký của chứng chỉ ngược lên tới một Root CA này; tuy nhiên, chứng chỉ tự ký (self-signed) không thuộc bất kỳ tổ chức phát hành nào trong số đó nên trình duyệt không thể xác minh [1].\n2. **Mục đích sử dụng chỉ để test cục bộ**: Chứng chỉ tự ký chỉ được tạo ra để phục vụ cho việc kiểm thử (test local) trên môi trường phát triển chứ không thể sử dụng thật trên internet hay môi trường production [1, 5].**\n\n---\n\n## 1. Tóm tắt Tổng quan (Executive Summary)\nTrình duyệt hiển thị cảnh báo Not Secure hoặc NET::ERR_CERT_AUTHORITY_INVALID khi truy cập HTTPS sử dụng chứng chỉ tự ký là do chứng chỉ này không có mắt xích nào trong chuỗi tin cậy (chain of trust) vì nó tự đóng vai trò là cơ quan cấp phép (CA) cho chính nó [1]. Cụ thể các nguyên nhân và cơ chế được giải thích như sau:\n\n1. **Thiếu chuỗi tin cậy (Chain of trust)**: Hệ điều hành và trình duyệt có sẵn một danh sách các **Root CA (Certificate Authority)** đáng tin cậy trong kho lưu trữ tin cậy (trust store) [1]. Khi kết nối, trình duyệt sẽ xác minh chữ ký của chứng chỉ ngược lên tới một Root CA này; tuy nhiên, chứng chỉ tự ký (self-signed) không thuộc bất kỳ tổ chức phát hành nào trong số đó nên trình duyệt không thể xác minh [1].\n2. **Mục đích sử dụng chỉ để test cục bộ**: Chứng chỉ tự ký chỉ được tạo ra để phục vụ cho việc kiểm thử (test local) trên môi trường phát triển chứ không thể sử dụng thật trên internet hay môi trường production [1, 5].\n\n## 2. Kết quả Nghiên cứu & Luận điểm Đã Xác minh (Verified Findings)\n- **Phát hiện 1:** Trình duyệt cảnh báo vì chứng chỉ tự ký chỉ để test cục bộ, không có mắt xích trong chuỗi tin cậy và hệ điều hành chỉ tin cậy danh sách Root CA có sẵn. [1]\n\n## 3. Đánh giá Bình duyệt Chuyên sâu (Senior Peer-Review Audit)\n- **Kiểm toán phương pháp:** Đã kiểm tra tính nhất quán số liệu và không phát hiện mâu thuẫn nội tại.\n\n## 4. Ma trận So sánh Đa bài báo (Cross-Paper Benchmark Matrix)\n| Công Trình / Tài Liệu | Nguồn Trích Dẫn | Luận Điểm Xác Minh | Kết Quả Đối Soát |\n| :--- | :--- | :--- | :--- |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Trình duyệt cảnh báo vì chứng chỉ tự ký chỉ để test cục bộ, ... | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n\n## 5. Radar Khoảng trống & Giả thuyết Nghiên cứu (Research Gap Radar)\n### [OBSERVATION-01]: Phạm vi Khảo sát của Tài liệu: Buổi 8 Cấu hình NGINX reverse proxy – Upstrea\n- **Khoảng trống Nghiên cứu (Research Gap):** Tài liệu hiện tại tập trung phản ánh các sự kiện, dữ liệu và luận điểm được ghi nhận trực tiếp; chưa công bố thêm các giới hạn kỹ thuật mở rộng.\n- **Đề xuất Kiến trúc Mới (Novel Formulation):** Khuyến nghị thu thập thêm các bài báo bình luận hoặc công trình khảo sát mở rộng.\n- **Giao thức Thực nghiệm Kiểm chứng (Verification Protocol):** Đối soát chéo với các nguồn học thuật bổ sung.\n\n## 6. Danh mục Tài liệu Trích dẫn (Evidence References)\n[1] **doc_cfe4f779_Buổi 8 Cấu hình NGINX reverse proxy – Upstream nhiều backend** (Trang 4). *\"Chứng chỉ tự ký sẽ khiến trình duyệt cảnh báo \"Not Secure\"/\"NET::ERR_CERT_AUTHORITY_INVALID\" vì đây chỉ để test cục bộ, không thể dùng thật ...\"*\n",
+      "preview": "# Báo cáo Nghiên cứu: Tại sao trình duyệt lại cảnh báo Not Secure hoặc NET::ERR_CERT_AUTHORITY_INVALID khi truy cập HTTPS dùng chứng chỉ tự ký?  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]   > **Câu trả lời Trực tiếp:** **Trình duyệt hiển thị cảnh báo Not Secure hoặc NET::ERR_CERT_AUTHORIT"
+    },
+    {
+      "index": 22,
+      "question": "Chuỗi tin cậy (Chain of Trust) của chứng chỉ SSL hoạt động như thế nào giữa Trình duyệt, Root CA và Intermediate CA?",
+      "status": "completed",
+      "elapsed": 7.720767974853516,
+      "report_len": 4763,
+      "matched_keywords": [
+        "chain of trust",
+        "root ca",
+        "intermediate ca",
+        "chữ ký",
+        "xác minh"
+      ],
+      "total_keywords": [
+        "chain of trust",
+        "root ca",
+        "intermediate ca",
+        "chữ ký",
+        "xác minh"
+      ],
+      "has_citations": true,
+      "is_ood_refusal": false,
+      "verdict": "PASS",
+      "report": "# Báo cáo Nghiên cứu: Chuỗi tin cậy (Chain of Trust) của chứng chỉ SSL hoạt động như thế nào giữa Trình duyệt, Root CA và Intermediate CA?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Chuỗi tin cậy (Chain of Trust) của chứng chỉ SSL hoạt động dựa trên cơ chế xác minh chữ ký ngược từ chứng chỉ của domain lên đến một Root CA đáng tin cậy có sẵn trong hệ thống [1]. Cụ thể, quá trình này diễn ra như sau:\n\n1. **Danh sách tin cậy sẵn có**: Hệ điều hành và trình duyệt web luôn được tích hợp sẵn một danh sách các **Root CA** (Certificate Authority) đáng tin cậy bên trong kho lưu trữ chứng chỉ (trust store) [1].\n2. **Vai trò ký chứng chỉ**: Root CA sẽ tiến hành ký trực tiếp hoặc ủy quyền cho một **Intermediate CA** thực hiện việc ký chứng chỉ SSL cho tên miền của bạn sau khi bạn chứng minh được quyền sở hữu domain đó [1].\n3. **Quá trình xác minh của trình duyệt**: Khi một trình duyệt kết nối đến server, nó sẽ kiểm tra và xác minh chữ ký của chứng chỉ ngược dần lên tới Root CA nằm trong kho tin cậy [1]. Nếu toàn bộ chuỗi chứng thực được xác minh thành công từ đầu đến cuối, kết nối đó sẽ được công nhận là an toàn [1]. Ngược lại, các chứng chỉ tự ký (self-signed) không có bất kỳ mắt xích nào liên kết với chuỗi này sẽ khiến trình duyệt không thể xác minh và lập tức đưa ra cảnh báo không an toàn [1].**\n\n---\n\n## 1. Tóm tắt Tổng quan (Executive Summary)\nChuỗi tin cậy (Chain of Trust) của chứng chỉ SSL hoạt động dựa trên cơ chế xác minh chữ ký ngược từ chứng chỉ của domain lên đến một Root CA đáng tin cậy có sẵn trong hệ thống [1]. Cụ thể, quá trình này diễn ra như sau:\n\n1. **Danh sách tin cậy sẵn có**: Hệ điều hành và trình duyệt web luôn được tích hợp sẵn một danh sách các **Root CA** (Certificate Authority) đáng tin cậy bên trong kho lưu trữ chứng chỉ (trust store) [1].\n2. **Vai trò ký chứng chỉ**: Root CA sẽ tiến hành ký trực tiếp hoặc ủy quyền cho một **Intermediate CA** thực hiện việc ký chứng chỉ SSL cho tên miền của bạn sau khi bạn chứng minh được quyền sở hữu domain đó [1].\n3. **Quá trình xác minh của trình duyệt**: Khi một trình duyệt kết nối đến server, nó sẽ kiểm tra và xác minh chữ ký của chứng chỉ ngược dần lên tới Root CA nằm trong kho tin cậy [1]. Nếu toàn bộ chuỗi chứng thực được xác minh thành công từ đầu đến cuối, kết nối đó sẽ được công nhận là an toàn [1]. Ngược lại, các chứng chỉ tự ký (self-signed) không có bất kỳ mắt xích nào liên kết với chuỗi này sẽ khiến trình duyệt không thể xác minh và lập tức đưa ra cảnh báo không an toàn [1].\n\n## 2. Kết quả Nghiên cứu & Luận điểm Đã Xác minh (Verified Findings)\n- **Phát hiện 1:** Hệ điều hành và trình duyệt có sẵn danh sách Root CA đáng tin cậy trong kho lưu trữ. [1]\n- **Phát hiện 2:** Root CA hoặc Intermediate CA thực hiện ký chứng chỉ cho domain khi chứng minh được quyền sở hữu. [1]\n- **Phát hiện 3:** Trình duyệt xác minh chữ ký ngược lên Root CA để thiết lập chuỗi tin cậy an toàn. [1]\n\n## 3. Đánh giá Bình duyệt Chuyên sâu (Senior Peer-Review Audit)\n- **Kiểm toán phương pháp:** Đã kiểm tra tính nhất quán số liệu và không phát hiện mâu thuẫn nội tại.\n\n## 4. Ma trận So sánh Đa bài báo (Cross-Paper Benchmark Matrix)\n| Công Trình / Tài Liệu | Nguồn Trích Dẫn | Luận Điểm Xác Minh | Kết Quả Đối Soát |\n| :--- | :--- | :--- | :--- |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Hệ điều hành và trình duyệt có sẵn danh sách Root CA đáng ti... | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Root CA hoặc Intermediate CA thực hiện ký chứng chỉ cho doma... | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Trình duyệt xác minh chữ ký ngược lên Root CA để thiết lập c... | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n\n## 5. Radar Khoảng trống & Giả thuyết Nghiên cứu (Research Gap Radar)\n### [OBSERVATION-01]: Phạm vi Khảo sát của Tài liệu: Buổi 8 Cấu hình NGINX reverse proxy – Upstrea\n- **Khoảng trống Nghiên cứu (Research Gap):** Tài liệu hiện tại tập trung phản ánh các sự kiện, dữ liệu và luận điểm được ghi nhận trực tiếp; chưa công bố thêm các giới hạn kỹ thuật mở rộng.\n- **Đề xuất Kiến trúc Mới (Novel Formulation):** Khuyến nghị thu thập thêm các bài báo bình luận hoặc công trình khảo sát mở rộng.\n- **Giao thức Thực nghiệm Kiểm chứng (Verification Protocol):** Đối soát chéo với các nguồn học thuật bổ sung.\n\n## 6. Danh mục Tài liệu Trích dẫn (Evidence References)\n[1] **doc_cfe4f779_Buổi 8 Cấu hình NGINX reverse proxy – Upstream nhiều backend** (Trang 4). *\"Hệ điều hành/trình duyệt có sẵn danh sách Root CA (Certificate Authority) đáng tin cậy. Root CA ký (hoặc ủy quyền cho Intermediate CA ký) ch...\"*\n",
+      "preview": "# Báo cáo Nghiên cứu: Chuỗi tin cậy (Chain of Trust) của chứng chỉ SSL hoạt động như thế nào giữa Trình duyệt, Root CA và Intermediate CA?  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]   > **Câu trả lời Trực tiếp:** **Chuỗi tin cậy (Chain of Trust) của chứng chỉ SSL hoạt động dựa trên cơ ch"
+    },
+    {
+      "index": 23,
+      "question": "Công cụ tự động nào được tài liệu khuyến nghị sử dụng trên môi trường server thật để xin chứng chỉ SSL miễn phí và tự động gia hạn?",
+      "status": "completed",
+      "elapsed": 4.627652645111084,
+      "report_len": 4181,
+      "matched_keywords": [
+        "certbot",
+        "let's encrypt",
+        "renew",
+        "miễn phí"
+      ],
+      "total_keywords": [
+        "certbot",
+        "let's encrypt",
+        "renew",
+        "miễn phí"
+      ],
+      "has_citations": true,
+      "is_ood_refusal": false,
+      "verdict": "PASS",
+      "report": "# Báo cáo Nghiên cứu: Công cụ tự động nào được tài liệu khuyến nghị sử dụng trên môi trường server thật để xin chứng chỉ SSL miễn phí và tự động gia hạn?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Trên môi trường server thật, tài liệu khuyến nghị sử dụng công cụ **Certbot (kết hợp với Let's Encrypt)** để lấy chứng chỉ SSL miễn phí và tự động gia hạn [1], [5]. Cụ thể, các đặc điểm và thao tác liên quan bao gồm:\n\n1. **Lợi ích trên server thật**: Giúp lấy chứng chỉ SSL miễn phí và được trình duyệt tin cậy thật sự thông qua chuỗi tin cậy (chain of trust), ví dụ với lệnh `certbot --nginx -d yourdomain.com` [1].\n2. **Cơ chế tự động hóa**: Đi kèm cơ chế tự động gia hạn (renew) trước khi chứng chỉ hết hạn [1].\n3. **Khuyến cáo triển khai**: Không bao giờ dùng chứng chỉ tự ký (self-signed) cho môi trường production, mà trên server thật luôn phải dùng chứng chỉ từ một CA được tin cậy như Let's Encrypt qua Certbot [5].**\n\n---\n\n## 1. Tóm tắt Tổng quan (Executive Summary)\nTrên môi trường server thật, tài liệu khuyến nghị sử dụng công cụ **Certbot (kết hợp với Let's Encrypt)** để lấy chứng chỉ SSL miễn phí và tự động gia hạn [1], [5]. Cụ thể, các đặc điểm và thao tác liên quan bao gồm:\n\n1. **Lợi ích trên server thật**: Giúp lấy chứng chỉ SSL miễn phí và được trình duyệt tin cậy thật sự thông qua chuỗi tin cậy (chain of trust), ví dụ với lệnh `certbot --nginx -d yourdomain.com` [1].\n2. **Cơ chế tự động hóa**: Đi kèm cơ chế tự động gia hạn (renew) trước khi chứng chỉ hết hạn [1].\n3. **Khuyến cáo triển khai**: Không bao giờ dùng chứng chỉ tự ký (self-signed) cho môi trường production, mà trên server thật luôn phải dùng chứng chỉ từ một CA được tin cậy như Let's Encrypt qua Certbot [5].\n\n## 2. Kết quả Nghiên cứu & Luận điểm Đã Xác minh (Verified Findings)\n- **Phát hiện 1:** Trên server thật, tài liệu khuyến nghị dùng Certbot (Let's Encrypt) để lấy chứng chỉ SSL miễn phí, được trình duyệt tin cậy và có cơ chế tự động gia hạn. [1]\n- **Phát hiện 2:** Không dùng chứng chỉ tự ký cho production; trên server thật luôn dùng chứng chỉ từ CA tin cậy như Let's Encrypt qua Certbot. [1]\n\n## 3. Đánh giá Bình duyệt Chuyên sâu (Senior Peer-Review Audit)\n- **Kiểm toán phương pháp:** Đã kiểm tra tính nhất quán số liệu và không phát hiện mâu thuẫn nội tại.\n\n## 4. Ma trận So sánh Đa bài báo (Cross-Paper Benchmark Matrix)\n| Công Trình / Tài Liệu | Nguồn Trích Dẫn | Luận Điểm Xác Minh | Kết Quả Đối Soát |\n| :--- | :--- | :--- | :--- |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Trên server thật, tài liệu khuyến nghị dùng Certbot (Let's E... | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Không dùng chứng chỉ tự ký cho production; trên server thật ... | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n\n## 5. Radar Khoảng trống & Giả thuyết Nghiên cứu (Research Gap Radar)\n### [OBSERVATION-01]: Phạm vi Khảo sát của Tài liệu: Buổi 8 Cấu hình NGINX reverse proxy – Upstrea\n- **Khoảng trống Nghiên cứu (Research Gap):** Tài liệu hiện tại tập trung phản ánh các sự kiện, dữ liệu và luận điểm được ghi nhận trực tiếp; chưa công bố thêm các giới hạn kỹ thuật mở rộng.\n- **Đề xuất Kiến trúc Mới (Novel Formulation):** Khuyến nghị thu thập thêm các bài báo bình luận hoặc công trình khảo sát mở rộng.\n- **Giao thức Thực nghiệm Kiểm chứng (Verification Protocol):** Đối soát chéo với các nguồn học thuật bổ sung.\n\n## 6. Danh mục Tài liệu Trích dẫn (Evidence References)\n[1] **doc_cfe4f779_Buổi 8 Cấu hình NGINX reverse proxy – Upstream nhiều backend** (Trang 4). *\"Trên server thật: Dùng Certbot (Let's Encrypt) để lấy chứng chỉ SSL miễn phí và được trình duyệt tin cậy thật sự, ví dụ certbot --nginx -d y...\"*\n[2] **doc_cfe4f779_Buổi 8 Cấu hình NGINX reverse proxy – Upstream nhiều backend** (Trang 5). *\"Self-signed SSL chỉ để test local: Không bao giờ dùng chứng chỉ tự ký cho môi trường production; trên server thật luôn dùng chứng chỉ từ một...\"*\n",
+      "preview": "# Báo cáo Nghiên cứu: Công cụ tự động nào được tài liệu khuyến nghị sử dụng trên môi trường server thật để xin chứng chỉ SSL miễn phí và tự động gia hạn?  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]   > **Câu trả lời Trực tiếp:** **Trên môi trường server thật, tài liệu khuyến nghị sử dụng "
+    },
+    {
+      "index": 24,
+      "question": "Thời hạn hiệu lực của chứng chỉ SSL tự ký được tạo bởi câu lệnh OpenSSL mẫu trong bài là bao nhiêu ngày?",
+      "status": "completed",
+      "elapsed": 6.173859119415283,
+      "report_len": 2598,
+      "matched_keywords": [
+        "365",
+        "ngày",
+        "days"
+      ],
+      "total_keywords": [
+        "365",
+        "ngày",
+        "days"
+      ],
+      "has_citations": true,
+      "is_ood_refusal": false,
+      "verdict": "PASS",
+      "report": "# Báo cáo Nghiên cứu: Thời hạn hiệu lực của chứng chỉ SSL tự ký được tạo bởi câu lệnh OpenSSL mẫu trong bài là bao nhiêu ngày?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Thời hạn hiệu lực của chứng chỉ SSL tự ký được tạo bởi câu lệnh OpenSSL mẫu trong bài là **365 ngày** [1]. Để tạo cặp key và chứng chỉ này, câu lệnh mẫu sử dụng tham số `-days 365` [1].**\n\n---\n\n## 1. Tóm tắt Tổng quan (Executive Summary)\nThời hạn hiệu lực của chứng chỉ SSL tự ký được tạo bởi câu lệnh OpenSSL mẫu trong bài là **365 ngày** [1]. Để tạo cặp key và chứng chỉ này, câu lệnh mẫu sử dụng tham số `-days 365` [1].\n\n## 2. Kết quả Nghiên cứu & Luận điểm Đã Xác minh (Verified Findings)\n- **Phát hiện 1:** Thời hạn hiệu lực của chứng chỉ SSL tự ký được tạo bởi câu lệnh OpenSSL mẫu là 365 ngày thông qua tham số -days 365. [1]\n\n## 3. Đánh giá Bình duyệt Chuyên sâu (Senior Peer-Review Audit)\n- **Kiểm toán phương pháp:** Đã kiểm tra tính nhất quán số liệu và không phát hiện mâu thuẫn nội tại.\n\n## 4. Ma trận So sánh Đa bài báo (Cross-Paper Benchmark Matrix)\n| Công Trình / Tài Liệu | Nguồn Trích Dẫn | Luận Điểm Xác Minh | Kết Quả Đối Soát |\n| :--- | :--- | :--- | :--- |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Thời hạn hiệu lực của chứng chỉ SSL tự ký được tạo bởi câu l... | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n\n## 5. Radar Khoảng trống & Giả thuyết Nghiên cứu (Research Gap Radar)\n### [OBSERVATION-01]: Phạm vi Khảo sát của Tài liệu: Buổi 8 Cấu hình NGINX reverse proxy – Upstrea\n- **Khoảng trống Nghiên cứu (Research Gap):** Tài liệu hiện tại tập trung phản ánh các sự kiện, dữ liệu và luận điểm được ghi nhận trực tiếp; chưa công bố thêm các giới hạn kỹ thuật mở rộng.\n- **Đề xuất Kiến trúc Mới (Novel Formulation):** Khuyến nghị thu thập thêm các bài báo bình luận hoặc công trình khảo sát mở rộng.\n- **Giao thức Thực nghiệm Kiểm chứng (Verification Protocol):** Đối soát chéo với các nguồn học thuật bổ sung.\n\n## 6. Danh mục Tài liệu Trích dẫn (Evidence References)\n[1] **doc_cfe4f779_Buổi 8 Cấu hình NGINX reverse proxy – Upstream nhiều backend** (Trang 3). *\"Dùng lệnh openssl req -x509 -nodes -newkey rsa: 2048 -keyout myapp.key -out myapp.crt -days 365 để tạo cặp key/cert....\"*\n",
+      "preview": "# Báo cáo Nghiên cứu: Thời hạn hiệu lực của chứng chỉ SSL tự ký được tạo bởi câu lệnh OpenSSL mẫu trong bài là bao nhiêu ngày?  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]   > **Câu trả lời Trực tiếp:** **Thời hạn hiệu lực của chứng chỉ SSL tự ký được tạo bởi câu lệnh OpenSSL mẫu trong bài"
+    },
+    {
+      "index": 25,
+      "question": "Hai chỉ thị NGINX bắt buộc phải khai báo để nạp đường dẫn chứng chỉ SSL và private key trong server block là gì?",
+      "status": "completed",
+      "elapsed": 15.950541973114014,
+      "report_len": 3224,
+      "matched_keywords": [
+        "ssl_certificate",
+        "ssl_certificate_key",
+        "listen 443"
+      ],
+      "total_keywords": [
+        "ssl_certificate",
+        "ssl_certificate_key",
+        "listen 443"
+      ],
+      "has_citations": true,
+      "is_ood_refusal": false,
+      "verdict": "PASS",
+      "report": "# Báo cáo Nghiên cứu: Hai chỉ thị NGINX bắt buộc phải khai báo để nạp đường dẫn chứng chỉ SSL và private key trong server block là gì?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Để nạp đường dẫn chứng chỉ SSL và private key trong server block của NGINX, bạn bắt buộc phải khai báo hai chỉ thị cấu hình sau: 1. **ssl_certificate**: Dùng để chỉ định đường dẫn tới file chứng chỉ SSL (ví dụ: `ssl_certificate myapp.crt;`) [1]. 2. **ssl_certificate_key**: Dùng để chỉ định đường dẫn tới file khóa bí mật tương ứng (private key) (ví dụ: `ssl_certificate_key myapp.key;`) [1]. Bên cạnh đó, server block cũng cần bật cổng lắng nghe HTTPS với chỉ thị `listen 443 ssl;` [1].**\n\n---\n\n## 1. Tóm tắt Tổng quan (Executive Summary)\nĐể nạp đường dẫn chứng chỉ SSL và private key trong server block của NGINX, bạn bắt buộc phải khai báo hai chỉ thị cấu hình sau: 1. **ssl_certificate**: Dùng để chỉ định đường dẫn tới file chứng chỉ SSL (ví dụ: `ssl_certificate myapp.crt;`) [1]. 2. **ssl_certificate_key**: Dùng để chỉ định đường dẫn tới file khóa bí mật tương ứng (private key) (ví dụ: `ssl_certificate_key myapp.key;`) [1]. Bên cạnh đó, server block cũng cần bật cổng lắng nghe HTTPS với chỉ thị `listen 443 ssl;` [1].\n\n## 2. Kết quả Nghiên cứu & Luận điểm Đã Xác minh (Verified Findings)\n- **Phát hiện 1:** Hai chỉ thị NGINX bắt buộc phải khai báo để nạp đường dẫn chứng chỉ SSL và private key trong server block là ssl_certificate và ssl_certificate_key. [1]\n\n## 3. Đánh giá Bình duyệt Chuyên sâu (Senior Peer-Review Audit)\n- **Kiểm toán phương pháp:** Đã kiểm tra tính nhất quán số liệu và không phát hiện mâu thuẫn nội tại.\n\n## 4. Ma trận So sánh Đa bài báo (Cross-Paper Benchmark Matrix)\n| Công Trình / Tài Liệu | Nguồn Trích Dẫn | Luận Điểm Xác Minh | Kết Quả Đối Soát |\n| :--- | :--- | :--- | :--- |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Hai chỉ thị NGINX bắt buộc phải khai báo để nạp đường dẫn ch... | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n\n## 5. Radar Khoảng trống & Giả thuyết Nghiên cứu (Research Gap Radar)\n### [OBSERVATION-01]: Phạm vi Khảo sát của Tài liệu: Buổi 8 Cấu hình NGINX reverse proxy – Upstrea\n- **Khoảng trống Nghiên cứu (Research Gap):** Tài liệu hiện tại tập trung phản ánh các sự kiện, dữ liệu và luận điểm được ghi nhận trực tiếp; chưa công bố thêm các giới hạn kỹ thuật mở rộng.\n- **Đề xuất Kiến trúc Mới (Novel Formulation):** Khuyến nghị thu thập thêm các bài báo bình luận hoặc công trình khảo sát mở rộng.\n- **Giao thức Thực nghiệm Kiểm chứng (Verification Protocol):** Đối soát chéo với các nguồn học thuật bổ sung.\n\n## 6. Danh mục Tài liệu Trích dẫn (Evidence References)\n[1] **doc_cfe4f779_Buổi 8 Cấu hình NGINX reverse proxy – Upstream nhiều backend** (Trang 3). *\"Cấu hình trong NGINX: listen 443 ssl;, ssl_certificate myapp.crt;, ssl_certificate_key myapp.key;....\"*\n",
+      "preview": "# Báo cáo Nghiên cứu: Hai chỉ thị NGINX bắt buộc phải khai báo để nạp đường dẫn chứng chỉ SSL và private key trong server block là gì?  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]   > **Câu trả lời Trực tiếp:** **Để nạp đường dẫn chứng chỉ SSL và private key trong server block của NGINX, b"
+    },
+    {
+      "index": 26,
+      "question": "Bài giảng Buổi 8 có hướng dẫn cấu hình cụm Apache Kafka phân tán bằng Docker Compose không?",
+      "status": "completed",
+      "elapsed": 0.5285425186157227,
+      "report_len": 2919,
+      "matched_keywords": [
+        "hoàn toàn không được đề cập",
+        "không được đề cập"
+      ],
+      "total_keywords": [
+        "hoàn toàn không được đề cập",
+        "không được đề cập"
+      ],
+      "has_citations": true,
+      "is_ood_refusal": true,
+      "verdict": "PASS",
+      "report": "# Báo cáo Nghiên cứu: Bài giảng Buổi 8 có hướng dẫn cấu hình cụm Apache Kafka phân tán bằng Docker Compose không?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Dựa trên các bài báo và tài liệu hiện có trong hệ thống, thông tin về \"Bài giảng Buổi 8 có hướng dẫn cấu hình cụm Apache Kafka phân tán bằng Docker Compose không?\" **hoàn toàn không được đề cập**.\n\n💡 **Gợi ý**: Bạn có thể tải file PDF hoặc bài báo liên quan đến vấn đề này lên hệ thống để tôi có thể đọc và phân tích chi tiết cho bạn.**\n\n---\n\n## 1. Tóm tắt Tổng quan (Executive Summary)\nDựa trên các bài báo và tài liệu hiện có trong hệ thống, thông tin về \"Bài giảng Buổi 8 có hướng dẫn cấu hình cụm Apache Kafka phân tán bằng Docker Compose không?\" **hoàn toàn không được đề cập**.\n\n💡 **Gợi ý**: Bạn có thể tải file PDF hoặc bài báo liên quan đến vấn đề này lên hệ thống để tôi có thể đọc và phân tích chi tiết cho bạn.\n\n## 2. Kết quả Nghiên cứu & Luận điểm Đã Xác minh (Verified Findings)\n- **Phát hiện 1:** Tài liệu hiện có không đề cập đến 'Bài giảng Buổi 8 có hướng dẫn cấu hình cụm Apache Kafka phân tán bằng Docker Compose không?'. [1]\n\n## 3. Đánh giá Bình duyệt Chuyên sâu (Senior Peer-Review Audit)\n- **Kiểm toán phương pháp:** Đã kiểm tra tính nhất quán số liệu và không phát hiện mâu thuẫn nội tại.\n\n## 4. Ma trận So sánh Đa bài báo (Cross-Paper Benchmark Matrix)\n| Công Trình / Tài Liệu | Nguồn Trích Dẫn | Luận Điểm Xác Minh | Kết Quả Đối Soát |\n| :--- | :--- | :--- | :--- |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Tài liệu hiện có không đề cập đến 'Bài giảng Buổi 8 có hướng... | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n\n## 5. Radar Khoảng trống & Giả thuyết Nghiên cứu (Research Gap Radar)\n### [OBSERVATION-01]: Phạm vi Khảo sát của Tài liệu: Buổi 8 Cấu hình NGINX reverse proxy – Upstrea\n- **Khoảng trống Nghiên cứu (Research Gap):** Tài liệu hiện tại tập trung phản ánh các sự kiện, dữ liệu và luận điểm được ghi nhận trực tiếp; chưa công bố thêm các giới hạn kỹ thuật mở rộng.\n- **Đề xuất Kiến trúc Mới (Novel Formulation):** Khuyến nghị thu thập thêm các bài báo bình luận hoặc công trình khảo sát mở rộng.\n- **Giao thức Thực nghiệm Kiểm chứng (Verification Protocol):** Đối soát chéo với các nguồn học thuật bổ sung.\n\n## 6. Danh mục Tài liệu Trích dẫn (Evidence References)\n[1] **doc_cfe4f779_Buổi 8 Cấu hình NGINX reverse proxy – Upstream nhiều backend** (Trang 5). *\"Bài viết: Các bài hướng dẫn cấu hình NGINX làm web server, reverse proxy, load balancing với\nupstream; bài viết giải thích chain of trust củ...\"*\n",
+      "preview": "# Báo cáo Nghiên cứu: Bài giảng Buổi 8 có hướng dẫn cấu hình cụm Apache Kafka phân tán bằng Docker Compose không?  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]   > **Câu trả lời Trực tiếp:** **Dựa trên các bài báo và tài liệu hiện có trong hệ thống, thông tin về \"Bài giảng Buổi 8 có hướng d"
+    },
+    {
+      "index": 27,
+      "question": "Cấu hình Kubernetes Ingress Controller với Traefik được bài giảng đề cập ở trang số mấy?",
+      "status": "completed",
+      "elapsed": 0.5338175296783447,
+      "report_len": 2907,
+      "matched_keywords": [
+        "hoàn toàn không được đề cập",
+        "không được đề cập"
+      ],
+      "total_keywords": [
+        "hoàn toàn không được đề cập",
+        "không được đề cập"
+      ],
+      "has_citations": true,
+      "is_ood_refusal": true,
+      "verdict": "PASS",
+      "report": "# Báo cáo Nghiên cứu: Cấu hình Kubernetes Ingress Controller với Traefik được bài giảng đề cập ở trang số mấy?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Dựa trên các bài báo và tài liệu hiện có trong hệ thống, thông tin về \"Cấu hình Kubernetes Ingress Controller với Traefik được bài giảng đề cập ở trang số mấy?\" **hoàn toàn không được đề cập**.\n\n💡 **Gợi ý**: Bạn có thể tải file PDF hoặc bài báo liên quan đến vấn đề này lên hệ thống để tôi có thể đọc và phân tích chi tiết cho bạn.**\n\n---\n\n## 1. Tóm tắt Tổng quan (Executive Summary)\nDựa trên các bài báo và tài liệu hiện có trong hệ thống, thông tin về \"Cấu hình Kubernetes Ingress Controller với Traefik được bài giảng đề cập ở trang số mấy?\" **hoàn toàn không được đề cập**.\n\n💡 **Gợi ý**: Bạn có thể tải file PDF hoặc bài báo liên quan đến vấn đề này lên hệ thống để tôi có thể đọc và phân tích chi tiết cho bạn.\n\n## 2. Kết quả Nghiên cứu & Luận điểm Đã Xác minh (Verified Findings)\n- **Phát hiện 1:** Tài liệu hiện có không đề cập đến 'Cấu hình Kubernetes Ingress Controller với Traefik được bài giảng đề cập ở trang số mấy?'. [1]\n\n## 3. Đánh giá Bình duyệt Chuyên sâu (Senior Peer-Review Audit)\n- **Kiểm toán phương pháp:** Đã kiểm tra tính nhất quán số liệu và không phát hiện mâu thuẫn nội tại.\n\n## 4. Ma trận So sánh Đa bài báo (Cross-Paper Benchmark Matrix)\n| Công Trình / Tài Liệu | Nguồn Trích Dẫn | Luận Điểm Xác Minh | Kết Quả Đối Soát |\n| :--- | :--- | :--- | :--- |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Tài liệu hiện có không đề cập đến 'Cấu hình Kubernetes Ingre... | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n\n## 5. Radar Khoảng trống & Giả thuyết Nghiên cứu (Research Gap Radar)\n### [OBSERVATION-01]: Phạm vi Khảo sát của Tài liệu: Buổi 8 Cấu hình NGINX reverse proxy – Upstrea\n- **Khoảng trống Nghiên cứu (Research Gap):** Tài liệu hiện tại tập trung phản ánh các sự kiện, dữ liệu và luận điểm được ghi nhận trực tiếp; chưa công bố thêm các giới hạn kỹ thuật mở rộng.\n- **Đề xuất Kiến trúc Mới (Novel Formulation):** Khuyến nghị thu thập thêm các bài báo bình luận hoặc công trình khảo sát mở rộng.\n- **Giao thức Thực nghiệm Kiểm chứng (Verification Protocol):** Đối soát chéo với các nguồn học thuật bổ sung.\n\n## 6. Danh mục Tài liệu Trích dẫn (Evidence References)\n[1] **doc_cfe4f779_Buổi 8 Cấu hình NGINX reverse proxy – Upstream nhiều backend** (Trang 2). *\"Cân bằng tải (Load Balancing): Mặc định NGINX dùng round-robin (lần lượt) giữa các server trong\nupstream. Có thể tìm hiểu thêm các chiến lượ...\"*\n",
+      "preview": "# Báo cáo Nghiên cứu: Cấu hình Kubernetes Ingress Controller với Traefik được bài giảng đề cập ở trang số mấy?  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]   > **Câu trả lời Trực tiếp:** **Dựa trên các bài báo và tài liệu hiện có trong hệ thống, thông tin về \"Cấu hình Kubernetes Ingress Co"
+    },
+    {
+      "index": 28,
+      "question": "Thuật toán mã hóa lượng tử hậu kỳ (Post-Quantum Cryptography Kyber) cho NGINX được giải thích ra sao?",
+      "status": "completed",
+      "elapsed": 0.5310366153717041,
+      "report_len": 2959,
+      "matched_keywords": [
+        "hoàn toàn không được đề cập",
+        "không được đề cập"
+      ],
+      "total_keywords": [
+        "hoàn toàn không được đề cập",
+        "không được đề cập"
+      ],
+      "has_citations": true,
+      "is_ood_refusal": true,
+      "verdict": "PASS",
+      "report": "# Báo cáo Nghiên cứu: Thuật toán mã hóa lượng tử hậu kỳ (Post-Quantum Cryptography Kyber) cho NGINX được giải thích ra sao?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Dựa trên các bài báo và tài liệu hiện có trong hệ thống, thông tin về \"Thuật toán mã hóa lượng tử hậu kỳ (Post-Quantum Cryptography Kyber) cho NGINX được giải thích ra sao?\" **hoàn toàn không được đề cập**.\n\n💡 **Gợi ý**: Bạn có thể tải file PDF hoặc bài báo liên quan đến vấn đề này lên hệ thống để tôi có thể đọc và phân tích chi tiết cho bạn.**\n\n---\n\n## 1. Tóm tắt Tổng quan (Executive Summary)\nDựa trên các bài báo và tài liệu hiện có trong hệ thống, thông tin về \"Thuật toán mã hóa lượng tử hậu kỳ (Post-Quantum Cryptography Kyber) cho NGINX được giải thích ra sao?\" **hoàn toàn không được đề cập**.\n\n💡 **Gợi ý**: Bạn có thể tải file PDF hoặc bài báo liên quan đến vấn đề này lên hệ thống để tôi có thể đọc và phân tích chi tiết cho bạn.\n\n## 2. Kết quả Nghiên cứu & Luận điểm Đã Xác minh (Verified Findings)\n- **Phát hiện 1:** Tài liệu hiện có không đề cập đến 'Thuật toán mã hóa lượng tử hậu kỳ (Post-Quantum Cryptography Kyber) cho NGINX được giải thích ra sao?'. [1]\n\n## 3. Đánh giá Bình duyệt Chuyên sâu (Senior Peer-Review Audit)\n- **Kiểm toán phương pháp:** Đã kiểm tra tính nhất quán số liệu và không phát hiện mâu thuẫn nội tại.\n\n## 4. Ma trận So sánh Đa bài báo (Cross-Paper Benchmark Matrix)\n| Công Trình / Tài Liệu | Nguồn Trích Dẫn | Luận Điểm Xác Minh | Kết Quả Đối Soát |\n| :--- | :--- | :--- | :--- |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Tài liệu hiện có không đề cập đến 'Thuật toán mã hóa lượng t... | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n\n## 5. Radar Khoảng trống & Giả thuyết Nghiên cứu (Research Gap Radar)\n### [OBSERVATION-01]: Phạm vi Khảo sát của Tài liệu: Buổi 8 Cấu hình NGINX reverse proxy – Upstrea\n- **Khoảng trống Nghiên cứu (Research Gap):** Tài liệu hiện tại tập trung phản ánh các sự kiện, dữ liệu và luận điểm được ghi nhận trực tiếp; chưa công bố thêm các giới hạn kỹ thuật mở rộng.\n- **Đề xuất Kiến trúc Mới (Novel Formulation):** Khuyến nghị thu thập thêm các bài báo bình luận hoặc công trình khảo sát mở rộng.\n- **Giao thức Thực nghiệm Kiểm chứng (Verification Protocol):** Đối soát chéo với các nguồn học thuật bổ sung.\n\n## 6. Danh mục Tài liệu Trích dẫn (Evidence References)\n[1] **doc_cfe4f779_Buổi 8 Cấu hình NGINX reverse proxy – Upstream nhiều backend** (Trang 5). *\"Task\nNgười thực hiện\n(Gợi ý)\nƯớc lượng\n(Point)\nNghiên cứu khái niệm cơ bản: Web server, Reverse Proxy, IP,\nDomain, Port, SSL, /etc/hosts\nTV1...\"*\n",
+      "preview": "# Báo cáo Nghiên cứu: Thuật toán mã hóa lượng tử hậu kỳ (Post-Quantum Cryptography Kyber) cho NGINX được giải thích ra sao?  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]   > **Câu trả lời Trực tiếp:** **Dựa trên các bài báo và tài liệu hiện có trong hệ thống, thông tin về \"Thuật toán mã hóa"
+    },
+    {
+      "index": 29,
+      "question": "/tom-tat",
+      "status": "completed",
+      "elapsed": 8.7261962890625,
+      "report_len": 5111,
+      "matched_keywords": [
+        "nginx",
+        "reverse proxy",
+        "upstream",
+        "cấu hình",
+        "ssl"
+      ],
+      "total_keywords": [
+        "nginx",
+        "reverse proxy",
+        "upstream",
+        "cấu hình",
+        "ssl"
+      ],
+      "has_citations": true,
+      "is_ood_refusal": false,
+      "verdict": "PASS",
+      "report": "# Báo cáo Nghiên cứu: Tóm tắt tổng quan nội dung, các đóng góp cốt lõi và kết quả chính của tài liệu nghiên cứu.\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Tài liệu nghiên cứu cung cấp tổng quan về lộ trình cấu hình NGINX làm Reverse Proxy kết hợp quản lý Upstream cho nhiều backend [doc_cfe4f779_Buổi 8 Cấu hình NGINX reverse proxy – Upstream nhiều backend_p1_c2]. Các đóng góp cốt lõi và kết quả chính bao gồm: [1]**\n\n---\n\n## 1. Tóm tắt Tổng quan (Executive Summary)\nTài liệu nghiên cứu cung cấp tổng quan về lộ trình cấu hình NGINX làm Reverse Proxy kết hợp quản lý Upstream cho nhiều backend [doc_cfe4f779_Buổi 8 Cấu hình NGINX reverse proxy – Upstream nhiều backend_p1_c2]. Các đóng góp cốt lõi và kết quả chính bao gồm: [1]\n\n1. **Nghiên cứu khái niệm nền tảng**: Xây dựng nền tảng kiến thức về Web Server, Reverse Proxy, địa chỉ IP, Domain, Port (80, 443), SSL/TLS và file `/etc/hosts` để giả lập domain khi phát triển cục bộ [doc_cfe4f779_Buổi 8 Cấu hình NGINX reverse proxy – Upstream nhiều backend_p1_c2].\n2. **Triển khai lộ trình từ đơn giản đến phức tạp**: NGINX phục vụ file tĩnh, cấu hình Reverse Proxy cho cặp Frontend/Backend định tuyến theo path, và sử dụng `upstream` để cân bằng tải đến nhiều node server khác nhau [doc_cfe4f779_Buổi 8 Cấu hình NGINX reverse proxy – Upstream nhiều backend_p1_c1, doc_cfe4f779_Buổi 8 Cấu hình NGINX reverse proxy – Upstream nhiều backend_p1_c2].\n3. **Cấu hình thực tế và bảo mật SSL**: Xử lý các tình huống thực tế như trỏ container Docker, giới hạn kích thước body request (`client_max_body_size`), cấu hình domain, SSL tự ký (`openssl`) dùng cho môi trường test local và chứng chỉ tin cậy từ Let's Encrypt (`Certbot`) dựa trên cơ chế chuỗi tin cậy (*chain of trust*) [doc_cfe4f779_Buổi 8 Cấu hình NGINX reverse proxy – Upstream nhiều backend_p1_c1, doc_cfe4f779_Buổi 8 Cấu hình NGINX reverse proxy – Upstream nhiều backend_p4_c1].\n4. **Kế hoạch thực thi và demo**: Phân công nhiệm vụ cụ thể cho các thành viên, chuẩn bị slide thuyết trình và kịch bản demo 6 bước nhằm tích hợp NGINX đứng trước hệ thống Docker Compose của nhóm để đưa ứng dụng ra internet một cách an toàn và chịu tải tốt [doc_cfe4f779_Buổi 8 Cấu hình NGINX reverse proxy – Upstream nhiều backend_p5_c1, doc_cfe4f779_Buổi 8 Cấu hình NGINX reverse proxy – Upstream nhiều backend_p5_c2]. [4]\n\n## 2. Kết quả Nghiên cứu & Luận điểm Đã Xác minh (Verified Findings)\n- **Phát hiện 1:** Tài liệu cung cấp lộ trình từ NGINX phục vụ file tĩnh, reverse proxy cho FE/BE đến upstream cho nhiều backend. [1]\n- **Phát hiện 2:** Tài liệu đề cập việc sử dụng upstream để NGINX điều hướng và cân bằng tải. [1]\n- **Phát hiện 3:** Tài liệu hướng dẫn dùng Certbot để lấy chứng chỉ SSL trên server thật. [1]\n- **Phát hiện 4:** Nhóm thực hiện phân công nhiệm vụ, chuẩn bị slide và kịch bản demo. [1]\n\n## 3. Đánh giá Bình duyệt Chuyên sâu (Senior Peer-Review Audit)\n- **Kiểm toán phương pháp:** Đã kiểm tra tính nhất quán số liệu và không phát hiện mâu thuẫn nội tại.\n\n## 4. Ma trận So sánh Đa bài báo (Cross-Paper Benchmark Matrix)\n| Công Trình / Tài Liệu | Nguồn Trích Dẫn | Luận Điểm Xác Minh | Kết Quả Đối Soát |\n| :--- | :--- | :--- | :--- |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Tài liệu cung cấp lộ trình từ NGINX phục vụ file tĩnh, rever... | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Tài liệu đề cập việc sử dụng upstream để NGINX điều hướng và... | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Tài liệu hướng dẫn dùng Certbot để lấy chứng chỉ SSL trên se... | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Nhóm thực hiện phân công nhiệm vụ, chuẩn bị slide và kịch bả... | Khớp chứng cứ gốc |\n\n## 5. Radar Khoảng trống & Giả thuyết Nghiên cứu (Research Gap Radar)\n### [OBSERVATION-01]: Phạm vi Khảo sát của Tài liệu: Buổi 8 Cấu hình NGINX reverse proxy – Upstrea\n- **Khoảng trống Nghiên cứu (Research Gap):** Tài liệu hiện tại tập trung phản ánh các sự kiện, dữ liệu và luận điểm được ghi nhận trực tiếp; chưa công bố thêm các giới hạn kỹ thuật mở rộng.\n- **Đề xuất Kiến trúc Mới (Novel Formulation):** Khuyến nghị thu thập thêm các bài báo bình luận hoặc công trình khảo sát mở rộng.\n- **Giao thức Thực nghiệm Kiểm chứng (Verification Protocol):** Đối soát chéo với các nguồn học thuật bổ sung.\n\n## 6. Danh mục Tài liệu Trích dẫn (Evidence References)\n[1] **doc_cfe4f779_Buổi 8 Cấu hình NGINX reverse proxy – Upstream nhiều backend** (Trang 1). *\"Nội dung được xây dựng theo đúng lộ trình từ đơn giản đến phức tạp: NGINX phục vụ file tĩnh → Reverse Proxy cho một cặp FE/BE → Upstream cho...\"*\n[2] **doc_cfe4f779_Buổi 8 Cấu hình NGINX reverse proxy – Upstream nhiều backend** (Trang 4). *\"Trên server thật: Dùng Certbot (Let's Encrypt) để lấy chứng chỉ SSL miễn phí và được trình duyệt tin cậy thật sự, ví dụ certbot --nginx -d y...\"*\n[3] **doc_cfe4f779_Buổi 8 Cấu hình NGINX reverse proxy – Upstream nhiều backend** (Trang 5). *\"Cấu hình NGINX và chuẩn bị toàn bộ kịch bản demo (6 bước ở mục 3)...\"*\n",
+      "preview": "# Báo cáo Nghiên cứu: Tóm tắt tổng quan nội dung, các đóng góp cốt lõi và kết quả chính của tài liệu nghiên cứu.  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]   > **Câu trả lời Trực tiếp:** **Tài liệu nghiên cứu cung cấp tổng quan về lộ trình cấu hình NGINX làm Reverse Proxy kết hợp quản lý"
+    },
+    {
+      "index": 30,
+      "question": "/dong-gop",
+      "status": "completed",
+      "elapsed": 4.631488800048828,
+      "report_len": 6314,
+      "matched_keywords": [
+        "đóng góp",
+        "reverse proxy",
+        "upstream",
+        "cors"
+      ],
+      "total_keywords": [
+        "điểm mới",
+        "đóng góp",
+        "reverse proxy",
+        "upstream",
+        "cors"
+      ],
+      "has_citations": true,
+      "is_ood_refusal": false,
+      "verdict": "PASS",
+      "report": "# Báo cáo Nghiên cứu: Trích xuất và phân tích các đóng góp khoa học mới (novelty và contributions) được đề xuất trong tài liệu.\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Dựa trên tài liệu hệ thống, các đóng góp kỹ thuật và cấu hình quan trọng được đề xuất trong việc triển khai NGINX bao gồm các điểm chính sau:\n\n1. **Cấu hình NGINX làm Reverse Proxy**: Xây dựng cơ chế phục vụ một domain duy nhất cho cả frontend và API backend (frontend tại `/`, API tại `/api/`), giúp giải quyết triệt để vấn đề CORS do client luôn gọi cùng một origin [2]. Đồng thời, tài liệu chuẩn hóa việc khai báo các header quan trọng (`proxy_set_header Host`, `X-Real-IP`, `X-Forwarded-For`, `X-Forwarded-Proto`) để backend nhận diện chính xác IP thật của client thay vì IP của NGINX [2].\n\n2. **Triển khai Upstream và Load Balancing**: Đề xuất giải pháp gom nhóm nhiều backend server/instance chạy song song để tăng khả năng chịu tải và đảm bảo hệ thống không bị gián đoạn khi một node gặp sự cố [2]. Tài liệu cũng chỉ ra cơ chế cân bằng tải mặc định (round-robin) và các chiến lược nâng cao như `least_conn` hoặc `weight=` [2].\n\n3. **Cơ chế bảo mật SSL/TLS và Chuỗi tín nhiệm (Chain of Trust)**: Hướng dẫn cấu hình chứng chỉ tự ký (`self-signed`) cho môi trường kiểm thử cục bộ thông qua `openssl` và tích hợp Certbot (Let's Encrypt) cho môi trường production thực tế [4]. Đồng thời giải thích rõ bản chất của chuỗi tín nhiệm (chain of trust) trong việc xác minh chứng chỉ qua Root CA và Intermediate CA [4].\n\n4. **Phục vụ ứng dụng SPA và Định tuyến nâng cao**: Xây dựng cấu hình phục vụ file tĩnh với chỉ thị `root` và `index`, kết hợp cấu hình `try_files $uri $uri/ /index.html;` nhằm hỗ trợ điều hướng cho các ứng dụng Single Page Application (SPA) [1].**\n\n---\n\n## 1. Tóm tắt Tổng quan (Executive Summary)\nDựa trên tài liệu hệ thống, các đóng góp kỹ thuật và cấu hình quan trọng được đề xuất trong việc triển khai NGINX bao gồm các điểm chính sau:\n\n1. **Cấu hình NGINX làm Reverse Proxy**: Xây dựng cơ chế phục vụ một domain duy nhất cho cả frontend và API backend (frontend tại `/`, API tại `/api/`), giúp giải quyết triệt để vấn đề CORS do client luôn gọi cùng một origin [2]. Đồng thời, tài liệu chuẩn hóa việc khai báo các header quan trọng (`proxy_set_header Host`, `X-Real-IP`, `X-Forwarded-For`, `X-Forwarded-Proto`) để backend nhận diện chính xác IP thật của client thay vì IP của NGINX [2].\n\n2. **Triển khai Upstream và Load Balancing**: Đề xuất giải pháp gom nhóm nhiều backend server/instance chạy song song để tăng khả năng chịu tải và đảm bảo hệ thống không bị gián đoạn khi một node gặp sự cố [2]. Tài liệu cũng chỉ ra cơ chế cân bằng tải mặc định (round-robin) và các chiến lược nâng cao như `least_conn` hoặc `weight=` [2].\n\n3. **Cơ chế bảo mật SSL/TLS và Chuỗi tín nhiệm (Chain of Trust)**: Hướng dẫn cấu hình chứng chỉ tự ký (`self-signed`) cho môi trường kiểm thử cục bộ thông qua `openssl` và tích hợp Certbot (Let's Encrypt) cho môi trường production thực tế [4]. Đồng thời giải thích rõ bản chất của chuỗi tín nhiệm (chain of trust) trong việc xác minh chứng chỉ qua Root CA và Intermediate CA [4].\n\n4. **Phục vụ ứng dụng SPA và Định tuyến nâng cao**: Xây dựng cấu hình phục vụ file tĩnh với chỉ thị `root` và `index`, kết hợp cấu hình `try_files $uri $uri/ /index.html;` nhằm hỗ trợ điều hướng cho các ứng dụng Single Page Application (SPA) [1].\n\n## 2. Kết quả Nghiên cứu & Luận điểm Đã Xác minh (Verified Findings)\n- **Phát hiện 1:** Xây dựng cơ chế phục vụ một domain duy nhất cho cả frontend và API backend, giải quyết vấn đề CORS. [1]\n- **Phát hiện 2:** Hướng dẫn cấu hình chứng chỉ tự ký cho local và dùng Certbot/Let's Encrypt cho production kèm giải thích chain of trust. [1]\n- **Phát hiện 3:** Cấu hình phục vụ file tĩnh và fallback cho SPA ứng dụng React/Vue. [1]\n\n### [Lưu ý] Các điểm chưa đủ căn cứ hoặc bị bác bỏ:\n- [Lưu ý] *Đề xuất giải pháp gom nhóm nhiều backend server chạy song song để tăng khả năng chịu tải và cân bằng tải.* — Lý do: Thiếu bằng chứng xác thực\n\n## 3. Đánh giá Bình duyệt Chuyên sâu (Senior Peer-Review Audit)\n- **Kiểm toán phương pháp:** Đã kiểm tra tính nhất quán số liệu và không phát hiện mâu thuẫn nội tại.\n\n## 4. Ma trận So sánh Đa bài báo (Cross-Paper Benchmark Matrix)\n| Công Trình / Tài Liệu | Nguồn Trích Dẫn | Luận Điểm Xác Minh | Kết Quả Đối Soát |\n| :--- | :--- | :--- | :--- |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Xây dựng cơ chế phục vụ một domain duy nhất cho cả frontend ... | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Hướng dẫn cấu hình chứng chỉ tự ký cho local và dùng Certbot... | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Cấu hình phục vụ file tĩnh và fallback cho SPA ứng dụng Reac... | Khớp chứng cứ gốc |\n| **Buổi 8 Cấu hình NGINX reverse proxy – Upstrea** | Văn bản gốc | Đã đối soát với ngữ cảnh tài liệu | Khớp chứng cứ gốc |\n\n## 5. Radar Khoảng trống & Giả thuyết Nghiên cứu (Research Gap Radar)\n### [OBSERVATION-01]: Phạm vi Khảo sát của Tài liệu: Buổi 8 Cấu hình NGINX reverse proxy – Upstrea\n- **Khoảng trống Nghiên cứu (Research Gap):** Tài liệu hiện tại tập trung phản ánh các sự kiện, dữ liệu và luận điểm được ghi nhận trực tiếp; chưa công bố thêm các giới hạn kỹ thuật mở rộng.\n- **Đề xuất Kiến trúc Mới (Novel Formulation):** Khuyến nghị thu thập thêm các bài báo bình luận hoặc công trình khảo sát mở rộng.\n- **Giao thức Thực nghiệm Kiểm chứng (Verification Protocol):** Đối soát chéo với các nguồn học thuật bổ sung.\n\n## 6. Danh mục Tài liệu Trích dẫn (Evidence References)\n[1] **doc_cfe4f779_Buổi 8 Cấu hình NGINX reverse proxy – Upstream nhiều backend** (Trang 2). *\"Kịch bản: Một domain duy nhất phục vụ cả frontend lẫn backend API — frontend ở /, API ở /api/, tránh vấn đề CORS vì client luôn gọi cùng một...\"*\n[2] **doc_cfe4f779_Buổi 8 Cấu hình NGINX reverse proxy – Upstream nhiều backend** (Trang 4). *\"Trên server thật: Dùng Certbot (Let's Encrypt) để lấy chứng chỉ SSL miễn phí và được trình duyệt tin cậy thật sự...\"*\n[3] **doc_cfe4f779_Buổi 8 Cấu hình NGINX reverse proxy – Upstream nhiều backend** (Trang 1). *\"try_files $uri $uri/ /index.html;: Cấu hình cần thiết cho các ứng dụng SPA (Single Page Application) để mọi route không tồn tại file vật lý ...\"*\n",
+      "preview": "# Báo cáo Nghiên cứu: Trích xuất và phân tích các đóng góp khoa học mới (novelty và contributions) được đề xuất trong tài liệu.  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]   > **Câu trả lời Trực tiếp:** **Dựa trên tài liệu hệ thống, các đóng góp kỹ thuật và cấu hình quan trọng được đề xuấ"
+    }
+  ]
+}

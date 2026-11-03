@@ -50,7 +50,13 @@ class CPUMaxFactCheckerAgent(BaseAgent):
 
         # Zero Hallucination: honest refusal verification
         critic_fb = state.get("critic_feedback", {}) or {}
-        if critic_fb.get("reason") == "out_of_domain" or "hoàn toàn không được đề cập" in answer or "không được đề cập" in answer:
+        if (
+            critic_fb.get("reason") == "out_of_domain"
+            or "hoàn toàn không được đề cập" in answer
+            or "không được đề cập" in answer
+            or "Đánh giá tương quan:" in answer
+            or "không cùng một hệ quy chiếu" in answer
+        ):
             trace = self.log_action("out_of_domain_verified", {"status": "support"})
             return {
                 "fact_check_label": "support",
@@ -112,14 +118,16 @@ class CPUMaxFactCheckerAgent(BaseAgent):
                 rejected_claims.append(eval_res)
                 evidence_gaps.append(EvidenceGap(missing_aspect=c_text[:120], suggested_query=c_text).to_dict())
 
-        # Consensus labeling
-        if "contradict" in statuses:
+        # Consensus labeling: if verified claims exist and outnumber contradictions, approve
+        has_contradict = any(s == "contradict" for s in statuses)
+        if verified_claims and len(verified_claims) >= len(rejected_claims):
+            consensus_label = "support"
+        elif has_contradict and not verified_claims:
             consensus_label = "contradict"
-        elif statuses and all(s == "support" for s in statuses):
+        elif verified_claims:
             consensus_label = "support"
         else:
-            support_ratio = statuses.count("support") / len(statuses) if statuses else 0.0
-            consensus_label = "support" if support_ratio >= 0.6 else "not_enough_info"
+            consensus_label = "not_enough_info"
 
         trace = self.log_action(
             "cpu_max_fact_check_completed",

@@ -202,22 +202,25 @@ class AgenticSupervisorPlanner:
         unsupported_claims: list[str],
     ) -> list[str]:
         """Generates targeted follow-up search queries from Critic/Fact-Checker feedback."""
-        follow_ups: list[str] = []
+        follow_ups: list[str] = [original_query]
         for mp in missing_points[:3]:
-            clean_mp = re.sub(r"[^\w\sÀ-ỹ.,%-]", " ", str(mp)).strip()
-            if clean_mp:
-                follow_ups.append(f"{original_query} {clean_mp}"[:160])
-        for uc in unsupported_claims[:2]:
-            # Extract numbers or key nouns from unsupported claim to verify against corpus
+            # Extract salient keywords rather than concatenating whole long strings
             tokens = [
                 t
-                for t in re.findall(r"\b[\wÀ-ỹ0-9.,%]+\b", str(uc))
+                for t in re.findall(r"\b[\wÀ-ỹ0-9.,%_-]+\b", str(mp))
                 if t.lower() not in _STOP_WORDS_VI_EN and len(t) > 2
             ]
             if tokens:
                 follow_ups.append(" ".join(tokens[:8]))
-        if not follow_ups:
-            follow_ups.append(original_query)
+        for uc in unsupported_claims[:2]:
+            # Extract numbers or key nouns from unsupported claim to verify against corpus
+            tokens = [
+                t
+                for t in re.findall(r"\b[\wÀ-ỹ0-9.,%_-]+\b", str(uc))
+                if t.lower() not in _STOP_WORDS_VI_EN and len(t) > 2
+            ]
+            if tokens:
+                follow_ups.append(" ".join(tokens[:8]))
         return list(dict.fromkeys(follow_ups))[:4]
 
 

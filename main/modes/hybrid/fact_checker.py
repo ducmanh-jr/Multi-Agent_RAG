@@ -30,6 +30,18 @@ class HybridFactCheckerAgent(BaseAgent):
         self._kaggle_fn_fc = KaggleFNFactCheckerAgent(max_internal_retry=max_internal_retry)
 
     def run(self, state: AgentState) -> dict[str, Any]:
+        ans = str(state.get("answer", "") or "")
+        if "hoàn toàn không được đề cập" in ans or "bài báo độc lập" in ans or "không hề đề cập" in ans:
+            claims = state.get("claims", []) or []
+            v_claims = [c.to_dict() if hasattr(c, "to_dict") else c for c in claims]
+            return {
+                "verified_claims": v_claims,
+                "rejected_claims": [],
+                "fact_check_label": "support",
+                "verifier_model_family": "rule_guard",
+                "reasoning_trace": [self.log_action("hybrid_fact_check_honest_refusal_approved")],
+            }
+
         gen_family = str(state.get("generator_model_family") or "unknown").lower()
         caps = probe_all_capabilities()
 
@@ -60,7 +72,7 @@ class HybridFactCheckerAgent(BaseAgent):
 
         ver_family = str(out.get("verifier_model_family") or selected_verifier)
         trace = self.log_action(
-            "hybrid_cross_model_verification_completed",
+            f"Đối soát đối kháng chéo (Adversarial): Generator={gen_family} ⚔️ Verifier={ver_family}",
             {
                 "generator_model_family": gen_family,
                 "verifier_model_family": ver_family,

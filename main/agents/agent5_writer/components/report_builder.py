@@ -33,11 +33,21 @@ def build_academic_report(
       - report_data: structured metadata
     """
     title = f"Báo cáo Nghiên cứu: {query}"
-    status_label = answer_status or ("ANSWERED_DIRECT_QUOTE" if verified_claims else "NOT_FOUND_IN_DOCUMENT")
+    is_ood = any(
+        phrase in (answer or "").lower()
+        for phrase in ["hoàn toàn không được đề cập", "không được đề cập", "không có thông tin"]
+    ) or answer_status == "NOT_FOUND_IN_DOCUMENT"
 
-    # 1. Build reference mapping from retrieved_docs and evidence_spans
-    references = []
-    sources_to_process = list(retrieved_docs or [])
+    if is_ood:
+        status_label = "NOT_FOUND_IN_DOCUMENT"
+        references = []
+        sources_to_process = []
+        verified_claims = []
+        rejected_claims = []
+    else:
+        status_label = answer_status or ("ANSWERED_DIRECT_QUOTE" if verified_claims else "NOT_FOUND_IN_DOCUMENT")
+        references = []
+        sources_to_process = list(retrieved_docs or [])
 
     if evidence_spans:
         for span in evidence_spans:
@@ -95,6 +105,17 @@ def build_academic_report(
         )
         if not summary_narrative.endswith("."):
             summary_narrative += "."
+    elif rejected_claims and any(rc.get("text") or rc.get("claim") for rc in rejected_claims):
+        r_sentences = []
+        for rc in rejected_claims:
+            t = (rc.get("claim") or rc.get("text") or "").strip()
+            t = re.sub(r"^[\s\-*•\d\.:#]+", "", t).strip()
+            if t and len(t) > 20 and t not in r_sentences:
+                r_sentences.append(t)
+        summary_narrative = (
+            f"Dựa trên thông tin trích xuất sơ bộ từ tài liệu cho câu hỏi *\"{query}\"*:\n\n"
+            + "\n\n".join(f"- {s}" for s in r_sentences[:5])
+        )
     else:
         summary_narrative = short_answer or f"Chưa thể tổng hợp câu trả lời do không tìm thấy bằng chứng liên quan trong tài liệu đã chọn."
 
@@ -177,11 +198,21 @@ def build_academic_report(
     peer_review_body = "\n".join(audit_lines)
 
     # 3.2 Cross-Paper Benchmark Matrix & Research Gap Radar Synthesis
+    unique_doc_titles = {
+        re.sub(r'^(?:gemini|doc)_[a-f0-9]+_', '', str(d.get('title') or d.get('name') or d.get('doc_id') or '')).strip().lower()
+        for d in (retrieved_docs or [])
+        if str(d.get('title') or d.get('name') or d.get('doc_id') or '').strip()
+    }
+    matrix_section_title = (
+        '## 4. Ma trận So sánh Đa bài báo (Cross-Paper Benchmark Matrix)'
+        if len(unique_doc_titles) >= 2
+        else '## 4. Ma trận Luận điểm Cốt lõi & Đối soát Bằng chứng (Core Claims & Evidence Verification Matrix)'
+    )
     matrix_md = build_cross_paper_matrix(query, retrieved_docs, verified_claims)
     gaps = detect_research_gaps_and_hypotheses(query, verified_claims, retrieved_docs)
     gaps_md = format_gap_radar_markdown(gaps)
 
-    markdown = f"""# {title}
+    academic_report_md = f"""# {title}
 
 > **Trạng thái Thẩm định:** {status_tag}  
 > **Câu trả lời Trực tiếp:** **{display_short}**
@@ -192,20 +223,34 @@ def build_academic_report(
 {summary_narrative}
 
 ## 2. Kết quả Nghiên cứu & Luận điểm Đã Xác minh (Verified Findings)
-{findings_str}{disclaimer_block}
+{findings_str}
 
-## 3. Đánh giá Bình duyệt Chuyên sâu (Senior Peer-Review Audit)
-{peer_review_body}
-
-## 4. Ma trận So sánh Đa bài báo (Cross-Paper Benchmark Matrix)
-{matrix_md}
-
-## 5. Radar Khoảng trống & Giả thuyết Nghiên cứu (Research Gap Radar)
+## 3. Radar Khoảng trống & Giả thuyết Nghiên cứu (Research Gap Radar)
 {gaps_md}
 
-## 6. Danh mục Tài liệu Trích dẫn (Evidence References)
+## 4. Danh mục Tài liệu Trích dẫn (Evidence References)
 {bib_str}
 """
+
+    audit_ledger_md = f"""# Sổ cái Thẩm định & Đối soát Bằng chứng (Audit & Verification Ledger)
+
+> **Trạng thái Xác thực:** {status_tag} | {len(verified_claims)} luận điểm đã đối soát độc lập
+
+---
+
+{matrix_section_title}
+{matrix_md}
+
+## Đánh giá Bình duyệt Chuyên sâu & Kiểm toán Phương pháp (Senior Peer-Review Audit)
+{peer_review_body}
+{disclaimer_block}
+"""
+
+    markdown = f"""{academic_report_md.strip()}
+
+<!-- DUAL_REPORT_SPLIT -->
+
+{audit_ledger_md.strip()}"""
 
     report_data = {
         "title": title,
@@ -218,6 +263,8 @@ def build_academic_report(
         "references": references,
         "statistical_audit": statistical_audit,
         "code_verification": code_verification,
+        "academic_report": academic_report_md,
+        "audit_ledger": audit_ledger_md,
     }
 
     return markdown, report_data

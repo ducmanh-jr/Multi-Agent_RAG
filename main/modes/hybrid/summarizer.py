@@ -77,7 +77,7 @@ class HybridSummarizerAgent(BaseAgent):
             out = self._cpu_max.run(state)
 
         trace = self.log_action(
-            "hybrid_summarizer_routed",
+            f"Điều phối mô hình ({selected_backend}) tổng hợp luận điểm & Inner Critic",
             {
                 "selected_generator_backend": selected_backend,
                 "generator_model_family": out.get("generator_model_family", selected_backend),

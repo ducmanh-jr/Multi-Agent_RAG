@@ -68,8 +68,14 @@ class GeminiRetrievalAgent(BaseAgent):
             f"PDF={os.path.basename(pdf_path) if pdf_path else 'Corpus'}"
         )
 
-        # 1. Scope strictly to user-selected PDF if provided
-        pdf_chunks = load_or_parse_selected_pdf(pdf_path) if pdf_path else []
+        pdf_paths = state.get("pdf_paths") or ([pdf_path] if pdf_path else [])
+        # 1. Scope strictly to user-selected PDF(s) if provided
+        pdf_chunks: list[dict[str, Any]] = []
+        for p in pdf_paths:
+            if p and os.path.exists(p):
+                chunks = load_or_parse_selected_pdf(p)
+                if chunks:
+                    pdf_chunks.extend(chunks)
         if pdf_chunks:
             active_fts = SQLiteFTS5Searcher()
             active_bm25 = SimpleBM25()

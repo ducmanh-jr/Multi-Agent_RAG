@@ -23,11 +23,12 @@ class KaggleMaxReaderAgent(BaseAgent):
 
     def run(self, state: AgentState) -> dict[str, Any]:
         pdf_path = state.get("pdf_path")
+        pdf_paths = state.get("pdf_paths") or ([pdf_path] if pdf_path else [])
         retrieved_docs = state.get("retrieved_docs", []) or []
 
         self.logger.info(
             f"[Kaggle Max Reader] Building SourceUnits from {len(retrieved_docs)} chunks "
-            f"(pdf_path={os.path.basename(pdf_path) if pdf_path else 'None'})"
+            f"(pdf_paths={len(pdf_paths)})"
         )
 
         source_units: list[dict[str, Any]] = []
@@ -52,25 +53,26 @@ class KaggleMaxReaderAgent(BaseAgent):
             source_units.append(unit.to_dict())
             curr_offset += len(t) + 1
 
-        if pdf_path and os.path.exists(str(pdf_path)):
-            doc_id = os.path.splitext(os.path.basename(str(pdf_path)))[0]
-            for p_no in sorted(list(pages_covered))[:3]:
-                table_md = extract_table_or_equations_tool(pdf_path, p_no)
-                if table_md and ("Bảng" in table_md and "|" in table_md):
-                    unit = SourceUnit(
-                        id=f"{doc_id}_p{p_no}_table",
-                        text=table_md,
-                        doc_id=doc_id,
-                        page_no=p_no,
-                        character_offset=curr_offset,
-                    )
-                    source_units.append(unit.to_dict())
-                    curr_offset += len(table_md) + 1
+        for p_path in pdf_paths:
+            if p_path and os.path.exists(str(p_path)):
+                doc_id = os.path.splitext(os.path.basename(str(p_path)))[0]
+                for p_no in sorted(list(pages_covered))[:3]:
+                    table_md = extract_table_or_equations_tool(p_path, p_no)
+                    if table_md and ("Bảng" in table_md and "|" in table_md):
+                        unit = SourceUnit(
+                            id=f"{doc_id}_p{p_no}_table",
+                            text=table_md,
+                            doc_id=doc_id,
+                            page_no=p_no,
+                            character_offset=curr_offset,
+                        )
+                        source_units.append(unit.to_dict())
+                        curr_offset += len(table_md) + 1
 
-            if not source_units:
-                schema, units = parse_pdf_document(pdf_path)
-                document_schema = schema
-                source_units.extend([u.to_dict() for u in units[:12]])
+                if not source_units:
+                    schema, units = parse_pdf_document(p_path)
+                    document_schema = schema
+                    source_units.extend([u.to_dict() for u in units[:12]])
 
         if not document_schema:
             document_schema = {
