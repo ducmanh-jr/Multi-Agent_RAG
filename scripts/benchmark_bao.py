@@ -6,12 +6,17 @@ runs them through the Multi-Agent RAG pipeline, and benchmarks accuracy.
 
 import os
 import sys
+import io
 import json
 import re
 import time
 import httpx
 from pathlib import Path
 from dotenv import load_dotenv
+
+if sys.platform == "win32":
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8")
 
 # Add main directory to path
 sys.path.append(str(Path(__file__).resolve().parent.parent / "main"))
@@ -179,14 +184,16 @@ def run_benchmark():
                 break
         
         if not doc_id:
-            doc_record = db.add_document(
+            import uuid
+            doc_id = f"doc_{uuid.uuid4().hex[:8]}"
+            doc_record = db.save_document(
+                doc_id=doc_id,
                 name=pdf_path.name,
                 path=str(pdf_path),
                 size=pdf_path.stat().st_size,
                 doc_type="pdf",
                 metadata={"pages": len(pages)}
             )
-            doc_id = doc_record["id"]
             print(f"  > Đã đăng ký tài liệu vào DB: {doc_id}")
 
         for item in qa_pairs:

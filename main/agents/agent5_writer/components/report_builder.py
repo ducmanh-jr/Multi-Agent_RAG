@@ -103,8 +103,11 @@ def build_academic_report(
     if short_answer and len(short_answer.strip()) > 15:
         display_short = short_answer.strip()
     elif answer and len(answer.strip()) > 30:
-        first_para = answer.strip().split("\n\n")[0].strip()
-        display_short = first_para[:350]
+        paras = [p.strip() for p in answer.strip().split("\n\n") if p.strip()]
+        if len(paras) > 1 and (len(paras[0]) < 100 or paras[0].endswith(":") or paras[0].endswith("):")):
+            display_short = paras[0] + "\n\n" + "\n\n".join(paras[1:5])
+        else:
+            display_short = paras[0]
     elif verified_claims:
         for vc in verified_claims:
             c_cand = (vc.get("claim") or vc.get("text") or "").strip()

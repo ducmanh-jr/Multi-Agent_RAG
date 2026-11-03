@@ -256,9 +256,10 @@ class UnifiedLLMClient:
         """Call Gemini REST API directly with automatic multi-model fallback."""
         candidate_models = [
             self.settings.DEFAULT_LLM_MODEL,
+            "gemini-3.5-flash",
+            "gemini-3.5-flash-lite",
             self.settings.FALLBACK_LLM_MODEL,
-            "gemini-2.5-flash",
-            "gemini-1.5-flash",
+            "gemini-flash-latest",
         ]
         last_error = None
 

@@ -33,24 +33,29 @@ class GeminiSummarizerAgent(BaseAgent):
 
         context_str, _ = pack_context_by_token_budget(source_units, max_tokens=6000)
 
-        prompt = f"""Bạn là Trợ lý Nghiên cứu Khoa học tự chủ (Gemini Agentic Summarizer & Self-Critic).
-Nhiệm vụ:
-1. Chỉ dựa trên Tài liệu nguồn dưới đây, hãy tổng hợp câu trả lời chi tiết, mạch lạc cho câu hỏi: "{query}".
-2. Gắn ký hiệu trích dẫn [1], [2] ngay sau mỗi luận điểm tương ứng với thứ tự các đoạn nguồn.
-3. Nếu tài liệu hoàn toàn không có thông tin hoặc con số được hỏi, hãy nói rõ tài liệu không đề cập và đặt "critic_action": "request_more_context".
-4. Tự kiểm định (Self-Critique): Đánh giá xem ngữ cảnh hiện tại đã đủ trả lời trọn vẹn câu hỏi chưa.
+        prompt = f"""Bạn là Trợ lý AI Nghiên cứu Cấp cao & Thẩm định Bằng chứng (Gemini Intelligence Engine).
+Nhiệm vụ: Dựa hoàn toàn vào Tài liệu nguồn dưới đây, hãy trả lời câu hỏi sau một cách chuẩn xác, trực diện, mạch lạc và tự nhiên như một Chatbot AI hàng đầu (như ChatGPT / NotebookLM):
+"{query}"
+
+QUY TẮC TRẢ LỜI CỐT LÕI (BẮT BUỘC):
+1. Câu trả lời trực tiếp (Direct Answer First): Mở đầu bằng một câu dẫn nhập trực diện vào vấn đề, trả lời thẳng vào câu hỏi ngay ở 1-2 câu đầu tiên.
+2. Trình bày danh sách & in đậm thực thể (Structured Formatting):
+   - Nếu câu hỏi hỏi về các nhóm vấn đề, nội dung, mục tiêu, hoặc danh sách: Hãy dùng các gạch đầu dòng rõ ràng, in đậm tiêu đề từng ý (ví dụ: "1. **Tên ý chính**: Diễn giải cụ thể...").
+   - Nếu câu hỏi về mốc thời gian, ngày tháng, tên riêng: Nêu chính xác con số, ngày tháng năm và sự kiện đi kèm.
+3. Gắn trích dẫn học thuật: Gắn ký hiệu [1], [2] tương ứng ngay sau mỗi luận điểm.
+4. Tuyệt đối không bịa đặt (Zero Hallucination): Mọi thông tin phải có trong tài liệu nguồn. Nếu tài liệu không nhắc đến, hãy nói rõ tài liệu không đề cập và đặt "critic_action": "request_more_context".
 
 Tài liệu nguồn:
 {context_str}
 
-YÊU CẦU TRẢ VỀ ĐÚNG ĐỊNH DẠNG JSON HỢP LỆ:
+YÊU CẦU TRẢ VỀ ĐÚNG ĐỊNH DẠNG JSON HỢP LỆ (không kèm markdown ngoài):
 {{
-  "answer": "Nội dung trả lời tổng hợp có gắn trích dẫn [1], [2]...",
+  "answer": "Câu trả lời trực tiếp đầy đủ, mạch lạc có in đậm các luận điểm và gắn trích dẫn [1], [2]...",
   "evidence_spans": [
-    {{"quote": "câu trích dẫn nguyên văn từ tài liệu", "unit_id": "Unit ID", "doc_id": "Doc ID", "page_no": 1}}
+    {{"quote": "câu trích dẫn nguyên văn từ tài liệu nguồn", "unit_id": "Unit ID", "doc_id": "Doc ID", "page_no": 1}}
   ],
   "claims": [
-    {{"text": "Nhận định nguyên tử độc lập", "unit_id": "Unit ID"}}
+    {{"text": "Nhận định nguyên tử độc lập đã được kiểm chứng", "unit_id": "Unit ID"}}
   ],
   "is_supported": true,
   "missing_key_points": [],
