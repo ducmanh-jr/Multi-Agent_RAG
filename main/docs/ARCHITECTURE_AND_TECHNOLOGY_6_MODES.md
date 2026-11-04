@@ -79,9 +79,9 @@ graph TD
     classDef modeBox fill:#f9f9f9,stroke:#333,stroke-width:1.5px;
     classDef hybridBox fill:#18181b,color:#fff,stroke:#000,stroke-width:2px;
 
-    UserQ[Câu hỏi Nghiên cứu / Văn bản PDF] --> Supervisor[Bộ Điều Phối Hệ Thống / L4 Supervisor]
+    UserQ["Câu hỏi Nghiên cứu / Văn bản PDF"] --> Supervisor["Bộ Điều Phối Hệ Thống / L4 Supervisor"]
     
-    subgraph Sáu Tùy Chọn Thực Thi (6 Execution Modes)
+    subgraph SixModes ["Sáu Tùy Chọn Thực Thi (6 Execution Modes)"]
         M1["1. CPU Min (Edge / Zero GPU)"]:::modeBox
         M2["2. CPU Max (AMD Ryzen + Vulkan)"]:::modeBox
         M3["3. Gemini API (Flash 2.5 Cloud)"]:::modeBox
@@ -205,7 +205,7 @@ Dưới đây là **sơ đồ kiến trúc cấu trúc và luồng xử lý riê
 #### 🏛️ Sơ đồ Kiến trúc CPU Min
 ```mermaid
 graph LR
-    subgraph CPUMinArch [Kiến trúc CPU Min - Siêu Tốc Cục Bộ / 100% Offline]
+    subgraph CPUMinArch ["Kiến trúc CPU Min - Siêu Tốc Cục Bộ / 100% Offline"]
         Q[Query Người dùng] --> R1["1. Retrieval<br/><b>SQLite FTS5 + BM25</b><br/>(C-Engine < 5ms)"]
         R1 --> R2["2. Reader<br/><b>PyMuPDF C-Engine</b><br/>(Trích xuất BBox & Trang)"]
         R2 --> R3["3. Summarizer<br/><b>Extractive Synthesizer</b><br/>(TF-IDF Ranker tất định)"]
@@ -227,7 +227,7 @@ graph LR
 #### 🏛️ Sơ đồ Kiến trúc CPU Max
 ```mermaid
 graph TD
-    subgraph CPUMaxArch [Kiến trúc CPU Max - AMD Ryzen 7 AVX-512 + Radeon 780M Vulkan iGPU]
+    subgraph CPUMaxArch ["Kiến trúc CPU Max - AMD Ryzen 7 AVX-512 + Radeon 780M Vulkan iGPU"]
         Q[Query Người dùng] --> STORM["STORM Multi-Perspective Query Expansion<br/>(Tách 3 góc nhìn nghiên cứu)"]
         
         STORM --> DUAL["Bộ Truy Hồi Kép (Dual Retrieval)"]
@@ -258,7 +258,7 @@ graph TD
 #### 🏛️ Sơ đồ Kiến trúc Gemini API (Nén 2 Lượt Gọi)
 ```mermaid
 graph TD
-    subgraph GeminiArch [Kiến trúc Gemini API - Nén Tối Ưu Hạn Ngạch Còn Đúng 2 Lần Gọi API]
+    subgraph GeminiArch ["Kiến trúc Gemini API - Nén Tối Ưu Hạn Ngạch Còn Đúng 2 Lần Gọi API"]
         Q[Query Người dùng] --> R1["1. Retrieval: Local SQLite FTS5 + STORM<br/>(Xử lý nội bộ - 0 API Calls)"]
         R1 --> R2["2. Reader: Local PyMuPDF C-Engine<br/>(Bóc tách trang & BBox - 0 API Calls)"]
         
@@ -282,7 +282,7 @@ graph TD
 #### 🏛️ Sơ đồ Kiến trúc Kaggle FN Multi-LoRA
 ```mermaid
 graph TD
-    subgraph KaggleFNArch [Kiến trúc Kaggle FN - Tráo Đổi Nóng 3 LoRA Adapters trên Dual Tesla T4]
+    subgraph KaggleFNArch ["Kiến trúc Kaggle FN - Tráo Đổi Nóng 3 LoRA Adapters trên Dual Tesla T4"]
         Q[Query] --> TUNNEL["Cloudflare / Ngrok Tunnel"]
         TUNNEL --> BASE["Mô hình Nền tảng: Qwen2.5-7B (Dual T4 GPU)"]
         
@@ -313,7 +313,7 @@ graph TD
 #### 🏛️ Sơ đồ Kiến trúc Kaggle Max 32B AWQ
 ```mermaid
 graph TD
-    subgraph KaggleMaxArch [Kiến trúc Kaggle Max - vLLM 32B AWQ Dual T4 Tensor Parallel TP=2]
+    subgraph KaggleMaxArch ["Kiến trúc Kaggle Max - vLLM 32B AWQ Dual T4 Tensor Parallel TP=2"]
         Q[Query Người dùng] --> VLLM["Engine vLLM: Qwen3-32B-AWQ (TP=2)"]
         
         VLLM --> ROUTE["1. Retrieval Router<br/><b>Chế độ /no_think (Temp=0.0)</b><br/>Tốc độ cao, phân tích truy vấn tất định"]
