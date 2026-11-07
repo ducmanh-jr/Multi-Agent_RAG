@@ -160,8 +160,23 @@ def run_embedding_training(
     output_dir = Path(output_dir) if output_dir else (Path(__file__).resolve().parent.parent.parent / "models" / "adapters" / "embedding_lora")
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    import os, torch
+    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
     print(f"🚀 [MoAI Embedding] Loading base SentenceTransformer: {model_name}...")
     model = SentenceTransformer(model_name)
+    # Set optimal 512 context length to prevent OOM (bge-m3 default is 8192 which blows up VRAM)
+    model.max_seq_length = 512
+    try:
+        first_mod = model._first_module()
+        if hasattr(first_mod, "max_seq_length"):
+            first_mod.max_seq_length = 512
+    except Exception:
+        pass
+    if hasattr(model, "tokenizer") and hasattr(model.tokenizer, "model_max_length"):
+        model.tokenizer.model_max_length = 512
 
     # Attach LoRA to Transformer backbone
     transformer_module = model._first_module()
@@ -199,7 +214,8 @@ def run_embedding_training(
     # Use MultipleNegativesRankingLoss (or Cached version if available)
     try:
         train_examples_count = len(train_dataloader.dataset)
-        mini_batch = max(2, min(batch_size, train_examples_count)) if train_examples_count > 1 else max(2, batch_size)
+        # Use mini_batch_size=2 for true GradCache sub-batching to keep peak VRAM under 3.5GB per GPU
+        mini_batch = 2
         train_loss = losses.CachedMultipleNegativesRankingLoss(model, mini_batch_size=mini_batch)
         print("⚡ [GradCache] Using CachedMultipleNegativesRankingLoss for memory-efficient contrastive learning!")
     except Exception:
@@ -232,6 +248,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--epochs", type=int, default=3)
     parser.add_argument("--lr", type=float, default=3e-5)
+    parser.add_argument("--batch-size", type=int, default=8)
     massive_p = ROOT / "data" / "triplets" / "massive_embedding_triplets.jsonl"
     full_p = ROOT / "data" / "triplets" / "embedding_triplets.jsonl"
     sample_p = ROOT / "data" / "triplets" / "embedding_triplets_sample.jsonl"
@@ -248,6 +265,6 @@ if __name__ == "__main__":
                 break
 
     if data_file.exists():
-        run_embedding_training(data_path=data_file, output_dir=Path(args.output_dir) if args.output_dir else None, epochs=args.epochs, lr=args.lr)
+        run_embedding_training(data_path=data_file, output_dir=Path(args.output_dir) if args.output_dir else None, epochs=args.epochs, lr=args.lr, batch_size=args.batch_size)
     else:
         raise FileNotFoundError(f"Dataset {args.data} not found at {data_file}. Verify path.")
