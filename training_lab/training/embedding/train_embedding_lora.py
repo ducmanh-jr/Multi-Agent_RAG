@@ -25,6 +25,30 @@ if str(ROOT) not in sys.path:
 from datasets import Dataset
 from sentence_transformers import SentenceTransformer, losses, InputExample
 from torch.utils.data import DataLoader
+def patch_environment():
+    """Patches missing triton.ops and bitsandbytes CUDA version mismatch on newer Python/PyTorch runtimes."""
+    import os
+    import sys
+    from unittest.mock import MagicMock
+
+    try:
+        import triton.ops.matmul_perf_model
+    except (ImportError, ModuleNotFoundError, AttributeError):
+        if "triton" not in sys.modules:
+            sys.modules["triton"] = MagicMock()
+        mock_ops = MagicMock()
+        mock_perf = MagicMock()
+        mock_perf.early_config_prune = lambda *args, **kwargs: None
+        mock_perf.estimate_matmul_time = lambda *args, **kwargs: 0
+        mock_ops.matmul_perf_model = mock_perf
+        sys.modules["triton.ops"] = mock_ops
+        sys.modules["triton.ops.matmul_perf_model"] = mock_perf
+
+    if "BNB_CUDA_VERSION" not in os.environ:
+        os.environ["BNB_CUDA_VERSION"] = "124"
+
+patch_environment()
+
 from peft import LoraConfig, get_peft_model, TaskType
 
 try:
