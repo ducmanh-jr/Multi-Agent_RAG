@@ -173,12 +173,26 @@ def run_embedding_training(
         target_modules=["query", "key", "value", "dense"] if "bge" in model_name else ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
         bias="none",
     )
-    transformer_module.auto_model = get_peft_model(transformer_module.auto_model, peft_config)
+    base_hf = getattr(transformer_module, "model", None) or getattr(transformer_module, "auto_model", None)
+    peft_model = get_peft_model(base_hf, peft_config)
+    if hasattr(transformer_module, "model"):
+        try:
+            transformer_module.model = peft_model
+        except Exception:
+            pass
+    if hasattr(transformer_module, "auto_model"):
+        try:
+            transformer_module.auto_model = peft_model
+        except Exception:
+            pass
+
     # Ensure all trainable LoRA parameters are float32
-    for param in transformer_module.auto_model.parameters():
+    for param in peft_model.parameters():
         if param.requires_grad:
             param.data = param.data.float()
-    transformer_module.auto_model.print_trainable_parameters()
+    
+    if hasattr(peft_model, "print_trainable_parameters"):
+        peft_model.print_trainable_parameters()
 
     train_dataloader = load_triplets_dataloader(data_path, batch_size=batch_size)
 
@@ -202,8 +216,9 @@ def run_embedding_training(
         show_progress_bar=True,
     )
 
-    if hasattr(transformer_module.auto_model, "save_pretrained"):
-        transformer_module.auto_model.save_pretrained(str(output_dir))
+    save_target = peft_model if 'peft_model' in locals() else (getattr(transformer_module, "model", None) or getattr(transformer_module, "auto_model", None))
+    if hasattr(save_target, "save_pretrained"):
+        save_target.save_pretrained(str(output_dir))
     if hasattr(model, "tokenizer") and model.tokenizer:
         model.tokenizer.save_pretrained(str(output_dir))
     elif hasattr(transformer_module, "tokenizer") and transformer_module.tokenizer:
