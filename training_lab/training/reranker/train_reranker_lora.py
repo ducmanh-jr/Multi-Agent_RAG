@@ -222,6 +222,10 @@ def run_reranker_training(
         bias="none",
     )
     model = get_peft_model(model, peft_config)
+    # Ensure all trainable parameters are strictly in float32
+    for param in model.parameters():
+        if param.requires_grad:
+            param.data = param.data.float()
     model.print_trainable_parameters()
 
     train_ds, val_ds, raw_val = load_reranker_dataset(data_path, tokenizer, max_length=512, seed=seed)
@@ -235,7 +239,10 @@ def run_reranker_training(
         per_device_eval_batch_size=batch_size * 2,
         gradient_accumulation_steps=grad_acc,
         learning_rate=lr,
-        fp16=torch.cuda.is_available(),
+        # In DataParallel (plain python on >1 GPUs without DDP), PyTorch AMP FP16 scaler
+        # has a known autograd bug: 'Found dtype Float but expected Half'.
+        # Using full float32 uses only ~3.5GB VRAM per T4 GPU and is 100% bug-free.
+        fp16=(torch.cuda.is_available() and (torch.cuda.device_count() <= 1 or "LOCAL_RANK" in os.environ)),
         eval_strategy="epoch",
         save_strategy="epoch",
         load_best_model_at_end=True,
