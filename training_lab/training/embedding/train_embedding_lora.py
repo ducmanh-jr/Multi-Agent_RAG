@@ -26,26 +26,55 @@ from datasets import Dataset
 from sentence_transformers import SentenceTransformer, losses, InputExample
 from torch.utils.data import DataLoader
 def patch_environment():
-    """Patches missing triton.ops and bitsandbytes CUDA version mismatch on newer Python/PyTorch runtimes."""
+    """Patches missing triton.ops, removes invalid BNB_CUDA_VERSION overrides, and handles CPU/GPU fallbacks for Kaggle and Colab runtimes."""
     import os
     import sys
-    from unittest.mock import MagicMock
+    import types
 
+    # 1. Clean BNB_CUDA_VERSION if it causes missing libcudart.so
+    if "BNB_CUDA_VERSION" in os.environ:
+        del os.environ["BNB_CUDA_VERSION"]
+
+    # 2. Patch Triton ops mock for Triton 3+ compatibility
+    m_triton = sys.modules.get("triton")
+    if m_triton is None:
+        try:
+            import triton
+            m_triton = triton
+        except Exception:
+            m_triton = types.ModuleType("triton")
+            m_triton.__path__ = []
+            sys.modules["triton"] = m_triton
+
+    m_ops = types.ModuleType("triton.ops")
+    m_ops.__path__ = []
+    m_perf = types.ModuleType("triton.ops.matmul_perf_model")
+    m_perf.early_config_prune = lambda *a, **k: None
+    m_perf.estimate_matmul_time = lambda *a, **k: 0
+    m_ops.matmul_perf_model = m_perf
+    setattr(m_triton, "ops", m_ops)
+    sys.modules["triton.ops"] = m_ops
+    sys.modules["triton.ops.matmul_perf_model"] = m_perf
+
+    # 3. Bulletproof fallback for bitsandbytes if native CUDA libs fail or not present
     try:
-        import triton.ops.matmul_perf_model
-    except (ImportError, ModuleNotFoundError, AttributeError):
-        if "triton" not in sys.modules:
-            sys.modules["triton"] = MagicMock()
-        mock_ops = MagicMock()
-        mock_perf = MagicMock()
-        mock_perf.early_config_prune = lambda *args, **kwargs: None
-        mock_perf.estimate_matmul_time = lambda *args, **kwargs: 0
-        mock_ops.matmul_perf_model = mock_perf
-        sys.modules["triton.ops"] = mock_ops
-        sys.modules["triton.ops.matmul_perf_model"] = mock_perf
+        import bitsandbytes as bnb
+    except Exception:
+        import torch
+        m_bnb = types.ModuleType("bitsandbytes")
+        m_bnb_nn = types.ModuleType("bitsandbytes.nn")
 
-    if "BNB_CUDA_VERSION" not in os.environ:
-        os.environ["BNB_CUDA_VERSION"] = "124"
+        class DummyBnbLinear(torch.nn.Linear):
+            pass
+
+        m_bnb_nn.Linear8bitLt = DummyBnbLinear
+        m_bnb_nn.Linear4bit = DummyBnbLinear
+        m_bnb_nn.modules = types.ModuleType("bitsandbytes.nn.modules")
+        m_bnb.nn = m_bnb_nn
+        m_bnb.__version__ = "0.44.1"
+        sys.modules["bitsandbytes"] = m_bnb
+        sys.modules["bitsandbytes.nn"] = m_bnb_nn
+        sys.modules["bitsandbytes.nn.modules"] = m_bnb_nn.modules
 
 patch_environment()
 
