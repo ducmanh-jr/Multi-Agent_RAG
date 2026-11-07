@@ -71,7 +71,7 @@ def run_reader_training(cfg: Agent2TrainingConfig):
         per_device_eval_batch_size=cfg.per_device_eval_batch_size,
         gradient_accumulation_steps=cfg.gradient_accumulation_steps,
         learning_rate=cfg.learning_rate,
-        fp16=torch.cuda.is_available(),
+        fp16=(torch.cuda.is_available() and (torch.cuda.device_count() <= 1 or 'LOCAL_RANK' in os.environ)),
         eval_strategy="epoch",
         save_strategy="epoch",
         load_best_model_at_end=True,
