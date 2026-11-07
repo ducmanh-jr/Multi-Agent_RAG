@@ -82,18 +82,37 @@ def patch_sentence_transformers():
     """Patches SentenceTransformerTrainer.compute_loss to accept num_items_in_batch added in transformers>=4.46."""
     try:
         import inspect
-        from sentence_transformers import trainer as st_trainer
-        st_class = getattr(st_trainer, "SentenceTransformerTrainer", None)
-        if st_class is not None and hasattr(st_class, "compute_loss"):
-            orig_compute_loss = st_class.compute_loss
-            sig = inspect.signature(orig_compute_loss)
-            if "num_items_in_batch" not in sig.parameters:
-                def patched_compute_loss(self, model, inputs, return_outputs=False, **kwargs):
-                    return orig_compute_loss(self, model, inputs, return_outputs=return_outputs)
-                st_class.compute_loss = patched_compute_loss
-                print("⚡ [MoAI Patch] Patched SentenceTransformerTrainer.compute_loss() for transformers>=4.46")
-    except Exception:
-        pass
+        import sentence_transformers
+        
+        candidates = [
+            getattr(sentence_transformers, "trainer", None),
+            getattr(sentence_transformers, "SentenceTransformerTrainer", None),
+            getattr(sentence_transformers, "sentence_transformer", None),
+        ]
+        
+        patched_any = False
+        for cand in candidates:
+            if cand is None:
+                continue
+            classes = [cand] if inspect.isclass(cand) else [getattr(cand, "SentenceTransformerTrainer", None)]
+            for cls in classes:
+                if cls is not None and hasattr(cls, "compute_loss"):
+                    orig_fn = cls.compute_loss
+                    try:
+                        sig = inspect.signature(orig_fn)
+                        if "num_items_in_batch" not in sig.parameters:
+                            def make_loss_patch(old_loss):
+                                def patched_compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+                                    return old_loss(self, model, inputs, return_outputs=return_outputs)
+                                return patched_compute_loss
+                            cls.compute_loss = make_loss_patch(orig_fn)
+                            patched_any = True
+                    except Exception:
+                        pass
+        if patched_any:
+            print("⚡ [MoAI Patch] Successfully patched SentenceTransformerTrainer.compute_loss() for transformers>=4.46")
+    except Exception as e:
+        print(f"ℹ️ patch_sentence_transformers notice: {e}")
 
 patch_sentence_transformers()
 
