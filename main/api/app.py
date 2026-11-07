@@ -710,10 +710,10 @@ def set_agent_modes(req: SetAgentModesRequest):
             return "cpu_min"
         elif m in ["cpu_max", "cpumax", "cpu"]:
             return "cpu_max"
-        elif m in ["kaggle_fn", "fn"]:
-            return "kaggle_fn"
-        elif m in ["kaggle_max", "kaggle", "model"]:
-            return "kaggle_max"
+        elif m in ["gpu_ft", "gpuft", "ft", "kaggle_fn", "fn"]:
+            return "gpu_ft"
+        elif m in ["gpu_max", "gpumax", "kaggle_max", "kaggle", "model"]:
+            return "gpu_max"
         elif m in ["hybrid", "auto", "optimal"]:
             return "hybrid"
         return "cpu_min"
@@ -1888,52 +1888,66 @@ async def create_run(req: CreateRunRequest):
         session_id=req.session_id,
     )
 
-    # Asynchronously execute graph and persist result
-
+    # Asynchronously execute graph with live per-node streaming and SQLite updates
     async def _async_exec():
-
         try:
+            import time
+
+            def _run_streaming():
+                initial_state = {
+                    "query": prompt,
+                    "pdf_path": pdf_path,
+                    "pdf_paths": pdf_paths,
+                    "retry_count": 0,
+                    "max_reflection_loops": req.max_iterations or 2,
+                    "chat_history": req.chat_history or [],
+                }
+                accumulated_traces = []
+                final_res = {}
+                step_start_time = time.time()
+
+                for chunk in graph.stream(initial_state, stream_mode="updates"):
+                    now = time.time()
+                    step_duration = round(max(0.1, now - step_start_time), 1)
+                    step_start_time = now
+
+                    for node_name, node_output in chunk.items():
+                        if isinstance(node_output, dict):
+                            final_res.update(node_output)
+                            new_traces = node_output.get("reasoning_trace")
+                            if new_traces:
+                                for tr in new_traces:
+                                    if isinstance(tr, dict):
+                                        tr["duration"] = f"{step_duration}s"
+                                        tr["duration_sec"] = step_duration
+                                        tr["timestamp"] = now
+                                accumulated_traces.extend(new_traces)
+                                # Persist each agent step immediately into SQLite!
+                                db.update_run_result(
+                                    run_id=run_id,
+                                    status="processing",
+                                    reasoning_trace=accumulated_traces,
+                                )
+
+                return final_res, accumulated_traces
 
             loop = asyncio.get_event_loop()
-
-            res = await loop.run_in_executor(
-
-                None,
-
-                graph.invoke,
-
-                {"query": prompt, "pdf_path": pdf_path, "pdf_paths": pdf_paths, "retry_count": 0, "max_reflection_loops": req.max_iterations or 2, "chat_history": req.chat_history or []},
-
-            )
+            final_res, accumulated_traces = await loop.run_in_executor(None, _run_streaming)
 
             db.update_run_result(
-
                 run_id=run_id,
-
                 status="completed",
-
-                final_report=res.get("final_report", ""),
-
-                verified_claims=res.get("verified_claims", []),
-
-                rejected_claims=res.get("rejected_claims", []),
-
-                evidence_spans=res.get("evidence_spans", []),
-
-                reasoning_trace=res.get("reasoning_trace", []),
-
+                final_report=final_res.get("final_report", ""),
+                verified_claims=final_res.get("verified_claims", []),
+                rejected_claims=final_res.get("rejected_claims", []),
+                evidence_spans=final_res.get("evidence_spans", []),
+                reasoning_trace=accumulated_traces or final_res.get("reasoning_trace", []),
             )
-
         except Exception as e:
-
             db.update_run_result(
-
                 run_id=run_id,
-
                 status="failed",
-
                 error=str(e),
-
             )
 
 

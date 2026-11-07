@@ -10,11 +10,20 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 
 
-def get_dual_t4_device_map(max_mem: str = "14.5GiB"):
-    """Pins 4-bit model to current CUDA device (~5GB fits in 16GB VRAM) to avoid cross-device tensor mismatch in Trainer."""
+def get_dual_t4_device_map(max_mem: str = "14.0GiB"):
+    """Allocates model layers across all available GPUs or uses auto device mapping."""
     if torch.cuda.is_available():
+        gpu_count = torch.cuda.device_count()
+        if gpu_count > 1:
+            max_memory = {}
+            for i in range(gpu_count):
+                total_gib = torch.cuda.get_device_properties(i).total_memory / (1024**3)
+                safe_alloc = f"{max(1.0, total_gib - 2.0):.1f}GiB"
+                max_memory[i] = safe_alloc
+            print(f"⚡ [ModelBuilder] Balancing model layers across {gpu_count} GPUs with memory bounds: {max_memory}...")
+            return "auto", max_memory
         target = torch.cuda.current_device()
-        print(f"⚡ [Agent 3 ModelBuilder] Pinning 4-bit Qwen2.5-7B to cuda:{target} (~5.2GB / 16GB VRAM)...")
+        print(f"⚡ [ModelBuilder] Single GPU detected: cuda:{target}...")
         return {"": target}, None
     return "auto", None
 
@@ -24,13 +33,14 @@ def build_summarizer_model_and_tokenizer(
     lora_r: int = 64,
     lora_alpha: int = 128,
     lora_dropout: float = 0.05,
-    use_dora: bool = True,
-    max_mem: str = "14.5GiB",
+    use_dora: bool = False,
+    max_mem: str = "14.0GiB",
 ):
     """Loads 4-bit NF4 Qwen2.5-7B-Instruct on current CUDA device and attaches DoRA adapter."""
     tokenizer = AutoTokenizer.from_pretrained(base_model_id, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.padding_side = "right" 
 
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
@@ -50,14 +60,14 @@ def build_summarizer_model_and_tokenizer(
         trust_remote_code=True,
     )
     model.config.torch_dtype = torch.float16
-    model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
+    model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True, gradient_checkpointing_kwargs={"use_reentrant": False})
 
     peft_config = LoraConfig(
         r=lora_r,
         lora_alpha=lora_alpha,
         lora_dropout=lora_dropout,
         use_dora=use_dora,
-        use_rslora=True,
+        use_rslora=(not use_dora),
         target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
         bias="none",
         task_type="CAUSAL_LM",

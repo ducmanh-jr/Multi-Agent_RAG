@@ -15,10 +15,10 @@ Thư mục `main/modes/` chứa 6 gói chế độ thực thi độc lập, có 
 3. **[`gemini/`](gemini/) — Đám Mây Tối Ưu Hạn Ngạch (2–3 API Calls/Query):**
    - Gộp Generator + Self-Critic vào **1 lần gọi JSON duy nhất** (`summarizer.py`).
    - Thay thế vòng lặp kiểm tra từng câu bằng **1 lần gọi Batch NLI Verifier JSON** (`fact_checker.py`), tiết kiệm 75% hạn ngạch Gemini mỗi ngày.
-4. **[`kaggle_fn/`](kaggle_fn/) — Chuyên Gia Tinh Chỉnh Multi-LoRA (`Qwen2.5-7B` + 3 Adapters):**
-   - Gọi 3 bộ QLoRA chuyên biệt trên Kaggle GPU: `router` (Retrieval), `generator` + `critic` (vòng lặp tự sửa lỗi trong Summarizer), và Cross-Encoder NLI (Fact-Checker).
-   - Tự động chuyển về chế độ tổng hợp trích xuất cục bộ nếu đường hầm Kaggle ngoại tuyến.
-5. **[`kaggle_max/`](kaggle_max/) — Đại Mô Hình Suy Luận 32B AWQ (`Qwen3-32B-AWQ` Dual T4 `TP=2`):**
+4. **[`gpu_ft/`](gpu_ft/) (trước đây: `kaggle_fn`) — GPU Fine-Tuned Multi-LoRA (`Qwen2.5-7B` + 3 Adapters):**
+   - Gọi 3 bộ QLoRA chuyên biệt trên GPU: `router` (Retrieval), `generator` + `critic` (vòng lặp tự sửa lỗi trong Summarizer), và Cross-Encoder NLI (Fact-Checker).
+   - Tự động chuyển về chế độ tổng hợp trích xuất cục bộ nếu đường hầm GPU ngoại tuyến.
+5. **[`gpu_max/`](gpu_max/) (trước đây: `kaggle_max`) — Đại Mô Hình Suy Luận GPU 32B AWQ (`Qwen3-32B-AWQ` Dual T4 `TP=2`):**
    - Kích hoạt chế độ suy luận sâu `/think` (tách thẻ `<think>...</think>` hiển thị lên giao diện) cho Summarizer và `/no_think` tốc độ cao cho Router & Batch NLI Verifier.
 6. **[`hybrid/`](hybrid/) — Tổ Hợp Đối Kháng Đa Mô Hình (`Flagship Mode`):**
    - Tự động thăm dò các nguồn lực đang trực tuyến (`Ollama Vulkan`, `Gemini API`, `Kaggle Tunnel`).

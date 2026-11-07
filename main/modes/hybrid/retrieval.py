@@ -62,6 +62,17 @@ class HybridRetrievalAgent(BaseAgent):
         sub_queries = list(state.get("sub_queries") or plan.sub_queries)
         required_entities = list(state.get("required_entities") or plan.required_entities)
         top_k = int(state.get("top_k") or plan.top_k)
+        alpha = float(state.get("alpha") or getattr(plan, "alpha", 0.5) or 0.5)
+
+        is_summary_query = any(
+            w in (query or "").lower()
+            for w in [
+                "tóm tắt", "tổng quan", "nội dung chính", "ý chính", "điểm chính", "summary", "overview",
+                "abstract", "giới thiệu", "đóng góp chính", "2 bài báo",
+                "các bài báo", "nói về gì", "nói về cái gì", "/tom-tat", "tom-tat",
+                "so sánh", "đối chiếu", "so sanh", "doi chieu", "khác nhau", "khác biệt", "so-sanh", "so_sanh", "compare", "/so-sanh"
+            ]
+        ) or bool(state.get("is_comparative_query") or state.get("intent") == "compare")
 
         caps = probe_all_capabilities()
         perspectives, storm_subs = generate_research_perspectives(query)
@@ -104,15 +115,21 @@ class HybridRetrievalAgent(BaseAgent):
             active_bm25 = self.bm25_fallback
             active_pool = self.corpus_docs
 
-        # 2. Multi-query FTS5 + BM25 + Bilingual Token Expansion
+        # 2. Multi-query FTS5 + BM25 + Bilingual Token Expansion with weighted RRF
         all_lists = []
+        list_weights = []
+        lexical_weight = max(0.1, 1.0 - alpha)
+        expansion_weight = max(0.1, alpha)
+
         for q in sub_queries:
             res_fts = active_fts.search(q, top_k=top_k)
             res_bm25 = active_bm25.search(q, top_k=top_k)
             if res_fts:
                 all_lists.append(res_fts)
+                list_weights.append(lexical_weight)
             if res_bm25:
                 all_lists.append(res_bm25)
+                list_weights.append(lexical_weight)
 
         try:
             from utils.bilingual import expand_bilingual_tokens
@@ -122,11 +139,13 @@ class HybridRetrievalAgent(BaseAgent):
                 b_res = active_bm25.search(bilingual_q, top_k=top_k)
                 if b_res:
                     all_lists.append(b_res)
+                    list_weights.append(expansion_weight)
         except Exception:
             pass
 
-        fused = reciprocal_rank_fusion(all_lists, top_n=top_k + 3) if all_lists else []
-        if not fused and active_pool:
+        fused = reciprocal_rank_fusion(all_lists, top_n=top_k + 3, weights=list_weights) if all_lists else []
+        # Fallback to head chunks ONLY if it is an explicit whole-document summary query
+        if not fused and active_pool and is_summary_query:
             fused = active_pool[: min(top_k, len(active_pool))]
 
         # 3. Entity & Numeric priority reranking

@@ -1,3 +1,4 @@
+import gc
 # -*- coding: utf-8 -*-
 """
 SOTA Weighted Focal + R-Drop Cross-Encoder Trainer for Agent 4 (Fact-Checker NLI Verifier) on Kaggle Dual T4.
@@ -26,7 +27,9 @@ def safe_build_config(config_cls, **kwargs):
     except TypeError:
         valid_fields = set(inspect.signature(config_cls.__init__).parameters.keys())
 
-    if "warmup_steps" in valid_fields and "warmup_ratio" in kwargs and "warmup_ratio" not in valid_fields:
+    if "warmup_steps" in kwargs and "warmup_ratio" in kwargs:
+        kwargs.pop("warmup_ratio")  # Prevent Transformers 'Both warmup_ratio and warmup_steps were set' ValueError
+    elif "warmup_steps" in valid_fields and "warmup_ratio" in kwargs and "warmup_ratio" not in valid_fields:
         ratio = kwargs.pop("warmup_ratio")
         if "warmup_steps" not in kwargs:
             kwargs["warmup_steps"] = max(1, int(ratio * 100))
@@ -52,22 +55,27 @@ class WeightedCrossEncoderTrainer(Trainer):
             return (outputs1.loss, outputs1) if return_outputs else outputs1.loss
 
         num_labels = getattr(getattr(model, "config", None), "num_labels", 3)
-        weights = torch.tensor([1.0, 1.35, 1.15], device=logits1.device, dtype=logits1.dtype)
-        ce1 = F.cross_entropy(logits1.view(-1, num_labels), labels.view(-1), weight=weights, reduction="none")
+        weights = torch.tensor([1.0, 1.35, 1.15], device=logits1.device, dtype=logits1.dtype) if num_labels == 3 else None
+        active_mask = (labels.view(-1) != -100)
+        ce1 = F.cross_entropy(logits1.view(-1, num_labels), labels.view(-1), weight=weights, reduction="none", ignore_index=-100)
         pt1 = torch.exp(-ce1)
-        focal1 = ((1.0 - pt1) ** 2.0 * ce1).mean()
+        focal_terms1 = (1.0 - pt1) ** 2.0 * ce1
+        focal1 = focal_terms1[active_mask].sum() / active_mask.sum().clamp(min=1)
 
         if model.training:
             # R-Drop second forward pass for KL consistency regularization
-            outputs2 = model(**inputs)
+            inputs_clone = {k: v.clone() if isinstance(v, torch.Tensor) else v for k, v in inputs.items()}
+            outputs2 = model(**inputs_clone)
             logits2 = outputs2.get("logits") if hasattr(outputs2, "get") else outputs2.logits
-            ce2 = F.cross_entropy(logits2.view(-1, num_labels), labels.view(-1), weight=weights, reduction="none")
+            ce2 = F.cross_entropy(logits2.view(-1, num_labels), labels.view(-1), weight=weights, reduction="none", ignore_index=-100)
             pt2 = torch.exp(-ce2)
-            focal2 = ((1.0 - pt2) ** 2.0 * ce2).mean()
+            focal_terms2 = (1.0 - pt2) ** 2.0 * ce2
+            focal2 = focal_terms2[active_mask].sum() / active_mask.sum().clamp(min=1)
 
             p1 = F.log_softmax(logits1, dim=-1)
             p2 = F.log_softmax(logits2, dim=-1)
-            kl_loss = 0.5 * (F.kl_div(p1, p2.exp(), reduction="batchmean") + F.kl_div(p2, p1.exp(), reduction="batchmean"))
+            # Numerically stable KL with log_target=True avoids FP16 underflow
+            kl_loss = 0.5 * (F.kl_div(p1, p2, log_target=True, reduction="batchmean") + F.kl_div(p2, p1, log_target=True, reduction="batchmean"))
             loss = 0.5 * (focal1 + focal2) + 0.3 * kl_loss
         else:
             loss = focal1
@@ -108,7 +116,7 @@ def run_factchecker_training(cfg: Agent4TrainingConfig):
         args=training_args,
         train_dataset=train_ds,
         eval_dataset=val_ds,
-        processing_class=tokenizer,
+        **(dict(processing_class=tokenizer) if "processing_class" in inspect.signature(Trainer.__init__).parameters else dict(tokenizer=tokenizer)),
         compute_metrics=compute_nli_metrics,
     )
     print("🚀 [Agent 4 Trainer] Starting R-Drop + Focal Loss NLI training...")
@@ -120,12 +128,23 @@ def run_factchecker_training(cfg: Agent4TrainingConfig):
         preds_out = trainer.predict(val_ds)
         preds = preds_out.predictions[0] if isinstance(preds_out.predictions, tuple) else preds_out.predictions
         opt_temp = calibrate_temperature_ece(preds, preds_out.label_ids)
+        del preds
+        del preds_out
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
     except Exception as e:
         print(f"ℹ️ [Agent 4 Trainer] Temperature calibration notice: {e}")
 
     metrics["calibrated_temperature"] = opt_temp
-    trainer.model.save_pretrained(str(cfg.output_dir), safe_serialization=True)
+    trainer.save_model(str(cfg.output_dir))
     tokenizer.save_pretrained(str(cfg.output_dir))
-    (cfg.output_dir / "eval_metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+    def _json_default(obj):
+        if hasattr(obj, "item"):
+            return obj.item()
+        if hasattr(obj, "__float__"):
+            return float(obj)
+        return str(obj)
+    (cfg.output_dir / "eval_metrics.json").write_text(json.dumps(metrics, indent=2, default=_json_default), encoding="utf-8")
     print(f"✅ [Agent 4 Trainer] Saved SOTA R-Drop + Focal-Loss NLI Verifier (T={opt_temp}) to {cfg.output_dir}")
     return trainer, metrics

@@ -11,11 +11,20 @@ from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from .config import Agent1TrainingConfig
 
 
-def get_dual_t4_device_map(max_mem: str = "14.5GiB"):
-    """Pins 4-bit model to current CUDA device (~5GB fits in 16GB VRAM) to avoid cross-device tensor mismatch in Trainer."""
+def get_dual_t4_device_map(max_mem: str = "14.0GiB"):
+    """Allocates model layers across all available GPUs or uses auto device mapping."""
     if torch.cuda.is_available():
+        gpu_count = torch.cuda.device_count()
+        if gpu_count > 1:
+            max_memory = {}
+            for i in range(gpu_count):
+                total_gib = torch.cuda.get_device_properties(i).total_memory / (1024**3)
+                safe_alloc = f"{max(1.0, total_gib - 2.0):.1f}GiB"
+                max_memory[i] = safe_alloc
+            print(f"⚡ [ModelBuilder] Balancing model layers across {gpu_count} GPUs with memory bounds: {max_memory}...")
+            return "auto", max_memory
         target = torch.cuda.current_device()
-        print(f"⚡ [Agent 1 ModelBuilder] Pinning 4-bit Qwen2.5-7B to cuda:{target} (~5.2GB / 16GB VRAM)...")
+        print(f"⚡ [ModelBuilder] Single GPU detected: cuda:{target}...")
         return {"": target}, None
     return "auto", None
 
@@ -25,6 +34,7 @@ def build_router_model_and_tokenizer(cfg: Agent1TrainingConfig):
     tokenizer = AutoTokenizer.from_pretrained(cfg.base_model_id, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.padding_side = "right" 
 
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
@@ -44,14 +54,14 @@ def build_router_model_and_tokenizer(cfg: Agent1TrainingConfig):
         trust_remote_code=True,
     )
     model.config.torch_dtype = torch.float16
-    model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
+    model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True, gradient_checkpointing_kwargs={"use_reentrant": False})
 
     peft_config = LoraConfig(
         r=cfg.lora_r,
         lora_alpha=cfg.lora_alpha,
         lora_dropout=cfg.lora_dropout,
         use_dora=cfg.use_dora,
-        use_rslora=cfg.use_rslora,
+        use_rslora=(cfg.use_rslora and not cfg.use_dora),
         target_modules=cfg.target_modules,
         bias="none",
         task_type="CAUSAL_LM",

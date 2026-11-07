@@ -1,0 +1,158 @@
+{
+  "cpu_min": [
+    {
+      "query_id": "Q1_SPIRAL_MODEL",
+      "question": "Mô hình xoắn ốc (Spiral Model) được đề xuất bởi ai, và kết hợp những đặc tính nào giữa prototyping và linear sequential model?",
+      "latency_sec": 1.58,
+      "fact_check_label": "support",
+      "verified_claims_count": 5,
+      "pages_retrieved": [
+        9,
+        58,
+        63,
+        64,
+        66,
+        96
+      ],
+      "report_snippet": "# Báo cáo Nghiên cứu: Mô hình xoắn ốc (Spiral Model) được đề xuất bởi ai, và kết hợp những đặc tính nào giữa prototyping và linear sequential model?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **> **Câu trả lời trực tiếp:**\nDựa trên tài liệu nghiên cứu (**so",
+      "status": "PASS"
+    },
+    {
+      "query_id": "Q2_CYCLOMATIC_COMPLEXITY",
+      "question": "Độ phức tạp Cyclomatic (Cyclomatic Complexity) do ai phát triển, dựa trên lý thuyết nào và 3 công thức tính toán là gì?",
+      "latency_sec": 0.28,
+      "fact_check_label": "support",
+      "verified_claims_count": 5,
+      "pages_retrieved": [
+        474,
+        476,
+        477,
+        557,
+        560
+      ],
+      "report_snippet": "# Báo cáo Nghiên cứu: Độ phức tạp Cyclomatic (Cyclomatic Complexity) do ai phát triển, dựa trên lý thuyết nào và 3 công thức tính toán là gì?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **> **Câu trả lời trực tiếp:**\nDựa trên tài liệu nghiên cứu (**softwaree",
+      "status": "PASS"
+    },
+    {
+      "query_id": "Q3_WHITE_VS_BLACK_BOX",
+      "question": "Sự khác biệt cốt lõi giữa kiểm thử hộp trắng (white-box testing) và kiểm thử hộp đen (black-box testing) theo Roger Pressman là gì?",
+      "latency_sec": 0.31,
+      "fact_check_label": "support",
+      "verified_claims_count": 5,
+      "pages_retrieved": [
+        471,
+        472,
+        473,
+        487,
+        488,
+        500,
+        503,
+        509
+      ],
+      "report_snippet": "# Báo cáo Nghiên cứu: Sự khác biệt cốt lõi giữa kiểm thử hộp trắng (white-box testing) và kiểm thử hộp đen (black-box testing) theo Roger Pressman là gì?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **> **Câu trả lời trực tiếp:**\nDựa trên tài liệu nghiên cứu",
+      "status": "PASS"
+    }
+  ],
+  "cpu_max": [
+    {
+      "query_id": "Q1_SPIRAL_MODEL",
+      "question": "Mô hình xoắn ốc (Spiral Model) được đề xuất bởi ai, và kết hợp những đặc tính nào giữa prototyping và linear sequential model?",
+      "latency_sec": 1.38,
+      "fact_check_label": "support",
+      "verified_claims_count": 5,
+      "pages_retrieved": [
+        9,
+        64,
+        66,
+        96,
+        205
+      ],
+      "report_snippet": "# Báo cáo Nghiên cứu: Mô hình xoắn ốc (Spiral Model) được đề xuất bởi ai, và kết hợp những đặc tính nào giữa prototyping và linear sequential model?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **> **Câu trả lời trực tiếp:**\nDựa trên tài liệu nghiên cứu (**so",
+      "status": "PASS"
+    },
+    {
+      "query_id": "Q2_CYCLOMATIC_COMPLEXITY",
+      "question": "Độ phức tạp Cyclomatic (Cyclomatic Complexity) do ai phát triển, dựa trên lý thuyết nào và 3 công thức tính toán là gì?",
+      "latency_sec": 1.38,
+      "fact_check_label": "support",
+      "verified_claims_count": 5,
+      "pages_retrieved": [
+        476,
+        477,
+        557,
+        560
+      ],
+      "report_snippet": "# Báo cáo Nghiên cứu: Độ phức tạp Cyclomatic (Cyclomatic Complexity) do ai phát triển, dựa trên lý thuyết nào và 3 công thức tính toán là gì?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **> **Câu trả lời trực tiếp:**\nDựa trên tài liệu nghiên cứu (**softwaree",
+      "status": "PASS"
+    },
+    {
+      "query_id": "Q3_WHITE_VS_BLACK_BOX",
+      "question": "Sự khác biệt cốt lõi giữa kiểm thử hộp trắng (white-box testing) và kiểm thử hộp đen (black-box testing) theo Roger Pressman là gì?",
+      "latency_sec": 0.97,
+      "fact_check_label": "support",
+      "verified_claims_count": 4,
+      "pages_retrieved": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "report_snippet": "# Báo cáo Nghiên cứu: Sự khác biệt cốt lõi giữa kiểm thử hộp trắng (white-box testing) và kiểm thử hộp đen (black-box testing) theo Roger Pressman là gì?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **> **Câu trả lời trực tiếp:**\nDựa trên tài liệu nghiên cứu",
+      "status": "PASS"
+    }
+  ],
+  "gemini": [
+    {
+      "query_id": "Q1_SPIRAL_MODEL",
+      "question": "Mô hình xoắn ốc (Spiral Model) được đề xuất bởi ai, và kết hợp những đặc tính nào giữa prototyping và linear sequential model?",
+      "latency_sec": 17.4,
+      "fact_check_label": "support",
+      "verified_claims_count": 5,
+      "pages_retrieved": [
+        9,
+        64,
+        66,
+        96,
+        205
+      ],
+      "report_snippet": "# Báo cáo Nghiên cứu: Mô hình xoắn ốc (Spiral Model) được đề xuất bởi ai, và kết hợp những đặc tính nào giữa prototyping và linear sequential model?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Mô hình xoắn ốc (Spiral Model) ban đầu được đề xuất bởi **Boehm",
+      "status": "PASS"
+    },
+    {
+      "query_id": "Q2_CYCLOMATIC_COMPLEXITY",
+      "question": "Độ phức tạp Cyclomatic (Cyclomatic Complexity) do ai phát triển, dựa trên lý thuyết nào và 3 công thức tính toán là gì?",
+      "latency_sec": 34.81,
+      "fact_check_label": "support",
+      "verified_claims_count": 7,
+      "pages_retrieved": [
+        476,
+        477,
+        557,
+        560
+      ],
+      "report_snippet": "# Báo cáo Nghiên cứu: Độ phức tạp Cyclomatic (Cyclomatic Complexity) do ai phát triển, dựa trên lý thuyết nào và 3 công thức tính toán là gì?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Độ phức tạp Cyclomatic (Cyclomatic Complexity) được phát triển bởi **T",
+      "status": "PASS"
+    },
+    {
+      "query_id": "Q3_WHITE_VS_BLACK_BOX",
+      "question": "Sự khác biệt cốt lõi giữa kiểm thử hộp trắng (white-box testing) và kiểm thử hộp đen (black-box testing) theo Roger Pressman là gì?",
+      "latency_sec": 36.15,
+      "fact_check_label": "support",
+      "verified_claims_count": 1,
+      "pages_retrieved": [
+        471,
+        472,
+        487,
+        488,
+        500,
+        509
+      ],
+      "report_snippet": "# Báo cáo Nghiên cứu: Sự khác biệt cốt lõi giữa kiểm thử hộp trắng (white-box testing) và kiểm thử hộp đen (black-box testing) theo Roger Pressman là gì?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Theo Roger Pressman, sự khác biệt cốt lõi giữa **kiểm thử",
+      "status": "PASS"
+    }
+  ]
+}

@@ -10,7 +10,7 @@
 | :--- | :--- |
 | [`main.py`](main.py) | Điểm khởi chạy ứng dụng (`--serve` để mở Web Server cổng `8000`, hoặc chạy truy vấn CLI). |
 | [`core/`](core/) | **Agentic Engine L3–L4**: Đồ thị LangGraph (`graph.py`), hợp đồng trạng thái (`state.py`, `schemas.py`), bộ lập kế hoạch (`supervisor.py`), công cụ đọc PDF/toán học (`tools.py`), và bộ kiểm chứng (`verifier.py`). |
-| [`modes/`](modes/) | **6 Chế độ Thực thi**: `cpu_min`, `cpu_max`, `gemini`, `kaggle_fn`, `kaggle_max`, và `hybrid` cùng bộ đăng ký trung tâm (`registry.py`). |
+| [`modes/`](modes/) | **6 Chế độ Thực thi**: `cpu_min`, `cpu_max`, `gemini`, `gpu_ft`, `gpu_max`, và `hybrid` cùng bộ đăng ký trung tâm (`registry.py`). |
 | [`agents/`](agents/) | **Các thành phần Agent cơ sở**: Tìm kiếm học thuật (`agent0_scout`), FTS5/BM25/Hybrid RRF (`agent1_retrieval`), phân tích bố cục PDF (`agent2_reader`), tổng hợp (`agent3_summarizer`), kiểm chứng (`agent4_fact_checker`), xuất báo cáo (`agent5_writer`). |
 | [`api/`](api/) | **FastAPI Backend** (`app.py`): Quản lý phiên làm việc, tải lên PDF, cấu hình động từng Agent, kiểm tra trạng thái phần cứng (`/api/capabilities`). |
 | [`web_demo2/`](web_demo2/) | **Giao diện Web Nghiên cứu chính**: Hỗ trợ chọn tài liệu PDF, xem trích dẫn trực tiếp, chọn chế độ thực thi nhanh hoặc tùy biến từng Agent. |

@@ -1,3 +1,5 @@
+import json
+import gc
 # -*- coding: utf-8 -*-
 """
 Two-Stage SFT + RPO/DPO Trainer for Agent 5 (Academic Report Writer) on Kaggle Dual T4.
@@ -27,7 +29,9 @@ def safe_build_config(config_cls, **kwargs):
     elif "max_seq_length" in valid_fields and "max_length" in kwargs:
         kwargs["max_seq_length"] = kwargs.pop("max_length")
 
-    if "warmup_steps" in valid_fields and "warmup_ratio" in kwargs and "warmup_ratio" not in valid_fields:
+    if "warmup_steps" in kwargs and "warmup_ratio" in kwargs:
+        kwargs.pop("warmup_ratio")  # Prevent Transformers 'Both warmup_ratio and warmup_steps were set' ValueError
+    elif "warmup_steps" in valid_fields and "warmup_ratio" in kwargs and "warmup_ratio" not in valid_fields:
         ratio = kwargs.pop("warmup_ratio")
         if "warmup_steps" not in kwargs:
             kwargs["warmup_steps"] = max(1, int(ratio * 100))
@@ -43,11 +47,17 @@ def safe_build_config(config_cls, **kwargs):
 
 def export_fp16_adapter(out_dir: Path):
     sf_path = out_dir / "adapter_model.safetensors"
+    bin_path = (out_dir if "out_dir" in locals() else locals().get("output_dir", Path("."))) / "adapter_model.bin"
+    if sf_path.exists() and bin_path.exists():
+        bin_path.unlink() # purge stale .bin
     if sf_path.exists():
         tensors = load_file(str(sf_path))
         fp16_tensors = {k: v.to(torch.float16) if v.dtype == torch.float32 else v for k, v in tensors.items()}
         save_file(fp16_tensors, str(sf_path))
         mb = sf_path.stat().st_size / (1024 * 1024)
+        mb_size = sf_path.stat().st_size / (1024 * 1024)
+        if mb_size > 99.0:
+            print("⚠️ [WARNING] Adapter file exceeds GitHub 100MB limit. Use Git LFS or reduce LoRA rank.")
         print(f"📦 [Agent 5 Exporter] Saved FP16 Writer adapter: {sf_path} ({mb:.2f} MB)")
 
 
@@ -64,7 +74,7 @@ def run_writer_sft_and_rpo_training(cfg: Agent5TrainingConfig):
         gradient_accumulation_steps=cfg.gradient_accumulation_steps,
         learning_rate=cfg.lr_sft,
         num_train_epochs=cfg.epochs_sft,
-        fp16=False,
+        fp16=torch.cuda.is_available(),
         logging_steps=10,
         eval_strategy="steps",
         eval_steps=50,
@@ -78,7 +88,7 @@ def run_writer_sft_and_rpo_training(cfg: Agent5TrainingConfig):
         report_to="none",
     )
     sft_trainer = SFTTrainer(
-        model=model, train_dataset=train_sft, eval_dataset=val_sft, peft_config=None, processing_class=tokenizer, args=sft_args
+        model=model, train_dataset=train_sft, eval_dataset=val_sft, peft_config=None, **({"processing_class": tokenizer} if "processing_class" in inspect.signature(SFTTrainer.__init__).parameters else {"tokenizer": tokenizer}), args=sft_args
     )
     print("🚀 [Agent 5 Writer] Starting Stage 1 SFT...")
     sft_trainer.train()
@@ -86,10 +96,14 @@ def run_writer_sft_and_rpo_training(cfg: Agent5TrainingConfig):
     final_model = sft_trainer.model
 
     dpo_file = cfg.dataset_dir / "writer_dpo.jsonl"
+    dpo_successful = False
+    dpo_trainer_inst = None
     if dpo_file.exists():
         try:
             print("🎯 [Agent 5 Writer] Starting Stage 2 RPO/DPO Citation Alignment...")
             train_dpo, val_dpo = load_writer_dpo_dataset(dpo_file, seed=cfg.seed)
+            if len(train_dpo) == 0:
+                raise ValueError("DPO dataset has 0 valid samples, skipping Stage 2.")
             dpo_args = safe_build_config(
                 DPOConfig,
                 output_dir=str(cfg.output_dir / "dpo_checkpoints"),
@@ -99,7 +113,7 @@ def run_writer_sft_and_rpo_training(cfg: Agent5TrainingConfig):
                 num_train_epochs=cfg.epochs_dpo,
                 beta=cfg.dpo_beta,
                 rpo_alpha=0.1,  # RPO alignment
-                fp16=False,
+                fp16=torch.cuda.is_available(),
                 logging_steps=10,
                 max_length=2048,
                 max_prompt_length=1024,
@@ -109,17 +123,29 @@ def run_writer_sft_and_rpo_training(cfg: Agent5TrainingConfig):
                 gradient_checkpointing=True,
                 report_to="none",
             )
-            dpo_trainer = DPOTrainer(
-                model=sft_trainer.model, ref_model=None, args=dpo_args, train_dataset=train_dpo, eval_dataset=val_dpo, processing_class=tokenizer
+            dpo_trainer_inst = DPOTrainer(
+                model=sft_trainer.model, ref_model=None, args=dpo_args, train_dataset=train_dpo, eval_dataset=val_dpo, **({"processing_class": tokenizer} if "processing_class" in inspect.signature(DPOTrainer.__init__).parameters else {"tokenizer": tokenizer})
             )
-            dpo_trainer.train()
-            final_model = dpo_trainer.model
+            dpo_trainer_inst.train()
+            final_model = dpo_trainer_inst.model
+            dpo_successful = True
         except Exception as e:
             print(f"ℹ️ [Agent 5 Writer] DPO notice ({e}). Lưu trọng số SFT hoàn chỉnh.")
 
-    final_model.save_pretrained(str(cfg.output_dir), safe_serialization=True)
+    (dpo_trainer_inst if dpo_successful else sft_trainer).save_model(str(cfg.output_dir))
     tokenizer.save_pretrained(str(cfg.output_dir))
     export_fp16_adapter(cfg.output_dir)
+    del sft_trainer
+    if "dpo_trainer" in locals():
+        del dpo_trainer
+    del final_model
     del model
+    gc.collect()
     torch.cuda.empty_cache()
-    print(f"✅ [Agent 5 Writer] Training finished and FP16 adapter saved to {cfg.output_dir}")
+    eval_res = sft_trainer.evaluate()
+    def _json_default(obj):
+        if hasattr(obj, "item"): return obj.item()
+        if hasattr(obj, "__float__"): return float(obj)
+        return str(obj)
+    (cfg.output_dir / "eval_manifest.json").write_text(json.dumps(eval_res, indent=2, default=_json_default), encoding="utf-8")
+    print(f"✅ [Agent 5 Writer] Training finished, eval manifest and FP16 adapter saved to {cfg.output_dir}")

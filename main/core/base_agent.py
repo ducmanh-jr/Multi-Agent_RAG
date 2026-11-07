@@ -34,10 +34,12 @@ class BaseAgent(ABC):
 
     def log_action(self, action: str, details: Any = None) -> dict[str, Any]:
         """Helper to format a structured reasoning trace record."""
+        import time
         record = {
             "agent": self.name,
             "action": action,
             "details": details,
+            "timestamp": time.time(),
         }
         self.logger.info(f"[{self.name}] {action}")
         return record

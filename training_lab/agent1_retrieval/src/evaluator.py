@@ -1,9 +1,11 @@
+from __future__ import annotations
 # -*- coding: utf-8 -*-
 """
 Post-Training Evaluator for Agent 1 (Retrieval Router & Supervisor Query Planner).
 Measures JSON Schema Compliance Rate and Routing Decision Accuracy on held-out queries.
 """
 
+import re
 import json
 import torch
 
@@ -29,17 +31,24 @@ def evaluate_router_adapter(model, tokenizer, test_queries: list[str] | None = N
         model.eval()
         if hasattr(model, "config"):
             model.config.use_cache = True
-        device = next(model.parameters()).device
+        device = getattr(model, "device", next(model.parameters()).device)
 
         for q in test_queries:
             messages = [{"role": "system", "content": sys_prompt}, {"role": "user", "content": q}]
             prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
             inputs = tokenizer([prompt], return_tensors="pt").to(device)
             with torch.no_grad():
-                out = model.generate(**inputs, max_new_tokens=256, do_sample=False)
+                eos_ids = [tokenizer.eos_token_id]
+                if hasattr(tokenizer, "convert_tokens_to_ids"):
+                    im_end = tokenizer.convert_tokens_to_ids("<|im_end|>")
+                    if im_end is not None:
+                        eos_ids.append(im_end)
+                pad_id = tokenizer.pad_token_id or tokenizer.eos_token_id
+                out = model.generate(**inputs, max_new_tokens=256, do_sample=False, eos_token_id=eos_ids, pad_token_id=pad_id)
             resp = tokenizer.decode(out[0][inputs.input_ids.shape[1]:], skip_special_tokens=True).strip()
+            clean_resp = re.sub(r"^```(?:json)?\s*", "", resp.strip(), flags=re.IGNORECASE).rstrip("`").strip()
             try:
-                parsed = json.loads(resp)
+                parsed = json.loads(clean_resp)
                 is_valid = isinstance(parsed, dict)
                 if is_valid:
                     valid_json += 1

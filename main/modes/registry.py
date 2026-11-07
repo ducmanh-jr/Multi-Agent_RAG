@@ -1,6 +1,6 @@
 """
 Mode Registry & Dynamic Agent Factory for Multi-Agent Research RAG.
-Maps the 6 distinct execution modes (CPU Min, CPU Max, Gemini API, Kaggle FN, Kaggle Max, Hybrid)
+Maps the 6 distinct execution modes (CPU Min, CPU Max, Gemini API, GPU FT, GPU Max, Hybrid)
 to their independent 5-agent implementations.
 """
 
@@ -15,18 +15,29 @@ MODE_MAP = {
     "gemini": "modes.gemini",
     "cpu_min": "modes.cpu_min",
     "cpu_max": "modes.cpu_max",
-    "kaggle_fn": "modes.kaggle_fn",
-    "kaggle_max": "modes.kaggle_max",
+    "gpu_ft": "modes.gpu_ft",
+    "gpu_max": "modes.gpu_max",
     "hybrid": "modes.hybrid",
+    # Backward-compatible aliases
+    "kaggle_fn": "modes.gpu_ft",
+    "kaggle_max": "modes.gpu_max",
 }
 
 MODE_ALIASES = {
     "api": "gemini",
     "local_api": "gemini",
     "cpu": "cpu_max",
-    "model": "kaggle_max",
-    "kaggle": "kaggle_max",
-    "kaggle_gpu": "kaggle_max",
+    "model": "gpu_max",
+    "kaggle": "gpu_max",
+    "kaggle_gpu": "gpu_max",
+    "kaggle_max": "gpu_max",
+    "gpumax": "gpu_max",
+    "gpu_max": "gpu_max",
+    "kaggle_fn": "gpu_ft",
+    "fn": "gpu_ft",
+    "gpuft": "gpu_ft",
+    "gpu_ft": "gpu_ft",
+    "ft": "gpu_ft",
     "auto": "hybrid",
     "optimal": "hybrid",
 }
@@ -63,23 +74,23 @@ def get_agent_class(agent_name: str, mode: str):
             "factchecker": m.GeminiFactCheckerAgent,
             "writer": m.GeminiWriterAgent,
         }
-    elif canon_mode == "kaggle_fn":
-        import modes.kaggle_fn as m
+    elif canon_mode in ("gpu_ft", "kaggle_fn"):
+        import modes.gpu_ft as m
         mapping = {
-            "retrieval": m.KaggleFNRetrievalAgent,
-            "reader": m.KaggleFNReaderAgent,
-            "summarizer": m.KaggleFNSummarizerAgent,
-            "factchecker": m.KaggleFNFactCheckerAgent,
-            "writer": m.KaggleFNWriterAgent,
+            "retrieval": m.GPUFTRetrievalAgent,
+            "reader": m.GPUFTReaderAgent,
+            "summarizer": m.GPUFTSummarizerAgent,
+            "factchecker": m.GPUFTFactCheckerAgent,
+            "writer": m.GPUFTWriterAgent,
         }
-    elif canon_mode == "kaggle_max":
-        import modes.kaggle_max as m
+    elif canon_mode in ("gpu_max", "kaggle_max"):
+        import modes.gpu_max as m
         mapping = {
-            "retrieval": m.KaggleMaxRetrievalAgent,
-            "reader": m.KaggleMaxReaderAgent,
-            "summarizer": m.KaggleMaxSummarizerAgent,
-            "factchecker": m.KaggleMaxFactCheckerAgent,
-            "writer": m.KaggleMaxWriterAgent,
+            "retrieval": m.GPUMaxRetrievalAgent,
+            "reader": m.GPUMaxReaderAgent,
+            "summarizer": m.GPUMaxSummarizerAgent,
+            "factchecker": m.GPUMaxFactCheckerAgent,
+            "writer": m.GPUMaxWriterAgent,
         }
     elif canon_mode == "hybrid":
         import modes.hybrid as m

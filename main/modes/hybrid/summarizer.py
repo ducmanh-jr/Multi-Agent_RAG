@@ -17,8 +17,8 @@ from core.base_agent import BaseAgent
 from core.state import AgentState
 from modes.cpu_max.summarizer import CPUMaxSummarizerAgent
 from modes.gemini.summarizer import GeminiSummarizerAgent
-from modes.kaggle_fn.summarizer import KaggleFNSummarizerAgent
-from modes.kaggle_max.summarizer import KaggleMaxSummarizerAgent
+from modes.gpu_ft.summarizer import GPUFTSummarizerAgent as KaggleFNSummarizerAgent
+from modes.gpu_max.summarizer import GPUMaxSummarizerAgent as KaggleMaxSummarizerAgent
 from utils.local_vulkan_setup import probe_all_capabilities
 
 

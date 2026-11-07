@@ -7,7 +7,11 @@ Optimized for Kaggle Dual NVIDIA Tesla T4 (2 x 16GB = 32GB VRAM).
 from dataclasses import dataclass, field
 from pathlib import Path
 
-LABEL2ID = {"SUPPORT": 0, "CONTRADICT": 1, "NOT_ENOUGH_INFO": 2}
+LABEL2ID = {
+    "SUPPORT": 0, "SUPPORTS": 0, "ENTAILMENT": 0,
+    "CONTRADICT": 1, "CONTRADICTION": 1, "REFUTES": 1,
+    "NOT_ENOUGH_INFO": 2, "NEUTRAL": 2
+}
 ID2LABEL = {0: "SUPPORT", 1: "CONTRADICT", 2: "NOT_ENOUGH_INFO"}
 
 
@@ -28,3 +32,7 @@ class Agent4TrainingConfig:
     class_weights: list[float] = field(default_factory=lambda: [1.0, 1.35, 1.15])  # Penalize missed CONTRADICT claims
     val_split_ratio: float = 0.15
     seed: int = 42
+
+    def __post_init__(self):
+        self.dataset_path = Path(self.dataset_path)
+        self.output_dir = Path(self.output_dir)

@@ -39,4 +39,8 @@ class Agent1TrainingConfig:
     seed: int = 42
 
     # Dual T4 VRAM Allocation
-    max_memory_per_gpu: str = "14.5GiB"
+    max_memory_per_gpu: str = "14.0GiB"
+
+    def __post_init__(self):
+        self.dataset_path = Path(self.dataset_path)
+        self.output_dir = Path(self.output_dir)

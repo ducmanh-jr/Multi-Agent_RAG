@@ -3,8 +3,6 @@
 import os
 import sys
 
-if "CUDA_VISIBLE_DEVICES" not in os.environ:
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 import argparse
 from pathlib import Path
@@ -14,16 +12,11 @@ from src.config import Agent3TrainingConfig
 
 
 def sanitize_torchvision():
-    """Tự động vô hiệu hóa/gỡ bỏ torchvision nếu bị lỗi C++ operator 'torchvision::nms does not exist'."""
+    """Tự động vô hiệu hóa cờ torchvision trong transformers nếu torchvision bị lỗi C++ operator."""
     try:
         import torchvision
         _ = getattr(torchvision.ops, "nms", None)
     except Exception:
-        import subprocess
-        subprocess.run([sys.executable, "-m", "pip", "uninstall", "-y", "torchvision"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        for k in list(sys.modules.keys()):
-            if "torchvision" in k:
-                del sys.modules[k]
         try:
             import transformers.utils.import_utils as tu
             tu._torchvision_available = False
@@ -38,12 +31,18 @@ def main():
     parser.add_argument("--role", choices=["generator", "critic", "both"], default="both")
     parser.add_argument("--epochs-sft", type=int, default=3)
     parser.add_argument("--epochs-dpo", type=int, default=2)
+    
+    parser.add_argument("--weights-dir", "--output-dir", dest="weights_dir", type=str, default=None)
+    parser.add_argument("--dataset-dir", "--data", dest="dataset_dir", type=str, default=None)
     args = parser.parse_args()
 
     from src.trainer import train_generator_sft_and_dpo, train_critic_sft
     from src.evaluator import evaluate_generator_and_critic
 
-    cfg = Agent3TrainingConfig(gen_epochs_sft=args.epochs_sft, gen_epochs_dpo=args.epochs_dpo, critic_epochs=args.epochs_sft)
+    kwargs = {"gen_epochs_sft": args.epochs_sft, "gen_epochs_dpo": args.epochs_dpo, "critic_epochs": args.epochs_sft}
+    if args.dataset_dir: kwargs["dataset_dir"] = Path(args.dataset_dir)
+    if args.weights_dir: kwargs["weights_dir"] = Path(args.weights_dir)
+    cfg = Agent3TrainingConfig(**kwargs)
     if args.role in ("generator", "both"):
         train_generator_sft_and_dpo(cfg)
     if args.role in ("critic", "both"):

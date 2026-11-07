@@ -29,3 +29,7 @@ class Agent2TrainingConfig:
     weight_decay: float = 0.01
     val_split_ratio: float = 0.1
     seed: int = 42
+
+    def __post_init__(self):
+        self.dataset_path = Path(self.dataset_path)
+        self.output_dir = Path(self.output_dir)

@@ -1,3 +1,4 @@
+import json
 # -*- coding: utf-8 -*-
 """
 SFT Trainer & FP16 Compact Weight Exporter for Agent 1 (Retrieval Router).
@@ -26,7 +27,9 @@ def safe_build_config(config_cls, **kwargs):
     elif "max_seq_length" in valid_fields and "max_length" in kwargs:
         kwargs["max_seq_length"] = kwargs.pop("max_length")
 
-    if "warmup_steps" in valid_fields and "warmup_ratio" in kwargs and "warmup_ratio" not in valid_fields:
+    if "warmup_steps" in kwargs and "warmup_ratio" in kwargs:
+        kwargs.pop("warmup_ratio")  # Prevent Transformers 'Both warmup_ratio and warmup_steps were set' ValueError
+    elif "warmup_steps" in valid_fields and "warmup_ratio" in kwargs and "warmup_ratio" not in valid_fields:
         ratio = kwargs.pop("warmup_ratio")
         if "warmup_steps" not in kwargs:
             kwargs["warmup_steps"] = max(1, int(ratio * 100))
@@ -43,11 +46,17 @@ def safe_build_config(config_cls, **kwargs):
 def export_fp16_safetensors(output_dir):
     """Casts saved adapter weights to FP16 so file size stays < 80MB (GitHub 100MB limit compliant)."""
     sf_path = output_dir / "adapter_model.safetensors"
+    bin_path = (out_dir if "out_dir" in locals() else locals().get("output_dir", Path("."))) / "adapter_model.bin"
+    if sf_path.exists() and bin_path.exists():
+        bin_path.unlink() # purge stale .bin
     if sf_path.exists():
         tensors = load_file(str(sf_path))
         fp16_tensors = {k: v.to(torch.float16) if v.dtype == torch.float32 else v for k, v in tensors.items()}
         save_file(fp16_tensors, str(sf_path))
         size_mb = sf_path.stat().st_size / (1024 * 1024)
+        mb_size = sf_path.stat().st_size / (1024 * 1024)
+        if mb_size > 99.0:
+            print("⚠️ [WARNING] Adapter file exceeds GitHub 100MB limit. Use Git LFS or reduce LoRA rank.")
         print(f"📦 [Agent 1 Exporter] Exported FP16 adapter: {sf_path} ({size_mb:.2f} MB)")
 
 
@@ -65,7 +74,7 @@ def run_router_sft_training(cfg: Agent1TrainingConfig):
         gradient_accumulation_steps=cfg.gradient_accumulation_steps,
         learning_rate=cfg.learning_rate,
         num_train_epochs=cfg.epochs,
-        fp16=False,
+        fp16=torch.cuda.is_available(),
         logging_steps=10,
         eval_strategy="steps",
         eval_steps=50,
@@ -90,15 +99,22 @@ def run_router_sft_training(cfg: Agent1TrainingConfig):
         train_dataset=train_ds,
         eval_dataset=val_ds,
         peft_config=None,
-        processing_class=tokenizer,
+        **({"processing_class": tokenizer} if "processing_class" in inspect.signature(SFTTrainer.__init__).parameters else {"tokenizer": tokenizer}),
         args=sft_args,
     )
     print("🚀 [Agent 1 Trainer] Starting SFT training on Qwen2.5-7B with DoRA + rsLoRA...")
     trainer.train()
 
+    eval_res = trainer.evaluate()
+    print(f"🏆 Best Evaluation Loss: {eval_res.get('eval_loss')}")
     final_adapter_dir = cfg.output_dir
-    trainer.model.save_pretrained(str(final_adapter_dir), safe_serialization=True)
+    trainer.save_model(str(final_adapter_dir))
     tokenizer.save_pretrained(str(final_adapter_dir))
     export_fp16_safetensors(final_adapter_dir)
+    def _json_default(obj):
+        if hasattr(obj, "item"): return obj.item()
+        if hasattr(obj, "__float__"): return float(obj)
+        return str(obj)
+    (final_adapter_dir / "eval_manifest.json").write_text(json.dumps(eval_res, indent=2, default=_json_default), encoding="utf-8")
     print(f"✅ [Agent 1 Trainer] Training completed and weights saved to {final_adapter_dir}")
     return trainer

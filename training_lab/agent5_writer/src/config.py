@@ -34,5 +34,9 @@ class Agent5TrainingConfig:
     neftune_noise_alpha: float = 5.0
     per_device_batch_size: int = 2
     gradient_accumulation_steps: int = 8
-    max_memory_per_gpu: str = "14.5GiB"
+    max_memory_per_gpu: str = "14.0GiB"
     seed: int = 42
+
+    def __post_init__(self):
+        self.dataset_dir = Path(self.dataset_dir)
+        self.output_dir = Path(self.output_dir)

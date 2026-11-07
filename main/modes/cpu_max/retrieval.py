@@ -71,12 +71,12 @@ class CPUMaxRetrievalAgent(BaseAgent):
             required_entities = plan.required_entities
             top_k = plan.top_k
 
-        # Detect summary / overview / comparison intent
+        # Detect summary / overview / comparison intent (avoid generic substrings like 'chính' which match 'độ chính xác')
         is_summary_query = any(
             w in clean_q.lower()
             for w in [
-                "tóm tắt", "tổng quan", "nội dung chính", "chính", "summary", "overview",
-                "abstract", "giới thiệu", "phương pháp", "kết quả", "đóng góp", "2 bài báo",
+                "tóm tắt", "tổng quan", "nội dung chính", "ý chính", "điểm chính", "summary", "overview",
+                "abstract", "giới thiệu", "đóng góp chính", "2 bài báo",
                 "các bài báo", "nói về gì", "nói về cái gì", "/tom-tat", "tom-tat",
                 "so sánh", "đối chiếu", "so sanh", "doi chieu", "khác nhau", "khác biệt", "so-sanh", "so_sanh", "compare", "/so-sanh"
             ]

@@ -3,8 +3,6 @@
 import os
 import sys
 
-if "CUDA_VISIBLE_DEVICES" not in os.environ:
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 import argparse
 from pathlib import Path
@@ -14,16 +12,11 @@ from src.config import Agent5TrainingConfig
 
 
 def sanitize_torchvision():
-    """Tự động vô hiệu hóa/gỡ bỏ torchvision nếu bị lỗi C++ operator 'torchvision::nms does not exist'."""
+    """Tự động vô hiệu hóa cờ torchvision trong transformers nếu torchvision bị lỗi C++ operator."""
     try:
         import torchvision
         _ = getattr(torchvision.ops, "nms", None)
     except Exception:
-        import subprocess
-        subprocess.run([sys.executable, "-m", "pip", "uninstall", "-y", "torchvision"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        for k in list(sys.modules.keys()):
-            if "torchvision" in k:
-                del sys.modules[k]
         try:
             import transformers.utils.import_utils as tu
             tu._torchvision_available = False
@@ -38,12 +31,17 @@ def main():
     parser.add_argument("--epochs-sft", type=int, default=3)
     parser.add_argument("--epochs-dpo", type=int, default=2)
     parser.add_argument("--lr", type=float, default=1.5e-4)
+    parser.add_argument("--dataset-dir", "--data", dest="dataset_dir", type=str, default=None)
+    parser.add_argument("--output-dir", type=str, default=None)
     args = parser.parse_args()
 
     from src.trainer import run_writer_sft_and_rpo_training
     from src.evaluator import evaluate_academic_writer
 
-    cfg = Agent5TrainingConfig(epochs_sft=args.epochs_sft, epochs_dpo=args.epochs_dpo, lr_sft=args.lr)
+    kwargs = {"epochs_sft": args.epochs_sft, "epochs_dpo": args.epochs_dpo, "lr_sft": args.lr}
+    if args.dataset_dir: kwargs["dataset_dir"] = Path(args.dataset_dir)
+    if args.output_dir: kwargs["output_dir"] = Path(args.output_dir)
+    cfg = Agent5TrainingConfig(**kwargs)
     run_writer_sft_and_rpo_training(cfg)
     evaluate_academic_writer(cfg.output_dir)
 

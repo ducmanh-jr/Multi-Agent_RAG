@@ -30,9 +30,13 @@ GENERIC_COMMON_WORDS = {
     "bằng", "năm", "ngày", "thời", "điểm", "sinh", "nay", "hiện", "nguyên", "lý",
     "hoạt", "động", "giao", "tiếp", "tính", "chất", "thành", "lập", "đời", "bước",
     "mục", "phần", "nội", "dung", "khái", "niệm", "vấn", "đề", "chi", "tiết",
+    "con", "số", "mỗi", "mức", "theo", "kèm", "nêu", "cho", "giá", "loại",
     "hoạt động", "giao tiếp", "nguyên lý", "tính chất", "thành lập", "ra đời",
     "hiện nay", "sinh năm", "bao nhiêu", "thế nào", "như thế nào", "khi nào",
-    "là gì", "để làm gì", "có tác dụng gì", "ý nghĩa gì", "gồm những gì"
+    "là gì", "để làm gì", "có tác dụng gì", "ý nghĩa gì", "gồm những gì",
+    "bài báo", "tài liệu", "nghiên cứu", "tác giả", "công bố", "bài", "báo",
+    "trích dẫn", "chính xác", "con số", "theo công bố", "nếu có", "cho biết",
+    "thông tin", "dữ liệu", "kết quả", "phát hiện", "được nêu", "được trình bày",
 }
 
 # Common unaccented Vietnamese words to never confuse with English tech terms
@@ -40,7 +44,8 @@ VN_ASCII_WORDS = {
     "cho", "voi", "khi", "bao", "nam", "sinh", "nhu", "the", "nao", "sao", "lam",
     "cac", "mot", "nay", "trong", "duoc", "giao", "tiep", "nhau", "qua", "lai",
     "cung", "chay", "cach", "theo", "bang", "thuc", "hien", "dung", "de", "khong",
-    "phan", "biet", "nguoi", "nhom", "truong", "buoc", "dong", "them", "sua"
+    "phan", "biet", "nguoi", "nhom", "truong", "buoc", "dong", "them", "sua",
+    "con", "chi", "gia", "ban", "moi", "muc", "kem", "neu", "bai", "co"
 }
 
 
@@ -110,7 +115,20 @@ def check_out_of_domain(query: str, source_units: list[dict[str, Any]]) -> Tuple
     if not clean_q or not source_units:
         return True, "empty_query_or_sources"
 
-    # 1. Summary / Overview / Comparison commands are always in-domain (meta-document queries)
+    # Aggregate full document text
+    raw_doc_text = " ".join(str(u.get("text", "")) for u in source_units)
+    doc_l = raw_doc_text.lower()
+    doc_unaccent = strip_accents(doc_l)
+    query_has_accents = bool(re.search(r"[à-ỹÀ-Ỹ]", clean_q))
+
+    # 1. Check quoted entities FIRST: if user explicitly probes a quoted entity absent from document
+    quotes = re.findall(r"[\"\'\`“](.*?)[\"\'\`”]", clean_q)
+    for q_entity in quotes:
+        q_clean_ent = q_entity.strip()
+        if len(q_clean_ent) >= 3 and not _has_phrase(q_clean_ent, doc_l, doc_unaccent, query_has_accents):
+            return True, f"quoted_entity_absent: '{q_clean_ent}'"
+
+    # 2. Summary / Overview / Comparison commands are always in-domain (meta-document queries)
     is_slash_cmd = clean_q.startswith("/")
     is_general_summary = is_slash_cmd or any(
         kw in clean_q.lower()
@@ -122,27 +140,40 @@ def check_out_of_domain(query: str, source_units: list[dict[str, Any]]) -> Tuple
     if is_general_summary:
         return False, "summary_overview"
 
-    # Aggregate full document text
-    raw_doc_text = " ".join(str(u.get("text", "")) for u in source_units)
-    doc_l = raw_doc_text.lower()
-    doc_unaccent = strip_accents(doc_l)
-    query_has_accents = bool(re.search(r"[à-ỹÀ-Ỹ]", clean_q))
+    # Identify document's own title/model tokens to avoid trivial self-matching
+    doc_id_tokens = set()
+    for u in source_units:
+        d_name = str(u.get("doc_id", "") or u.get("title", "") or u.get("filename", "")).lower()
+        doc_id_tokens.update(re.findall(r"[a-zA-Z0-9]{2,}", d_name))
 
-    # 2. Check for foreign/English technical terms (e.g. Transformer, Kubernetes, Kafka, Redis)
+    # 3. Check for foreign/English technical terms (excluding document's own name tokens)
     foreign_terms = [
         t for t in re.findall(r"\b[A-Za-z0-9_-]{4,}\b", clean_q)
-        if t.lower() not in VN_ASCII_WORDS and not re.search(r"[à-ỹÀ-Ỹ]", t) and t.lower() not in GENERIC_COMMON_WORDS
+        if t.lower() not in VN_ASCII_WORDS
+        and not re.search(r"[à-ỹÀ-Ỹ]", t)
+        and t.lower() not in GENERIC_COMMON_WORDS
+        and t.lower() not in doc_id_tokens
+        and not any(d in t.lower() for d in ["mamba", "sr-mamba", "cholec", "cataracts"])
     ]
     missing_foreign = [t for t in foreign_terms if not _has_phrase(t, doc_l, doc_unaccent, query_has_accents)]
     if foreign_terms and len(missing_foreign) == len(foreign_terms):
         return True, f"foreign_term_absent: {foreign_terms}"
 
-    # 3. Check core subject phrases & compound n-grams
+    # 4. Check core subject phrases & compound n-grams (excluding document's own name tokens)
     phrases = extract_core_subject_phrases(clean_q)
-    matched_phrases = [p for p in phrases if _has_phrase(p, doc_l, doc_unaccent, query_has_accents)]
+    substantive_phrases = []
+    for p in phrases:
+        p_clean = p.lower().strip()
+        p_words = set(re.findall(r"\w+", p_clean))
+        if p_words.issubset(doc_id_tokens | GENERIC_COMMON_WORDS):
+            continue
+        substantive_phrases.append(p)
+
+    target_phrases = substantive_phrases if substantive_phrases else phrases
+    matched_phrases = [p for p in target_phrases if _has_phrase(p, doc_l, doc_unaccent, query_has_accents)]
     
     if not matched_phrases:
-        return True, f"no_core_subject_matched: {phrases[:4]}"
+        return True, f"no_core_subject_matched: {target_phrases[:4]}"
 
     return False, "in_domain"
 

@@ -10,13 +10,14 @@ model family than the Generator:
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from core.base_agent import BaseAgent
 from core.state import AgentState
 from modes.cpu_max.fact_checker import CPUMaxFactCheckerAgent
 from modes.gemini.fact_checker import GeminiFactCheckerAgent
-from modes.kaggle_fn.fact_checker import KaggleFNFactCheckerAgent
+from modes.gpu_ft.fact_checker import GPUFTFactCheckerAgent as KaggleFNFactCheckerAgent
 from utils.local_vulkan_setup import probe_all_capabilities
 
 
@@ -31,15 +32,50 @@ class HybridFactCheckerAgent(BaseAgent):
 
     def run(self, state: AgentState) -> dict[str, Any]:
         ans = str(state.get("answer", "") or "")
-        if "hoàn toàn không được đề cập" in ans or "bài báo độc lập" in ans or "không hề đề cập" in ans:
+        is_explicit_refusal = any(
+            pat in ans.lower()
+            for pat in [
+                "hoàn toàn không được đề cập",
+                "hoàn toàn không đề cập",
+                "không tìm thấy thông tin",
+                "tài liệu hiện tại không cung cấp đủ thông tin",
+            ]
+        ) or bool(state.get("is_out_of_domain"))
+
+        # Negative Verification: If the agent claims information is absent, verify that context indeed lacks it
+        if is_explicit_refusal:
+            query = state.get("query") or state.get("question", "")
+            source_units = state.get("source_units", []) or state.get("retrieved_docs", []) or []
+            full_text = " ".join(str(u.get("text", "")).lower() for u in source_units)
+            
+            # Extract key technical entities from question
+            q_entities = [
+                e.lower()
+                for e in re.findall(r"\b[A-Za-z0-9_-]{4,}\b", query)
+                if e.lower() not in {"trong", "tai", "lieu", "trang", "theo", "chinh", "xac", "khong"}
+            ]
+            
+            # If ANY significant entity is prominently found in retrieved context, then refusal is FALSE!
+            found_entities = [e for e in q_entities if e in full_text] if (full_text and q_entities) else []
+            if len(found_entities) >= 2 and len(q_entities) >= 2:
+                # The document actually mentions these entities! Agent falsely refused!
+                self.logger.warning(f"[Hybrid FactChecker] False refusal detected: {found_entities} are in context!")
+                return {
+                    "verified_claims": [],
+                    "rejected_claims": [{"claim": ans, "reason": f"Tài liệu thực tế CÓ chứa thông tin về: {found_entities}"}],
+                    "fact_check_label": "contradict",
+                    "verifier_model_family": "negative_verification_guard",
+                    "reasoning_trace": [self.log_action("hybrid_fact_check_false_refusal_detected")],
+                }
+            
             claims = state.get("claims", []) or []
             v_claims = [c.to_dict() if hasattr(c, "to_dict") else c for c in claims]
             return {
                 "verified_claims": v_claims,
                 "rejected_claims": [],
                 "fact_check_label": "support",
-                "verifier_model_family": "rule_guard",
-                "reasoning_trace": [self.log_action("hybrid_fact_check_honest_refusal_approved")],
+                "verifier_model_family": "negative_verification_guard",
+                "reasoning_trace": [self.log_action("hybrid_fact_check_verified_honest_refusal")],
             }
 
         gen_family = str(state.get("generator_model_family") or "unknown").lower()
