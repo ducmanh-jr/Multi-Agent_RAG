@@ -209,7 +209,7 @@ def run_reranker_training(
     model = AutoModelForSequenceClassification.from_pretrained(
         model_name,
         num_labels=1,
-        torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+        torch_dtype=torch.float32,  # Uniform float32 master weights for LoRA + AMP compatibility
     )
 
     # CoREB Recipe: LoRA r=16, alpha=16
