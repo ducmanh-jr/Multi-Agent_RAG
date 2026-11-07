@@ -133,6 +133,7 @@ class ReflectiveDAGOrchestrator:
         if num_candidates >= 5:
             # Candidate 4: Complete Architecture & Tradeoff Synthesis (Champion Candidate)
             p1_ref = f"[Trang {get_chunk_page(context[1])}]" if len(context) > 1 else ""
+            def_formula = (layout.get('formulas') or ['R(t) = e^{-\\lambda t}'])[0]
             c4 = (
                 f"### Báo Cáo Đối Chiếu Kỹ Nghệ Phần Mềm Toàn Diện\n\n"
                 f"Căn cứ trên các dữ liệu được trích xuất từ tài liệu kỹ thuật:\n\n"
@@ -140,7 +141,7 @@ class ReflectiveDAGOrchestrator:
                 f"2. **Sự khác biệt với mô hình Thác Nước (Waterfall)**: {get_chunk_text(context[2]) if len(context) > 2 else ''} [Trang {get_chunk_page(context[2]) if len(context) > 2 else ''}].\n"
                 f"3. **Kiểm chứng thống kê**: {get_chunk_text(context[3]) if len(context) > 3 else ''} [Trang {get_chunk_page(context[3]) if len(context) > 3 else ''}].\n\n"
                 f"**Bảng So Sánh Chi Tiết (Trích xuất từ Layout)**:\n{layout.get('markdown_table', '')}\n\n"
-                f"**Công Thức Xác Suất Độ Tin Cậy**: $${(layout.get('formulas') or ['R(t) = e^{-\\lambda t}'])[0]}$$\n"
+                f"**Công Thức Xác Suất Độ Tin Cậy**: $${def_formula}$$\n"
             )
             candidates.append(c4)
 
