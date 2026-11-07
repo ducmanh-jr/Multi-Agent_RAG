@@ -65,21 +65,18 @@ from src.config import Agent2TrainingConfig
 
 
 def sanitize_torchvision():
-    """Tự động vô hiệu hóa cờ torchvision trong transformers nếu torchvision bị lỗi C++ operator."""
+    """Tự động vô hiệu hóa cờ torchvision trong transformers để nạp cực nhanh và tránh xung đột C++ operator."""
     try:
-        import torchvision
-        _ = getattr(torchvision.ops, "nms", None)
+        import transformers.utils.import_utils as tu
+        tu._torchvision_available = False
+        tu.is_torchvision_available = lambda: False
     except Exception:
-        try:
-            import transformers.utils.import_utils as tu
-            tu._torchvision_available = False
-            tu.is_torchvision_available = lambda: False
-        except Exception:
-            pass
+        pass
 
 
 def main():
     sanitize_torchvision()
+    print("🚀 [Agent 2 Reader] Đang khởi tạo mô hình LayoutLMv3...", flush=True)
     parser = argparse.ArgumentParser(description="Fine-tune Agent 2 LayoutLMv3 Reader on Kaggle T4x2")
     parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--lr", type=float, default=3e-5)
