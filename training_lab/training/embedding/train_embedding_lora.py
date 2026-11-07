@@ -135,6 +135,10 @@ def run_embedding_training(
         bias="none",
     )
     transformer_module.auto_model = get_peft_model(transformer_module.auto_model, peft_config)
+    # Ensure all trainable LoRA parameters are float32
+    for param in transformer_module.auto_model.parameters():
+        if param.requires_grad:
+            param.data = param.data.float()
     transformer_module.auto_model.print_trainable_parameters()
 
     train_dataloader = load_triplets_dataloader(data_path, batch_size=batch_size)
