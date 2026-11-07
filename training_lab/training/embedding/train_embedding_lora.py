@@ -78,6 +78,26 @@ def patch_environment():
 
 patch_environment()
 
+def patch_sentence_transformers():
+    """Patches SentenceTransformerTrainer.compute_loss to accept num_items_in_batch added in transformers>=4.46."""
+    try:
+        import inspect
+        from sentence_transformers import trainer as st_trainer
+        st_class = getattr(st_trainer, "SentenceTransformerTrainer", None)
+        if st_class is not None and hasattr(st_class, "compute_loss"):
+            orig_compute_loss = st_class.compute_loss
+            sig = inspect.signature(orig_compute_loss)
+            if "num_items_in_batch" not in sig.parameters:
+                def patched_compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+                    return orig_compute_loss(self, model, inputs, return_outputs=return_outputs)
+                st_class.compute_loss = patched_compute_loss
+                print("⚡ [MoAI Patch] Patched SentenceTransformerTrainer.compute_loss() for transformers>=4.46")
+    except Exception:
+        pass
+
+patch_sentence_transformers()
+
+
 from peft import LoraConfig, get_peft_model, TaskType
 
 try:
