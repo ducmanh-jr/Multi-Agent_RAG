@@ -22,3 +22,10 @@ main/models/multilingual-e5-small/model.safetensors
 training_lab/agent2_reader/weights/model.safetensors
 main/modes/kaggle_fn/weights/
 main/weights/
+
+# Training lab checkpoints and large model binaries (>100MB)
+training_lab/finish/
+**/checkpoints/
+*.pt
+training_lab/agent4_fact_checker/weights/model.safetensors
+training_lab/agent3_summarizer/weights/**/*.safetensors
