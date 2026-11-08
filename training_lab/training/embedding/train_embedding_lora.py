@@ -223,7 +223,12 @@ def run_embedding_training(
         print("⚡ [Standard] Using MultipleNegativesRankingLoss with in-batch negatives.")
 
     print(f"⚡ Starting Embedding Training for {epochs} epochs (LR={lr})...")
+    checkpoint_dir = output_dir / 'checkpoints'
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
     model.fit(
+        checkpoint_path=str(checkpoint_dir),
+        checkpoint_save_steps=150,
+        checkpoint_save_total_limit=2,
         train_objectives=[(train_dataloader, train_loss)],
         epochs=epochs,
         warmup_steps=warmup_steps,
