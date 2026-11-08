@@ -3,6 +3,7 @@ def patch_environment():
     import os
     import sys
     import types
+    import importlib.machinery
 
     # 1. Clean BNB_CUDA_VERSION if it causes missing libcudart.so
     if "BNB_CUDA_VERSION" in os.environ:
@@ -16,12 +17,15 @@ def patch_environment():
             m_triton = triton
         except Exception:
             m_triton = types.ModuleType("triton")
+            m_triton.__spec__ = importlib.machinery.ModuleSpec("triton", None)
             m_triton.__path__ = []
             sys.modules["triton"] = m_triton
 
     m_ops = types.ModuleType("triton.ops")
+    m_ops.__spec__ = importlib.machinery.ModuleSpec("triton.ops", None)
     m_ops.__path__ = []
     m_perf = types.ModuleType("triton.ops.matmul_perf_model")
+    m_perf.__spec__ = importlib.machinery.ModuleSpec("triton.ops.matmul_perf_model", None)
     m_perf.early_config_prune = lambda *a, **k: None
     m_perf.estimate_matmul_time = lambda *a, **k: 0
     m_ops.matmul_perf_model = m_perf
@@ -35,7 +39,9 @@ def patch_environment():
     except Exception:
         import torch
         m_bnb = types.ModuleType("bitsandbytes")
+        m_bnb.__spec__ = importlib.machinery.ModuleSpec("bitsandbytes", None)
         m_bnb_nn = types.ModuleType("bitsandbytes.nn")
+        m_bnb_nn.__spec__ = importlib.machinery.ModuleSpec("bitsandbytes.nn", None)
 
         class DummyBnbLinear(torch.nn.Linear):
             pass
@@ -43,6 +49,7 @@ def patch_environment():
         m_bnb_nn.Linear8bitLt = DummyBnbLinear
         m_bnb_nn.Linear4bit = DummyBnbLinear
         m_bnb_nn.modules = types.ModuleType("bitsandbytes.nn.modules")
+        m_bnb_nn.modules.__spec__ = importlib.machinery.ModuleSpec("bitsandbytes.nn.modules", None)
         m_bnb.nn = m_bnb_nn
         m_bnb.__version__ = "0.44.1"
         sys.modules["bitsandbytes"] = m_bnb
