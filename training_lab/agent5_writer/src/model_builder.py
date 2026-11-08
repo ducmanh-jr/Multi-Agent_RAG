@@ -12,19 +12,11 @@ from .config import Agent5TrainingConfig
 
 
 def get_dual_t4_device_map(max_mem: str = "14.0GiB"):
-    """Allocates model layers across all available GPUs or uses auto device mapping."""
+    """Allocates model on a single GPU to avoid TRL multi-device per_token_loss bug."""
     if torch.cuda.is_available():
         gpu_count = torch.cuda.device_count()
-        if gpu_count > 1:
-            max_memory = {}
-            for i in range(gpu_count):
-                total_gib = torch.cuda.get_device_properties(i).total_memory / (1024**3)
-                safe_alloc = f"{max(1.0, total_gib - 2.0):.1f}GiB"
-                max_memory[i] = safe_alloc
-            print(f"⚡ [ModelBuilder] Balancing model layers across {gpu_count} GPUs with memory bounds: {max_memory}...")
-            return "auto", max_memory
         target = torch.cuda.current_device()
-        print(f"⚡ [ModelBuilder] Single GPU detected: cuda:{target}...")
+        print(f"⚡ [ModelBuilder] Using single GPU cuda:{target} (available: {gpu_count}) to avoid TRL multi-device loss bug...")
         return {"": target}, None
     return "auto", None
 
