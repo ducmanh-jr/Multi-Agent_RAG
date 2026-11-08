@@ -30,10 +30,10 @@ class Agent5TrainingConfig:
     lr_dpo: float = 5e-6
     dpo_beta: float = 0.1
     rpo_alpha: float = 0.1  # Regularized Preference Optimization (DPO + NLL stability)
-    max_seq_length: int = 3072
+    max_seq_length: int = 1536
     neftune_noise_alpha: float = 5.0
-    per_device_batch_size: int = 2
-    gradient_accumulation_steps: int = 8
+    per_device_batch_size: int = 1
+    gradient_accumulation_steps: int = 16
     max_memory_per_gpu: str = "14.0GiB"
     seed: int = 42
 

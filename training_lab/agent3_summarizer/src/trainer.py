@@ -122,8 +122,8 @@ def train_generator_sft_and_dpo(cfg: Agent3TrainingConfig):
                 rpo_alpha=0.1,  # RPO (Regularized Preference Optimization)
                 fp16=torch.cuda.is_available(),
                 logging_steps=10,
-                max_length=2048,
-                max_prompt_length=1024,
+                max_length=1536,
+                max_prompt_length=768,
                 optim="paged_adamw_8bit",
                 lr_scheduler_type="cosine",
                 warmup_steps=10,

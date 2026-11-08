@@ -108,6 +108,8 @@ def main():
     parser.add_argument("--role", choices=["generator", "critic", "both"], default="both")
     parser.add_argument("--epochs-sft", type=int, default=3)
     parser.add_argument("--epochs-dpo", type=int, default=2)
+    parser.add_argument("--batch-size", type=int, default=1, help="Per device batch size")
+    parser.add_argument("--max-length", type=int, default=1536, help="Max sequence length")
     
     parser.add_argument("--weights-dir", "--output-dir", dest="weights_dir", type=str, default=None)
     parser.add_argument("--dataset-dir", "--data", dest="dataset_dir", type=str, default=None)
@@ -116,7 +118,7 @@ def main():
     from src.trainer import train_generator_sft_and_dpo, train_critic_sft
     from src.evaluator import evaluate_generator_and_critic
 
-    kwargs = {"gen_epochs_sft": args.epochs_sft, "gen_epochs_dpo": args.epochs_dpo, "critic_epochs": args.epochs_sft}
+    kwargs = {"gen_epochs_sft": args.epochs_sft, "gen_epochs_dpo": args.epochs_dpo, "critic_epochs": args.epochs_sft, "per_device_batch_size": args.batch_size, "max_seq_length": args.max_length, "critic_max_seq_length": args.max_length}
     if args.dataset_dir: kwargs["dataset_dir"] = Path(args.dataset_dir)
     if args.weights_dir: kwargs["weights_dir"] = Path(args.weights_dir)
     cfg = Agent3TrainingConfig(**kwargs)

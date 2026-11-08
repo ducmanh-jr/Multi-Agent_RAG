@@ -22,21 +22,21 @@ class Agent3TrainingConfig:
     gen_lr_sft: float = 2e-4
     gen_lr_dpo: float = 5e-6
     dpo_beta: float = 0.1
-    max_seq_length: int = 3072
+    max_seq_length: int = 1536
 
     # Critic QLoRA + DoRA (Adversarial Hard-Negatives)
     critic_lora_r: int = 32
     critic_lora_alpha: int = 64
     critic_epochs: int = 3
     critic_lr: float = 1.5e-4
-    critic_max_seq_length: int = 2048
+    critic_max_seq_length: int = 1536
 
     # Common Dual T4 Settings
     lora_dropout: float = 0.05
     use_dora: bool = False
     neftune_noise_alpha: float = 5.0
-    per_device_batch_size: int = 2
-    gradient_accumulation_steps: int = 8
+    per_device_batch_size: int = 1
+    gradient_accumulation_steps: int = 16
     max_memory_per_gpu: str = "14.0GiB"
     seed: int = 42
 
