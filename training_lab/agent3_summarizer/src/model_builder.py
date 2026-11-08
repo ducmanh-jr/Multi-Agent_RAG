@@ -74,6 +74,17 @@ def build_summarizer_model_and_tokenizer(
     )
     model = get_peft_model(model, peft_config)
 
+    # Kích hoạt bắt buộc input require grad cho gradient checkpointing PEFT QLoRA
+    if hasattr(model, 'enable_input_require_grads'):
+        model.enable_input_require_grads()
+    try:
+        def make_inputs_require_grad(module, input, output):
+            output.requires_grad_(True)
+        model.get_input_embeddings().register_forward_hook(make_inputs_require_grad)
+    except Exception:
+        pass
+    model.config.use_cache = False
+
     # Chuẩn AMP của PyTorch trên Tesla T4: Trọng số LoRA trainable phải ở float32 để GradScaler unscale:
     for param in model.parameters():
         if param.dtype == torch.bfloat16:
