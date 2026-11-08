@@ -62,11 +62,45 @@ def export_fp16_adapter(out_dir: Path):
         print(f"📦 [Agent 5 Exporter] Saved FP16 Writer adapter: {sf_path} ({mb:.2f} MB)")
 
 
+def _sanitize_model_dtypes(model):
+    """Force all bf16 parameters to fp32 to prevent GradScaler unscale_ NotImplementedError on T4."""
+    converted = 0
+    for name, param in model.named_parameters():
+        if param.dtype == torch.bfloat16:
+            param.data = param.data.to(torch.float32)
+            converted += 1
+    if converted > 0:
+        print(f"🔧 [Dtype Sanitizer] Converted {converted} BFloat16 params to Float32 for GradScaler compatibility.")
+
+
+def _detect_mixed_precision():
+    """Detect the best mixed precision mode for the current GPU, avoiding GradScaler bf16 bugs."""
+    if not torch.cuda.is_available():
+        return False, False
+    # T4 (compute capability 7.5) supports fp16 natively but bf16 only via emulation
+    # Use fp16 by default; if params are bf16, _sanitize_model_dtypes will fix them
+    cap = torch.cuda.get_device_capability()
+    if cap[0] >= 8:
+        # Ampere+ (A100, L4, etc.): bf16 is native and avoids GradScaler entirely
+        print(f"⚡ [Mixed Precision] GPU compute capability {cap[0]}.{cap[1]} >= 8.0 -> using bf16 (no GradScaler)")
+        return False, True  # fp16=False, bf16=True
+    else:
+        # Turing (T4) and older: use fp16 with GradScaler + dtype sanitization
+        print(f"⚡ [Mixed Precision] GPU compute capability {cap[0]}.{cap[1]} < 8.0 -> using fp16 with GradScaler")
+        return True, False  # fp16=True, bf16=False
+
+
 def run_writer_sft_and_rpo_training(cfg: Agent5TrainingConfig):
     """Runs Stage 1 SFT followed by Stage 2 RPO/DPO Preference Alignment for Academic Report Synthesis."""
     cfg.output_dir.mkdir(parents=True, exist_ok=True)
     model, tokenizer, peft_config = build_writer_model_and_tokenizer(cfg)
+
+    # Sanitize bf16 params BEFORE creating trainers to prevent GradScaler crash
+    _sanitize_model_dtypes(model)
+
     train_sft, val_sft = load_writer_sft_dataset(cfg.dataset_dir / "writer_sft.jsonl", tokenizer, seed=cfg.seed)
+
+    use_fp16, use_bf16 = _detect_mixed_precision()
 
     sft_args = safe_build_config(
         SFTConfig,
@@ -76,7 +110,8 @@ def run_writer_sft_and_rpo_training(cfg: Agent5TrainingConfig):
         learning_rate=cfg.lr_sft,
         num_train_epochs=cfg.epochs_sft,
         max_steps=cfg.max_steps if cfg.max_steps > 0 else -1,
-        fp16=torch.cuda.is_available(),
+        fp16=use_fp16,
+        bf16=use_bf16,
         logging_steps=10,
         per_device_eval_batch_size=1,
         eval_strategy="no",
@@ -96,7 +131,43 @@ def run_writer_sft_and_rpo_training(cfg: Agent5TrainingConfig):
     sft_ckpt_dir = cfg.output_dir / "sft_checkpoints"
     has_ckpt = any(sft_ckpt_dir.glob("checkpoint-*")) if sft_ckpt_dir.exists() else False
     print(f"🚀 [Agent 5 Writer] Starting Stage 1 SFT (Tự động tiếp tục từ checkpoint: {has_ckpt})...")
-    sft_trainer.train(resume_from_checkpoint=has_ckpt)
+
+    # Try training with detected precision; fall back to fp32 if GradScaler still fails
+    try:
+        sft_trainer.train(resume_from_checkpoint=has_ckpt)
+    except (NotImplementedError, RuntimeError) as e:
+        if "BFloat16" in str(e) or "unscale" in str(e):
+            print(f"⚠️ [Fallback] GradScaler error detected: {e}")
+            print("🔄 [Fallback] Restarting SFT with fp32 (no mixed precision)...")
+            sft_args_fp32 = safe_build_config(
+                SFTConfig,
+                output_dir=str(cfg.output_dir / "sft_checkpoints"),
+                per_device_train_batch_size=cfg.per_device_batch_size,
+                gradient_accumulation_steps=cfg.gradient_accumulation_steps,
+                learning_rate=cfg.lr_sft,
+                num_train_epochs=cfg.epochs_sft,
+                max_steps=cfg.max_steps if cfg.max_steps > 0 else -1,
+                fp16=False,
+                bf16=False,
+                logging_steps=10,
+                per_device_eval_batch_size=1,
+                eval_strategy="no",
+                prediction_loss_only=True,
+                max_length=cfg.max_seq_length,
+                dataset_text_field="text",
+                optim="paged_adamw_8bit",
+                lr_scheduler_type="cosine",
+                warmup_steps=10,
+                neftune_noise_alpha=cfg.neftune_noise_alpha,
+                gradient_checkpointing=True,
+                report_to="none",
+            )
+            sft_trainer = SFTTrainer(
+                model=model, train_dataset=train_sft, eval_dataset=val_sft, peft_config=None, **({"processing_class": tokenizer} if "processing_class" in inspect.signature(SFTTrainer.__init__).parameters else {"tokenizer": tokenizer}), args=sft_args_fp32
+            )
+            sft_trainer.train()
+        else:
+            raise
 
     final_model = sft_trainer.model
 
@@ -118,7 +189,8 @@ def run_writer_sft_and_rpo_training(cfg: Agent5TrainingConfig):
                 num_train_epochs=cfg.epochs_dpo,
                 beta=cfg.dpo_beta,
                 rpo_alpha=0.1,  # RPO alignment
-                fp16=torch.cuda.is_available(),
+                fp16=use_fp16,
+                bf16=use_bf16,
                 logging_steps=10,
                 max_length=1536,
                 max_prompt_length=768,
