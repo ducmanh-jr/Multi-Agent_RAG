@@ -8,6 +8,7 @@ def patch_environment():
     # 1. Clean BNB_CUDA_VERSION if it causes missing libcudart.so
     if "BNB_CUDA_VERSION" in os.environ:
         del os.environ["BNB_CUDA_VERSION"]
+    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
     # 2. Patch Triton ops mock for Triton 3+ compatibility
     m_triton = sys.modules.get("triton")
@@ -90,7 +91,7 @@ def main():
     parser = argparse.ArgumentParser(description="Fine-tune Agent 4 NLI Verifier on Kaggle T4x2")
     parser.add_argument("--model-id", type=str, default="BAAI/bge-reranker-v2-m3")
     parser.add_argument("--epochs", type=int, default=4)
-    parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--lr", type=float, default=2e-5)
     parser.add_argument("--data", type=str, default=None)
     parser.add_argument("--output-dir", type=str, default=None)

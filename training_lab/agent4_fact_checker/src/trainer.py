@@ -98,6 +98,7 @@ def run_factchecker_training(cfg: Agent4TrainingConfig):
         gradient_accumulation_steps=cfg.gradient_accumulation_steps,
         learning_rate=cfg.learning_rate,
         fp16=torch.cuda.is_available(),
+        gradient_checkpointing=True,
         eval_strategy="epoch",
         save_strategy="epoch",
         load_best_model_at_end=True,

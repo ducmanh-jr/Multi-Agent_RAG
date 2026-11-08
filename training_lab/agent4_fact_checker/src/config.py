@@ -24,9 +24,9 @@ class Agent4TrainingConfig:
 
     epochs: int = 5
     learning_rate: float = 2e-5
-    per_device_train_batch_size: int = 16
-    per_device_eval_batch_size: int = 32
-    gradient_accumulation_steps: int = 2
+    per_device_train_batch_size: int = 4
+    per_device_eval_batch_size: int = 8
+    gradient_accumulation_steps: int = 4
     max_seq_length: int = 512
     label_smoothing_factor: float = 0.05
     class_weights: list[float] = field(default_factory=lambda: [1.0, 1.35, 1.15])  # Penalize missed CONTRADICT claims
