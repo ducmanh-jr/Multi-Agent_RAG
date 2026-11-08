@@ -100,6 +100,13 @@ def main():
     parser.add_argument("--eval-only", action="store_true", help="Run evaluation only")
     args = parser.parse_args()
 
+    try:
+        import trl
+    except ImportError:
+        import subprocess
+        print("⏳ Đang tự động cài đặt thư viện trl...")
+        subprocess.run([sys.executable, "-m", "pip", "install", "-q", "trl==0.12.1"])
+
     from src.trainer import run_router_sft_training
     from src.evaluator import evaluate_router_adapter
 
