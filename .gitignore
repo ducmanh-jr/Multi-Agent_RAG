@@ -29,3 +29,7 @@ training_lab/finish/
 *.pt
 training_lab/agent4_fact_checker/weights/model.safetensors
 training_lab/agent3_summarizer/weights/**/*.safetensors
+
+training_lab/agent5_writer/weights/adapter_model.safetensors
+training_lab/agent5_writer/weights/ref/
+training_lab/agent5_writer/weights/sft_checkpoints/

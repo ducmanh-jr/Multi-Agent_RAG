@@ -16,7 +16,7 @@
 | **🔍 Embedding Model (BGE-M3)** | BAAI/bge-m3 + LoRA ($r=32$) + CachedMNRLoss | Kaggle Dual T4 | 1 Epoch chuẩn SOTA MoAI (~625 steps)<br>Hard Negatives đa lĩnh vực | ✅ **Đã xong 100%**<br>*(Đã tích hợp vào weights)* |
 | **🧭 Agent 1 (Router & Planner)** | Qwen2.5-7B-Instruct + QLoRA ($r=64$) + NEFTune | Google Colab T4 | **Eval Loss = 0.0550**<br>JSON Schema Compliance 100% | ✅ **Đã xong 100%**<br>*(Đã tích hợp vào weights)* |
 | **✍️ Agent 3 (Summarizer & Critic)** | Qwen2.5-7B-Instruct + Dual QLoRA (Generator + Critic) | Google Colab T4 | 1.924 mẫu (SFT + DPO phạt lỗi bịa + Critic) | ✅ **Đã xong 100%**<br>*(Đã tích hợp vào weights)* |
-| **📝 Agent 5 (Report Writer)** | Qwen2.5-7B-Instruct + DoRA + rsLoRA + SFT 1 Epoch | Google Colab T4 | 1.500 mẫu (Chuẩn IEEE, Bảng Markdown, LaTeX) | ⚡ **Đang xuất xưởng**<br>*(85/85 steps hoàn tất)* |
+| **📝 Agent 5 (Report Writer)** | Qwen2.5-7B-Instruct + DoRA + rsLoRA + SFT 1 Epoch | Google Colab T4 | **Eval Loss = 0.0149**<br>**Token Accuracy = 99.6%** (85/85 steps) | ✅ **Đã xong 100%**<br>*(Đã tích hợp vào weights)* |
 
 ---
 
@@ -48,7 +48,7 @@ flowchart TD
     classDef active fill:#cce5ff,stroke:#004085,stroke-width:2px;
     
     class A1,Emb,Reranker,A2,A3,A4 done;
-    class A5 active;
+    class A5 done;
 ```
 
 ---
