@@ -33,3 +33,5 @@ training_lab/agent3_summarizer/weights/**/*.safetensors
 training_lab/agent5_writer/weights/adapter_model.safetensors
 training_lab/agent5_writer/weights/ref/
 training_lab/agent5_writer/weights/sft_checkpoints/
+
+training_lab/final_weights/
