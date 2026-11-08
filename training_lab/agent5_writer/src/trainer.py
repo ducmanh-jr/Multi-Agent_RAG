@@ -46,8 +46,8 @@ def safe_build_config(config_cls, **kwargs):
 
 
 def export_fp16_adapter(out_dir: Path):
-    sf_path = out_dir / "adapter_model.safetensors"
     out_dir = Path(out_dir)
+    sf_path = out_dir / "adapter_model.safetensors"
     bin_path = out_dir / "adapter_model.bin"
     if sf_path.exists() and bin_path.exists():
         bin_path.unlink() # purge stale .bin
