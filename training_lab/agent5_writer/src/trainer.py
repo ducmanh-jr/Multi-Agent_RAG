@@ -77,8 +77,9 @@ def run_writer_sft_and_rpo_training(cfg: Agent5TrainingConfig):
         num_train_epochs=cfg.epochs_sft,
         fp16=torch.cuda.is_available(),
         logging_steps=10,
-        eval_strategy="steps",
-        eval_steps=50,
+        per_device_eval_batch_size=1,
+        eval_strategy="no",
+        prediction_loss_only=True,
         max_length=cfg.max_seq_length,
         dataset_text_field="text",
         optim="paged_adamw_8bit",
@@ -91,8 +92,10 @@ def run_writer_sft_and_rpo_training(cfg: Agent5TrainingConfig):
     sft_trainer = SFTTrainer(
         model=model, train_dataset=train_sft, eval_dataset=val_sft, peft_config=None, **({"processing_class": tokenizer} if "processing_class" in inspect.signature(SFTTrainer.__init__).parameters else {"tokenizer": tokenizer}), args=sft_args
     )
-    print("🚀 [Agent 5 Writer] Starting Stage 1 SFT...")
-    sft_trainer.train()
+    sft_ckpt_dir = cfg.output_dir / "sft_checkpoints"
+    has_ckpt = any(sft_ckpt_dir.glob("checkpoint-*")) if sft_ckpt_dir.exists() else False
+    print(f"🚀 [Agent 5 Writer] Starting Stage 1 SFT (Tự động tiếp tục từ checkpoint: {has_ckpt})...")
+    sft_trainer.train(resume_from_checkpoint=has_ckpt)
 
     final_model = sft_trainer.model
 
