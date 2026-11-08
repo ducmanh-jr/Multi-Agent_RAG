@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 # -*- coding: utf-8 -*-
 """
 SFT Trainer & FP16 Compact Weight Exporter for Agent 1 (Retrieval Router).
@@ -46,7 +47,8 @@ def safe_build_config(config_cls, **kwargs):
 def export_fp16_safetensors(output_dir):
     """Casts saved adapter weights to FP16 so file size stays < 80MB (GitHub 100MB limit compliant)."""
     sf_path = output_dir / "adapter_model.safetensors"
-    bin_path = (out_dir if "out_dir" in locals() else locals().get("output_dir", Path("."))) / "adapter_model.bin"
+    output_dir = Path(output_dir)
+    bin_path = output_dir / "adapter_model.bin"
     if sf_path.exists() and bin_path.exists():
         bin_path.unlink() # purge stale .bin
     if sf_path.exists():
