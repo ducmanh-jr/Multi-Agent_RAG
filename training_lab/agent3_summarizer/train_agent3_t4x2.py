@@ -8,6 +8,7 @@ def patch_environment():
     # 1. Clean BNB_CUDA_VERSION if it causes missing libcudart.so
     if "BNB_CUDA_VERSION" in os.environ:
         del os.environ["BNB_CUDA_VERSION"]
+    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
     # 2. Patch Triton ops mock for Triton 3+ compatibility
     m_triton = sys.modules.get("triton")
@@ -55,6 +56,22 @@ def patch_environment():
         sys.modules["bitsandbytes"] = m_bnb
         sys.modules["bitsandbytes.nn"] = m_bnb_nn
         sys.modules["bitsandbytes.nn.modules"] = m_bnb_nn.modules
+
+
+    # 4. Patch importlib.metadata.version fallback for bitsandbytes
+    try:
+        import importlib.metadata
+        _orig_meta_version = importlib.metadata.version
+        def _safe_meta_version(distribution_name):
+            try:
+                return _orig_meta_version(distribution_name)
+            except Exception:
+                if distribution_name == "bitsandbytes":
+                    return "0.44.1"
+                raise
+        importlib.metadata.version = _safe_meta_version
+    except Exception:
+        pass
 
 patch_environment()
 
