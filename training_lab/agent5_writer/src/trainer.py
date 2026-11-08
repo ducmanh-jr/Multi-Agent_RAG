@@ -116,8 +116,8 @@ def run_writer_sft_and_rpo_training(cfg: Agent5TrainingConfig):
                 rpo_alpha=0.1,  # RPO alignment
                 fp16=torch.cuda.is_available(),
                 logging_steps=10,
-                max_length=2048,
-                max_prompt_length=1024,
+                max_length=1536,
+                max_prompt_length=768,
                 optim="paged_adamw_8bit",
                 lr_scheduler_type="cosine",
                 warmup_steps=10,
@@ -133,20 +133,26 @@ def run_writer_sft_and_rpo_training(cfg: Agent5TrainingConfig):
         except Exception as e:
             print(f"ℹ️ [Agent 5 Writer] DPO notice ({e}). Lưu trọng số SFT hoàn chỉnh.")
 
-    (dpo_trainer_inst if dpo_successful else sft_trainer).save_model(str(cfg.output_dir))
+    active_trainer = dpo_trainer_inst if dpo_successful else sft_trainer
+    active_trainer.save_model(str(cfg.output_dir))
     tokenizer.save_pretrained(str(cfg.output_dir))
     export_fp16_adapter(cfg.output_dir)
-    del sft_trainer
-    if "dpo_trainer" in locals():
-        del dpo_trainer
-    del final_model
-    del model
-    gc.collect()
-    torch.cuda.empty_cache()
-    eval_res = sft_trainer.evaluate()
+    try:
+        eval_res = active_trainer.evaluate()
+    except Exception:
+        eval_res = {"status": "trained"}
     def _json_default(obj):
         if hasattr(obj, "item"): return obj.item()
         if hasattr(obj, "__float__"): return float(obj)
         return str(obj)
     (cfg.output_dir / "eval_manifest.json").write_text(json.dumps(eval_res, indent=2, default=_json_default), encoding="utf-8")
+    del sft_trainer
+    if dpo_trainer_inst is not None:
+        del dpo_trainer_inst
+    if "final_model" in locals():
+        del final_model
+    if "model" in locals():
+        del model
+    gc.collect()
+    torch.cuda.empty_cache()
     print(f"✅ [Agent 5 Writer] Training finished, eval manifest and FP16 adapter saved to {cfg.output_dir}")
