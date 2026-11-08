@@ -48,8 +48,9 @@ ADAPTER_ALIASES: dict[str, str] = {
     "critic_qlora": "critic",
     "factchecker": "critic",
     "fn_critic": "critic",
-    "writer": "generator",
-    "fn_writer": "generator",
+    "writer": "writer",
+    "agent5_writer": "writer",
+    "fn_writer": "writer",
 }
 
 

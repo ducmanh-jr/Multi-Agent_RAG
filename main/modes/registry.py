@@ -16,6 +16,7 @@ MODE_MAP = {
     "cpu_min": "modes.cpu_min",
     "cpu_max": "modes.cpu_max",
     "gpu_ft": "modes.gpu_ft",
+    "gpu_finetune": "modes.gpu_finetune",
     "gpu_max": "modes.gpu_max",
     "hybrid": "modes.hybrid",
     # Backward-compatible aliases
@@ -38,6 +39,10 @@ MODE_ALIASES = {
     "gpuft": "gpu_ft",
     "gpu_ft": "gpu_ft",
     "ft": "gpu_ft",
+    "gpu_finetune": "gpu_finetune",
+    "finetune": "gpu_finetune",
+    "gpufinetune": "gpu_finetune",
+    "gpu_ft_new": "gpu_finetune",
     "auto": "hybrid",
     "optimal": "hybrid",
 }
@@ -82,6 +87,15 @@ def get_agent_class(agent_name: str, mode: str):
             "summarizer": m.GPUFTSummarizerAgent,
             "factchecker": m.GPUFTFactCheckerAgent,
             "writer": m.GPUFTWriterAgent,
+        }
+    elif canon_mode == "gpu_finetune":
+        import modes.gpu_finetune as m
+        mapping = {
+            "retrieval": m.GPUFinetuneRetrievalAgent,
+            "reader": m.GPUFinetuneReaderAgent,
+            "summarizer": m.GPUFinetuneSummarizerAgent,
+            "factchecker": m.GPUFinetuneFactCheckerAgent,
+            "writer": m.GPUFinetuneWriterAgent,
         }
     elif canon_mode in ("gpu_max", "kaggle_max"):
         import modes.gpu_max as m
