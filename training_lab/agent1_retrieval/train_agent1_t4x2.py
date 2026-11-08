@@ -57,6 +57,21 @@ def patch_environment():
         sys.modules["bitsandbytes.nn"] = m_bnb_nn
         sys.modules["bitsandbytes.nn.modules"] = m_bnb_nn.modules
 
+    # 4. Patch importlib.metadata.version fallback for bitsandbytes
+    try:
+        import importlib.metadata
+        _orig_meta_version = importlib.metadata.version
+        def _safe_meta_version(distribution_name):
+            try:
+                return _orig_meta_version(distribution_name)
+            except Exception:
+                if distribution_name == "bitsandbytes":
+                    return "0.44.1"
+                raise
+        importlib.metadata.version = _safe_meta_version
+    except Exception:
+        pass
+
 patch_environment()
 
 #!/usr/bin/env python3
@@ -106,6 +121,13 @@ def main():
         import subprocess
         print("⏳ Đang tự động cài đặt thư viện trl...")
         subprocess.run([sys.executable, "-m", "pip", "install", "-q", "trl==0.12.1"])
+
+    try:
+        import bitsandbytes
+    except Exception:
+        import subprocess
+        print("⏳ Đang tự động cài đặt bitsandbytes...")
+        subprocess.run([sys.executable, "-m", "pip", "install", "-q", "bitsandbytes"])
 
     from src.trainer import run_router_sft_training
     from src.evaluator import evaluate_router_adapter
