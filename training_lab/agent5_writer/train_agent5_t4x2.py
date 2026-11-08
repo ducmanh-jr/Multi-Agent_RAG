@@ -81,6 +81,16 @@ def patch_environment():
     except Exception:
         pass
 
+    # 6. Mock optional llm_blender for TRL PairwiseJudge compatibility
+    if "llm_blender" not in sys.modules:
+        try:
+            import llm_blender
+        except Exception:
+            m_blender = types.ModuleType("llm_blender")
+            m_blender.__spec__ = importlib.machinery.ModuleSpec("llm_blender", None)
+            m_blender.Blender = type("Blender", (), {})
+            sys.modules["llm_blender"] = m_blender
+
 patch_environment()
 
 #!/usr/bin/env python3
