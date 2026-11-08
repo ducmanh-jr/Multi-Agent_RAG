@@ -72,6 +72,14 @@ def patch_environment():
     except Exception:
         pass
 
+    # 5. Patch missing MODEL_FOR_VISION_2_SEQ_MAPPING_NAMES in transformers for TRL DPO compatibility
+    try:
+        import transformers.models.auto.modeling_auto as mma
+        if not hasattr(mma, "MODEL_FOR_VISION_2_SEQ_MAPPING_NAMES"):
+            mma.MODEL_FOR_VISION_2_SEQ_MAPPING_NAMES = {}
+    except Exception:
+        pass
+
 patch_environment()
 
 #!/usr/bin/env python3
