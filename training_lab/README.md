@@ -10,13 +10,13 @@
 
 | Thành phần | Kiến trúc Mô hình | Môi trường | Chỉ số Thực nghiệm (Metrics) | Trạng thái Hiện tại |
 | :--- | :--- | :---: | :---: | :---: |
-| **⚖️ Cross-Encoder Reranker** | BAAI/bge-reranker-v2-m3 + LoRA ($r=16, \alpha=16$) | Kaggle Dual T4 | **nDCG@10 = 1.0000**<br>**MRR@10 = 1.0000** (Test 3 kịch bản: 100%) | ✅ **Đã xong 100%**<br>*(Đã tích hợp vào weights)* |
-| **📄 Agent 2 (Document Reader)** | microsoft/layoutlmv3-base + Focal Loss | Google Colab T4 | **Loss: 1.40 $\to$ 0.83**<br>Nhận diện Bảng, Công thức, Header | ✅ **Đã xong 100%**<br>*(Đã tích hợp vào weights)* |
-| **🛡️ Agent 4 (Fact-Checker NLI)** | BAAI/bge-reranker-v2-m3 + R-Drop + Focal Loss | Google Colab T4 | **Macro F1 = 1.0000 (100%)**<br>Calibrated Temp $T = 0.5$ | ✅ **Đã xong 100%**<br>*(Đã tích hợp vào weights)* |
-| **🔍 Embedding Model (BGE-M3)** | BAAI/bge-m3 + LoRA ($r=32$) + CachedMNRLoss | Kaggle Dual T4 | 1 Epoch chuẩn SOTA MoAI (~625 steps)<br>Hard Negatives đa lĩnh vực | ✅ **Đã xong 100%**<br>*(Đã tích hợp vào weights)* |
-| **🧭 Agent 1 (Router & Planner)** | Qwen2.5-7B-Instruct + QLoRA ($r=64$) + NEFTune | Google Colab T4 | **Eval Loss = 0.0550**<br>JSON Schema Compliance 100% | ✅ **Đã xong 100%**<br>*(Đã tích hợp vào weights)* |
-| **✍️ Agent 3 (Summarizer & Critic)** | Qwen2.5-7B-Instruct + Dual QLoRA (Generator + Critic) | Google Colab T4 | 1.924 mẫu (SFT + DPO phạt lỗi bịa + Critic) | ✅ **Đã xong 100%**<br>*(Đã tích hợp vào weights)* |
-| **📝 Agent 5 (Report Writer)** | Qwen2.5-7B-Instruct + DoRA + rsLoRA + SFT 1 Epoch | Google Colab T4 | **Eval Loss = 0.0149**<br>**Token Accuracy = 99.6%** (85/85 steps) | ✅ **Đã xong 100%**<br>*(Đã tích hợp vào weights)* |
+| **⚖️ Cross-Encoder Reranker** | BAAI/bge-reranker-v2-m3 + LoRA ($r=16, \alpha=16$) | Kaggle Dual T4 | **nDCG@10 = 1.0000**<br>**MRR@10 = 1.0000** (Test 3 kịch bản: 100%) | ✅ **Hoàn thành 100%**<br>*(Đã tích hợp vào final_weights)* |
+| **📄 Agent 2 (Document Reader)** | microsoft/layoutlmv3-base + Focal Loss | Google Colab T4 | **Loss: 1.40 $\to$ 0.83**<br>Nhận diện Bảng, Công thức, Header | ✅ **Hoàn thành 100%**<br>*(Đã tích hợp vào final_weights)* |
+| **🛡️ Agent 4 (Fact-Checker NLI)** | BAAI/bge-reranker-v2-m3 + R-Drop + Focal Loss | Google Colab T4 | **Macro F1 = 1.0000 (100%)**<br>Calibrated Temp $T = 0.5$ | ✅ **Hoàn thành 100%**<br>*(Đã tích hợp vào final_weights)* |
+| **🔍 Embedding Model (BGE-M3)** | BAAI/bge-m3 + LoRA ($r=32$) + CachedMNRLoss | Kaggle Dual T4 | 1 Epoch chuẩn SOTA MoAI (~625 steps)<br>Hard Negatives đa lĩnh vực | ✅ **Hoàn thành 100%**<br>*(Đã tích hợp vào final_weights)* |
+| **🧭 Agent 1 (Router & Planner)** | Qwen2.5-7B-Instruct + QLoRA ($r=64$) + NEFTune | Google Colab T4 | **Eval Loss = 0.0550**<br>JSON Schema Compliance 100% | ✅ **Hoàn thành 100%**<br>*(Đã tích hợp vào final_weights)* |
+| **✍️ Agent 3 (Summarizer & Critic)** | Qwen2.5-7B-Instruct + Dual QLoRA (Generator + Critic) | Google Colab T4 | 1.924 mẫu (SFT + DPO phạt lỗi bịa + Critic) | ✅ **Hoàn thành 100%**<br>*(Đã tích hợp vào final_weights)* |
+| **📝 Agent 5 (Report Writer)** | Qwen2.5-7B-Instruct + DoRA + rsLoRA + SFT 1 Epoch | Google Colab T4 | **Eval Loss = 0.0149**<br>**Token Accuracy = 99.6%** (85/85 steps) | ✅ **Hoàn thành 100%**<br>*(Đã tích hợp vào final_weights)* |
 
 ---
 
@@ -81,30 +81,42 @@ Thực hiện theo tiêu chuẩn của **Turkish Legal RAG & MoAI**, đo lườn
 
 ---
 
-## 🛠️ IV. CẤU TRÚC THƯ MỤC DỰ ÁN ĐÃ HOÀN TẤT
+## 🛠️ IV. CẤU TRÚC THƯ MỤC TRỌNG SỐ VÀ MÔ HÌNH
 
 ```text
 training_lab/
 ├── README.md                                  # Báo cáo tổng thể & Bảng kết quả thực nghiệm
-├── final_weights/                             # 🏆 Kho lưu trữ tập trung toàn bộ 7 mô hình đã hoàn thành
-│   ├── Agent1_Router_Planner.zip              # 65 MB
-│   ├── Agent2_LayoutLMv3_DocLayNet.zip        # 4.38 GB
-│   ├── Agent3_Academic_Summarizer.zip         # 450 MB
-│   ├── Agent4_FactChecker_NLI.zip             # 1.79 GB
-│   ├── Embedding_LoRA_Best_DualT4.zip         # 378 MB
-│   └── Reranker_LoRA_Best_DualT4.zip          # 310 MB
+├── final_weights/                             # Kho lưu trữ tập trung toàn bộ 7 mô hình hoàn thiện
+│   ├── 01_agent1_router/                      # Adapter LoRA Router & Planner (r=64)
+│   ├── 02_agent2_reader/                      # LayoutLMv3 Base Visual Document Parser
+│   ├── 03_agent3_summarizer/                  # Dual-QLoRA Academic Summarizer & Critic
+│   ├── 04_agent4_fact_checker/                # Calibrated BGE NLI Head (Macro F1 = 1.0000)
+│   ├── 05_agent5_writer/                      # DoRA Academic Report Writer (99.6% Token Acc)
+│   ├── 06_embedding_bge_m3/                   # BGE-M3 MoAI Dense Retriever LoRA
+│   └── 07_reranker_bge_large/                 # CoREB Cross-Encoder Reranker LoRA
 │
-├── agent1_retrieval/weights/                  # Trọng số Agent 1 (Router QLoRA)
-├── agent2_reader/weights/                     # Trọng số Agent 2 (LayoutLMv3)
-├── agent3_summarizer/weights/                 # Trọng số Agent 3 (Generator & Critic QLoRA)
-├── agent4_fact_checker/weights/               # Trọng số Agent 4 (NLI Fact-Checker)
-├── agent5_writer/weights/                     # Trọng số Agent 5 (Report Writer QLoRA)
-│
-├── models/adapters/
-│   ├── embedding_lora/                        # Adapter BGE-M3 Dense Retriever
-│   └── reranker_lora/                         # Adapter BGE-Reranker-Large Cross-Encoder
+├── final_weights_bundle.zip                   # Gói lưu trữ nén tổng hợp 2.85 GB sẵn sàng triển khai
+├── agent1_retrieval/weights/                  # Trọng số huấn luyện Agent 1
+├── agent2_reader/weights/                     # Trọng số huấn luyện Agent 2
+├── agent3_summarizer/weights/                 # Trọng số huấn luyện Agent 3
+├── agent4_fact_checker/weights/               # Trọng số huấn luyện Agent 4
+├── agent5_writer/weights/                     # Trọng số huấn luyện Agent 5
 │
 └── evaluation/
     ├── run_ablation_benchmark.py              # Thử nghiệm Ablation Study đối chứng A1 -> A4
     └── world_class_benchmark.py               # Benchmark RAGTriad & RGB quốc tế
 ```
+
+---
+
+## ☁️ V. ĐỒNG BỘ HÓA ĐÁM MÂY GOOGLE DRIVE & LIÊN KẾT SUY LUẬN
+
+Toàn bộ gói trọng số phục vụ triển khai suy luận phân tán đã được đóng gói và xuất bản lên Google Drive:
+
+1. **Gói Trọng số Toàn diện 7 Mô hình (`final_weights_bundle.zip` - 2.85 GB)**:
+   - Thư mục Google Drive: [`1UPF13BNjxFFhd8YFv5PpuyfOR4G-VNte`](https://drive.google.com/drive/folders/1UPF13BNjxFFhd8YFv5PpuyfOR4G-VNte?usp=sharing)
+   - Phục vụ trực tiếp cho chế độ **`gpu_finetune`** và nhánh GPU của chế độ **`hybrid`** thông qua [`kaggle/kaggle_finetune_worker.ipynb`](../kaggle/kaggle_finetune_worker.ipynb).
+
+2. **Gói Trọng số Tiêu chuẩn 3 Adapter (`weights_bundle.zip`)**:
+   - Thư mục Google Drive: [`1upmXzTIlxpcCVGU8Vp9ZGV3xNa1yu-Q6`](https://drive.google.com/drive/folders/1upmXzTIlxpcCVGU8Vp9ZGV3xNa1yu-Q6?usp=sharing)
+   - Phục vụ cho chế độ **`gpu_ft`** trong các kịch bản kiểm thử đối chứng thực nghiệm (Ablation Baseline).

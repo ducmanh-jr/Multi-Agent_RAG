@@ -91,6 +91,8 @@ def probe_kaggle_worker(remote_url: Optional[str] = None, timeout: float = 3.0) 
             adapters = data.get("adapters") or ["router", "generator", "critic"]
             model_name = str(data.get("model") or data.get("base_model") or "")
             is_32b = "32b" in model_name.lower() or "qwq" in model_name.lower() or "qwen3-32b" in model_name.lower()
+            pipeline = str(data.get("pipeline") or "")
+            is_gpu_finetune = (pipeline == "gpu_finetune_7_models") or ("writer" in adapters) or ("qwen_cluster" in str(data.get("active_models", [])))
             return {
                 "online": True,
                 "url": url,
@@ -98,6 +100,7 @@ def probe_kaggle_worker(remote_url: Optional[str] = None, timeout: float = 3.0) 
                 "model": model_name,
                 "has_vllm_32b": is_32b,
                 "has_nli": bool(data.get("nli_loaded", True)),
+                "is_gpu_finetune": is_gpu_finetune,
             }
     except Exception:
         pass
@@ -161,7 +164,12 @@ def probe_all_capabilities(force_refresh: bool = False) -> dict[str, Any]:
             "used_today": gemini_used_today,
             "daily_limit": 1500,
         },
-        "kaggle_fn": {
+        "gpu_finetune": {
+            "online": kaggle_info["online"] and kaggle_info.get("is_gpu_finetune", True),
+            "url": kaggle_info["url"],
+            "adapters": kaggle_info["adapters"],
+        },
+        "gpu_ft": {
             "online": kaggle_info["online"],
             "url": kaggle_info["url"],
             "adapters": kaggle_info["adapters"],

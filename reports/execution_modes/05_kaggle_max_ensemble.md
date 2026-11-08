@@ -1,10 +1,10 @@
-# 🏆 Tùy Chọn 5: KAGGLE_MAX (Dual T4 32GB Ensemble)
+# 🏆 Tùy Chọn 6: GPU_MAX (Heavyweight 32B AWQ Tensor Parallelism)
 
-> **Mã Chế Độ**: `kaggle_max`  
-> **Thư Mục Mã Nguồn**: `main/modes/kaggle_max/`  
-> **Phần Cứng Mục Tiêu**: Kaggle Dual Tesla T4 (32GB VRAM Đầy Đủ)  
-> **Cơ Chế Cốt Lõi**: Bất đồng bộ `asyncio.gather` + Hội đồng 3 Giám khảo Độc lập (Đồng thuận 2/3)  
-> **Độ Trễ Trung Bình**: 890.0 ms / truy vấn  
+> **Mã Chế Độ**: `gpu_max`  
+> **Thư Mục Mã Nguồn**: [`main/modes/gpu_max/`](../../main/modes/gpu_max/) & [`kaggle/kaggle_max_32b_vllm.ipynb`](../../kaggle/kaggle_max_32b_vllm.ipynb)  
+> **Phần Cứng Mục Tiêu**: Kaggle Dual Tesla T4 (2 x 16GB = 32GB VRAM Đầy Đủ)  
+> **Cơ Chế Cốt Lõi**: Suy luận Song song Tensor Parallelism ($TP=2$) qua vLLM + Phân nhánh Chuỗi tư duy mở rộng (`/think` & `/no_think`)  
+> **Độ Trễ Trung Bình**: ~8.20s / truy vấn  
 > **Chỉ Số Đánh Giá**: Overall F1 = **0.945** | Faithfulness = **0.964** | Context Recall = **0.932**  
 
 ---
@@ -68,10 +68,11 @@ $$\sum_{k=1}^3 \mathbb{I}\left(v_k(c_i) == \text{SUPPORT}\right) \ge 2 \quad \te
 
 ---
 
-## 3. Bảng Ánh Xạ Mã Nguồn Trong `main/modes/kaggle_max/`
+## 3. Bảng Ánh Xạ Mã Nguồn Trong `main/modes/gpu_max/`
 
 | Tệp Mã Nguồn | Lớp / Hàm Chính | Vai Trò & Thuật Toán |
 | :--- | :--- | :--- |
-| `main/modes/kaggle_max/__init__.py` | `KaggleMaxEnsemblePipeline` | Khởi tạo kết nối mạng song song tới Kaggle Worker trên cả 2 GPU. |
-| `main/modes/kaggle_max/ensemble_verifier.py` | `ThreeJudgeConsensusCouncil` | Điều phối `asyncio.gather`, thu thập phiếu bầu và tính tỷ lệ đồng thuận. |
-| `kaggle/kaggle_server.py` | Endpoint `/api/factcheck` | Phục vụ suy luận đồng thời trên cả GPU 0 và GPU 1. |
+| `main/modes/gpu_max/__init__.py` | `GPUMaxPipeline` | Khởi tạo kết nối vLLM OpenAI API tới máy chủ GPU Dual T4 ($TP=2$). |
+| `main/modes/gpu_max/summarizer.py` | `GPUMaxSummarizer` | Kích hoạt chuỗi tư duy chuyên sâu `/think` với tham số `temperature=0.6`. |
+| `main/modes/gpu_max/fact_checker.py` | `GPUMaxFactChecker` | Thẩm định lô mệnh đề ở chế độ `/no_think` ($T=0.0$) để đảm bảo tính tất định. |
+| `kaggle/kaggle_max_32b_vllm.ipynb` | Worker vLLM | Khởi chạy máy chủ vLLM `Qwen2.5-32B-Instruct-AWQ` qua đường hầm Cloudflare Tunnel. |

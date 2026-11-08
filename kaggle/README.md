@@ -1,25 +1,44 @@
 # ☁️ Triển Khai Đám Mây & GPU Worker (`kaggle/`)
 
-Thư mục `kaggle/` chứa **3 Notebook `.ipynb` tự động hóa 100%** (tự động `git clone` từ GitHub và nạp trọng số từ kho lưu trữ / Google Drive) giúp bạn chạy toàn bộ dự án hoặc chạy máy chủ suy luận GPU từ xa trên **Kaggle (Dual Tesla T4 32GB VRAM)** hoặc **Google Colab**.
+Thư mục `kaggle/` cung cấp các Notebook `.ipynb` tự động hóa và máy chủ FastAPI phục vụ việc thực thi suy luận phân tán trên cụm phần cứng **Kaggle Dual Tesla T4 (2x16GB VRAM)** hoặc **Google Colab**.
 
 ---
 
-## 📓 Danh Sách 3 Notebook Trong `kaggle/`
+## 📓 Danh Sách Thành Phần Vận Hành Trong `kaggle/`
 
-| Tệp Notebook / Script | Mục đích sử dụng | Khi nào nên chạy? |
+| Tệp Notebook / Script | Trọng Tâm Kỹ Thuật | Chế Độ Phục Vụ |
 | :--- | :--- | :--- |
-| **[`01_Run_Full_Project_Cloud.ipynb`](01_Run_Full_Project_Cloud.ipynb)** | **Chạy TRỌN BỘ cả dự án trên đám mây**: Khởi chạy đồng thời cả GPU Worker (cổng `8001`) lẫn Web Workspace chính (`main/main.py --serve` cổng `8000`) và xuất đường link công khai `https://xxxx.trycloudflare.com/demo2/`. | Khi bạn muốn sử dụng toàn bộ Web UI + 6 chế độ trên trình duyệt mà **không cần bật máy cá nhân**. |
-| **[`kaggle_worker.ipynb`](kaggle_worker.ipynb)** | **GPU Worker cho chế độ `Kaggle FN` (Multi-LoRA 7B)**: Tự động `git clone` dự án, nạp 3 bộ QLoRA Adapter (`router`, `generator`, `critic`) từ `training_lab/weights_drive_bundle/` (hoặc Google Drive) và xuất link Cloudflare Tunnel. | Khi bạn chạy giao diện Web trên máy cá nhân (`localhost:8000/demo2/`) và muốn kết nối chế độ **`Kaggle FN`** hoặc **`Hybrid`**. |
-| **[`kaggle_max_32b_vllm.ipynb`](kaggle_max_32b_vllm.ipynb)** | **GPU Worker cho chế độ `Kaggle Max` (32B AWQ Reasoning)**: Chạy mô hình suy luận **`Qwen/Qwen3-32B-AWQ`** (hoặc `QwQ-32B-AWQ`) với Tensor Parallelism `TP=2` trên 2 GPU Tesla T4 (`32GB VRAM`) bằng `vLLM`. | Khi bạn muốn sử dụng sức mạnh suy luận chuỗi tư duy `<think>...</think>` của đại mô hình 32B trong chế độ **`Kaggle Max`** hoặc **`Hybrid`**. |
-| **[`kaggle_server.py`](kaggle_server.py)** | Mã nguồn FastAPI Server quản lý nạp mô hình Qwen2.5-7B 4-bit, chuyển đổi linh hoạt giữa các LoRA Adapters (`set_adapter`) và cung cấp các endpoint `/api/router`, `/api/summarize/generator`, `/api/summarize/critic`, `/api/nli`. | Được gọi tự động bởi các Notebook trên. |
+| **[`kaggle_finetune_worker.ipynb`](kaggle_finetune_worker.ipynb)** | **GPU Worker Kiến trúc Tinh chỉnh Toàn diện (Full 7-Model Suite)**: Tự động tải gói trọng số `final_weights_bundle.zip` (2.85 GB) từ Google Drive, phân bổ song song 7 mô hình lên 2x GPU T4 và thiết lập đường hầm bảo mật Cloudflare Tunnel. | **`gpu_finetune`** & **`hybrid`** |
+| **[`kaggle_finetune_server.py`](kaggle_finetune_server.py)** | Máy chủ FastAPI chuyên dụng điều phối song song: **GPU 0** đảm nhiệm Qwen2.5-7B (4-bit NF4) nạp động 4 LoRA (`router`, `generator`, `critic`, `writer`); **GPU 1** đảm nhiệm BGE NLI Verifier (Macro F1 = 1.0000), LayoutLMv3 Base, BGE-M3 MoAI LoRA và CoREB Reranker LoRA. | Khởi chạy tự động bởi `kaggle_finetune_worker.ipynb` |
+| **[`kaggle_worker.ipynb`](kaggle_worker.ipynb)** | **GPU Worker Kiến trúc Tinh chỉnh Tiêu chuẩn (Standard 3-Adapter Baseline)**: Nạp 3 bộ QLoRA (`router`, `generator`, `critic`) phục vụ mục đích kiểm thử đối chứng và đo lường thực nghiệm (Ablation Baseline). | **`gpu_ft`** |
+| **[`kaggle_server.py`](kaggle_server.py)** | Máy chủ FastAPI cho kiến trúc tinh chỉnh tiêu chuẩn 3 adapter. | Khởi chạy tự động bởi `kaggle_worker.ipynb` |
+| **[`kaggle_max_32b_vllm.ipynb`](kaggle_max_32b_vllm.ipynb)** | **GPU Worker Đại Mô hình Suy luận 32B**: Chạy `Qwen2.5-32B-Instruct-AWQ` qua engine suy luận vLLM với cấu hình Tensor Parallelism ($TP=2$), hỗ trợ phân nhánh chuỗi tư duy `<think>...</think>`. | **`gpu_max`** |
 
 ---
 
-## 🔗 Hướng Dẫn Kết Nối Với Máy Cá Nhân Trong 3 Bước
+## 📦 Phân Định Các Gói Trọng Số Lưu Trữ Trên Google Drive
 
-1. Mở 1 trong 3 file `.ipynb` ở trên trong **Kaggle Notebook** (chọn Accelerator: **GPU T4 x2** và bật **Internet: On**).
-2. Bấm **Run All** và đợi khoảng 2–3 phút đến khi màn hình in ra đường dẫn:
+Hệ thống phân tách rành mạch hai gói trọng số độc lập phục vụ các kiến trúc suy luận tương ứng:
+
+| Phân Loại Kiến Trúc | Google Drive Folder & Định Danh | Định Dạng Lưu Trữ | Danh Mục Mô Hình Thành Phần |
+| :--- | :--- | :--- | :--- |
+| **Kiến trúc Tinh chỉnh Toàn diện 7 Mô hình (Full 7-Model Suite)** | [`1UPF13BNjxFFhd8YFv5PpuyfOR4G-VNte`](https://drive.google.com/drive/folders/1UPF13BNjxFFhd8YFv5PpuyfOR4G-VNte?usp=sharing) | `final_weights_bundle.zip` (2.85 GB) | **Trọn bộ 7 mô hình chuyên sâu**: 01 Router LoRA, 02 LayoutLMv3 Base, 03 Dual-QLoRA Summarizer/Critic, 04 Calibrated BGE NLI Head (F1 = 1.0000), 05 DoRA Academic Writer (99.6%), 06 BGE-M3 Dense Retriever LoRA, 07 CoREB Cross-Encoder Reranker LoRA. |
+| **Kiến trúc Tinh chỉnh Tiêu chuẩn 3 Adapter (Standard 3-Adapter Baseline)** | [`1upmXzTIlxpcCVGU8Vp9ZGV3xNa1yu-Q6`](https://drive.google.com/drive/folders/1upmXzTIlxpcCVGU8Vp9ZGV3xNa1yu-Q6?usp=sharing) | `weights_bundle.zip` | 3 LoRA adapters tiêu chuẩn phục vụ thử nghiệm đối chứng (`router`, `generator`, `critic`). |
+
+---
+
+## 🔗 Quy Trình Kích Hoạt Vận Hành Phân Tán (3 Bước Chuẩn)
+
+1. Mở tệp **`kaggle_finetune_worker.ipynb`** trên môi trường **Kaggle Notebook**:
+   - Thiết lập phần cứng: **Accelerator: GPU T4 x 2**
+   - Thiết lập mạng: **Internet: On**
+2. Thực thi toàn bộ (**Run All**). Hệ thống tự động đồng bộ hóa trọng số, cấu hình bộ đệm GPU và xuất bản địa chỉ Cloudflare Tunnel:
    ```text
-   ✅ KAGGLE WORKER ONLINE: https://xxxx-yyyy-zzzz.trycloudflare.com
+   🚀 REMOTE_INFERENCE_URL CHO MULTI-AGENT RAG:
+       REMOTE_INFERENCE_URL=https://xxxx-xxxx-xxxx.trycloudflare.com
    ```
-3. Mở giao diện Web tại `http://localhost:8000/demo2/` (nếu dùng `02` hoặc `03`), dán đường dẫn trên vào mục **Kaggle GPU Tunnel URL** (hoặc cập nhật biến `REMOTE_INFERENCE_URL` trong `.env`).
+3. Cập nhật biến môi trường tại tệp [`.env`](../.env) ở máy trạm cục bộ:
+   ```env
+   REMOTE_INFERENCE_URL=https://xxxx-xxxx-xxxx.trycloudflare.com
+   ```
+   Hệ thống sẵn sàng kích hoạt các chế độ `gpu_finetune`, `hybrid` hoặc `gpu_ft`.
