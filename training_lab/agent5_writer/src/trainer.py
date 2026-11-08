@@ -75,6 +75,7 @@ def run_writer_sft_and_rpo_training(cfg: Agent5TrainingConfig):
         gradient_accumulation_steps=cfg.gradient_accumulation_steps,
         learning_rate=cfg.lr_sft,
         num_train_epochs=cfg.epochs_sft,
+        max_steps=cfg.max_steps if cfg.max_steps > 0 else -1,
         fp16=torch.cuda.is_available(),
         logging_steps=10,
         per_device_eval_batch_size=1,

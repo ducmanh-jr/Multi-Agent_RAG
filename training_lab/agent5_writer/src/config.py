@@ -25,6 +25,7 @@ class Agent5TrainingConfig:
 
     # Stage 1 SFT & Stage 2 RPO/DPO Schedule
     epochs_sft: int = 3
+    max_steps: int = -1
     epochs_dpo: int = 2
     lr_sft: float = 1.5e-4
     lr_dpo: float = 5e-6
