@@ -119,14 +119,7 @@ patch_sentence_transformers()
 
 from peft import LoraConfig, get_peft_model, TaskType
 
-try:
-    from training_lab.evaluation.ir_metrics import compute_recall_at_k, compute_mrr_at_k
-except Exception:
-    try:
-        from evaluation.ir_metrics import compute_recall_at_k, compute_mrr_at_k
-    except Exception:
-        compute_recall_at_k = None
-        compute_mrr_at_k = None
+
 
 
 def load_triplets_dataloader(jsonl_path: Path, batch_size: int = 8):
