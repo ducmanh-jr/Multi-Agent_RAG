@@ -86,7 +86,7 @@ Thực hiện theo tiêu chuẩn của **Turkish Legal RAG & MoAI**, đo lườn
 ```text
 training_lab/
 ├── README.md                                  # Báo cáo tổng thể & Bảng kết quả thực nghiệm
-├── finish/                                    # Kho lưu trữ các gói trọng số đã huấn luyện (.zip)
+├── final_weights/                             # 🏆 Kho lưu trữ tập trung toàn bộ 7 mô hình đã hoàn thành
 │   ├── Agent1_Router_Planner.zip              # 65 MB
 │   ├── Agent2_LayoutLMv3_DocLayNet.zip        # 4.38 GB
 │   ├── Agent3_Academic_Summarizer.zip         # 450 MB
