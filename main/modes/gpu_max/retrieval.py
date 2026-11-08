@@ -1,5 +1,5 @@
 """
-Kaggle Max Mode - Agentic Retrieval Agent (L3-L4 32B Reasoning on Dual T4).
+GPU Max Mode - Agentic Retrieval Agent (L3-L4 32B Reasoning on Dual T4).
 Features:
   - Uses fast /no_think mode on Qwen3-32B-AWQ for sub-query planning (avoids CoT latency during routing).
   - Strictly scopes to user-selected PDF (state["pdf_path"]) via load_or_parse_selected_pdf().
@@ -24,7 +24,7 @@ from utils.llm_client import llm_client
 
 
 class GPUMaxRetrievalAgent(BaseAgent):
-    """Retrieval Agent for Kaggle Max: 32B /no_think planner + Document-Scoped Hybrid RRF."""
+    """Retrieval Agent for GPU Max: 32B /no_think planner + Document-Scoped Hybrid RRF."""
 
     def __init__(self, max_internal_retry: int = 2):
         super().__init__(name="GPUMaxRetrievalAgent", max_internal_retry=max_internal_retry)
@@ -44,7 +44,7 @@ class GPUMaxRetrievalAgent(BaseAgent):
                         if line:
                             docs.append(json.loads(line))
             except Exception as e:
-                self.logger.warning(f"[Kaggle Max Retrieval] Corpus load failed: {e}")
+                self.logger.warning(f"[GPU Max Retrieval] Corpus load failed: {e}")
         self.corpus_docs = docs
         if docs:
             self.fts5_searcher.fit(docs)
@@ -62,12 +62,12 @@ class GPUMaxRetrievalAgent(BaseAgent):
         required_entities = list(state.get("required_entities") or local_plan.required_entities)
         top_k = int(state.get("top_k") or 8)
 
-        self.logger.info(f"[Kaggle Max Retrieval] 32B /no_think routing + Hybrid search for: '{query[:65]}'")
+        self.logger.info(f"[GPU Max Retrieval] 32B /no_think routing + Hybrid search for: '{query[:65]}'")
 
         # Fast /no_think 32B query decomposition on first pass if complex
         if self.settings.REMOTE_INFERENCE_URL and retry_count == 0 and local_plan.complexity == "HIGH":
             try:
-                res_32b = llm_client.call_kaggle_max_32b(
+                res_32b = llm_client.call_gpu_max_32b(
                     prompt=(
                         f"Phân tách câu hỏi nghiên cứu sau thành tối đa 3 câu truy vấn tìm kiếm con (sub_queries) "
                         f"ngắn gọn, chính xác: \"{query}\".\n"
@@ -82,7 +82,7 @@ class GPUMaxRetrievalAgent(BaseAgent):
                 if parsed_plan.sub_queries:
                     sub_queries = list(dict.fromkeys(parsed_plan.sub_queries + sub_queries))[:4]
             except Exception as exc:
-                self.logger.info(f"[Kaggle Max Retrieval] Using local Supervisor sub_queries ({exc})")
+                self.logger.info(f"[GPU Max Retrieval] Using local Supervisor sub_queries ({exc})")
 
         # 1. Scope strictly to user-selected PDF(s) if provided
         pdf_chunks: list[dict[str, Any]] = []
@@ -169,5 +169,3 @@ class GPUMaxRetrievalAgent(BaseAgent):
         }
 
 
-# Backward compatibility alias
-KaggleMaxRetrievalAgent = GPUMaxRetrievalAgent

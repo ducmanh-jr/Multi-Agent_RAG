@@ -1,8 +1,8 @@
-from modes.gpu_max.retrieval import GPUMaxRetrievalAgent, KaggleMaxRetrievalAgent
-from modes.gpu_max.reader import GPUMaxReaderAgent, KaggleMaxReaderAgent
-from modes.gpu_max.summarizer import GPUMaxSummarizerAgent, KaggleMaxSummarizerAgent
-from modes.gpu_max.fact_checker import GPUMaxFactCheckerAgent, KaggleMaxFactCheckerAgent
-from modes.gpu_max.writer import GPUMaxWriterAgent, KaggleMaxWriterAgent
+from modes.gpu_max.retrieval import GPUMaxRetrievalAgent
+from modes.gpu_max.reader import GPUMaxReaderAgent
+from modes.gpu_max.summarizer import GPUMaxSummarizerAgent
+from modes.gpu_max.fact_checker import GPUMaxFactCheckerAgent
+from modes.gpu_max.writer import GPUMaxWriterAgent
 
 __all__ = [
     'GPUMaxRetrievalAgent',
@@ -10,9 +10,4 @@ __all__ = [
     'GPUMaxSummarizerAgent',
     'GPUMaxFactCheckerAgent',
     'GPUMaxWriterAgent',
-    'KaggleMaxRetrievalAgent',
-    'KaggleMaxReaderAgent',
-    'KaggleMaxSummarizerAgent',
-    'KaggleMaxFactCheckerAgent',
-    'KaggleMaxWriterAgent',
 ]

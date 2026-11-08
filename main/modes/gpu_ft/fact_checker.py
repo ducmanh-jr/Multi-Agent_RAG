@@ -1,5 +1,5 @@
 """
-Kaggle FN Mode - Agentic Fact Checker Agent (L3 Multi-LoRA + Fine-Tuned NLI Specialist).
+GPU FT Mode - Agentic Fact Checker Agent (L3 Multi-LoRA + Fine-Tuned NLI Specialist).
 Combines:
   1. Deterministic Numerical & Date Guard.
   2. Remote Kaggle /api/factcheck endpoint running fine-tuned mDeBERTa-v3-base-xnli (agent4_nli)
@@ -71,7 +71,7 @@ class GPUFTFactCheckerAgent(BaseAgent):
         claims = split_answer_into_atomic_claims(answer, combined_units, existing_claims=raw_claims)
         full_context = "\n\n".join(str(u.get("text", "")) for u in combined_units[:8])
 
-        self.logger.info(f"[Kaggle FN FactChecker] Auditing {len(claims)} claims via fine-tuned NLI + 'critic' LoRA.")
+        self.logger.info(f"[GPU FT FactChecker] Auditing {len(claims)} claims via fine-tuned NLI + 'critic' LoRA.")
 
         verified: list[dict[str, Any]] = []
         rejected: list[dict[str, Any]] = []
@@ -126,10 +126,10 @@ class GPUFTFactCheckerAgent(BaseAgent):
                 if isinstance(fc_res, dict) and "verified_claims" in fc_res:
                     for vc in fc_res.get("verified_claims", []):
                         txt = vc.get("claim") or vc.get("claim_text") or str(vc)
-                        verified.append(ClaimCheckResult(claim_text=txt, status="SUPPORT", reason="Validated by Kaggle NLI + Critic LoRA").to_dict())
+                        verified.append(ClaimCheckResult(claim_text=txt, status="SUPPORT", reason="Validated by Remote NLI + Critic LoRA").to_dict())
                     for rc in fc_res.get("rejected_claims", []):
                         txt = rc.get("claim") or rc.get("claim_text") or str(rc)
-                        rejected.append(ClaimCheckResult(claim_text=txt, status="CONTRADICT", reason="Rejected by Kaggle NLI + Critic LoRA").to_dict())
+                        rejected.append(ClaimCheckResult(claim_text=txt, status="CONTRADICT", reason="Rejected by Remote NLI + Critic LoRA").to_dict())
                         gaps.append(EvidenceGap(missing_aspect=txt[:90], suggested_query=f"{query} {txt[:45]}").to_dict())
                 elif isinstance(fc_res, dict) and "is_supported" in fc_res:
                     unsup_list = fc_res.get("Unsupported_claims") or fc_res.get("unsupported_claims") or []
@@ -146,7 +146,7 @@ class GPUFTFactCheckerAgent(BaseAgent):
                     rejected.extend(det_r)
                     gaps.extend(det_g)
             except Exception as exc:
-                self.logger.warning(f"[Kaggle FN FactChecker] Fallback to deterministic verifier: {exc}")
+                self.logger.warning(f"[GPU FT FactChecker] Fallback to deterministic verifier: {exc}")
                 det_v, det_r, det_g = deterministic_verify_claims(pending_claims, combined_units, query=query)
                 verified.extend(det_v)
                 rejected.extend(det_r)
@@ -179,5 +179,3 @@ class GPUFTFactCheckerAgent(BaseAgent):
         }
 
 
-# Backward compatibility alias
-KaggleFNFactCheckerAgent = GPUFTFactCheckerAgent

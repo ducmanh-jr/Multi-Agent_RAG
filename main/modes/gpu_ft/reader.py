@@ -1,5 +1,5 @@
 """
-Kaggle FN Mode - Agentic Reader Agent (L3 Multi-LoRA Specialist).
+GPU FT Mode - Agentic Reader Agent (L3 Multi-LoRA Specialist).
 Converts ranked retrieved chunks from the selected PDF into SourceUnits and extracts
 structured Markdown tables on top hit pages.
 """
@@ -16,7 +16,7 @@ from core.tools import extract_table_or_equations_tool
 
 
 class GPUFTReaderAgent(BaseAgent):
-    """Reader Agent for Kaggle FN Mode: Ranked SourceUnit builder + Table Extractor."""
+    """Reader Agent for GPU FT Mode: Ranked SourceUnit builder + Table Extractor."""
 
     def __init__(self, max_internal_retry: int = 2):
         super().__init__(name="GPUFTReaderAgent", max_internal_retry=max_internal_retry)
@@ -26,7 +26,7 @@ class GPUFTReaderAgent(BaseAgent):
         retrieved_docs = state.get("retrieved_docs", []) or []
 
         self.logger.info(
-            f"[Kaggle FN Reader] Building SourceUnits from {len(retrieved_docs)} chunks "
+            f"[GPU FT Reader] Building SourceUnits from {len(retrieved_docs)} chunks "
             f"(pdf_path={os.path.basename(pdf_path) if pdf_path else 'None'})"
         )
 
@@ -95,5 +95,3 @@ class GPUFTReaderAgent(BaseAgent):
         }
 
 
-# Backward compatibility alias
-KaggleFNReaderAgent = GPUFTReaderAgent

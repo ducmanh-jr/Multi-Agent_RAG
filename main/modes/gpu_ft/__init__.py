@@ -1,8 +1,8 @@
-from modes.gpu_ft.retrieval import GPUFTRetrievalAgent, KaggleFNRetrievalAgent
-from modes.gpu_ft.reader import GPUFTReaderAgent, KaggleFNReaderAgent
-from modes.gpu_ft.summarizer import GPUFTSummarizerAgent, KaggleFNSummarizerAgent
-from modes.gpu_ft.fact_checker import GPUFTFactCheckerAgent, KaggleFNFactCheckerAgent
-from modes.gpu_ft.writer import GPUFTWriterAgent, KaggleFNWriterAgent
+from modes.gpu_ft.retrieval import GPUFTRetrievalAgent
+from modes.gpu_ft.reader import GPUFTReaderAgent
+from modes.gpu_ft.summarizer import GPUFTSummarizerAgent
+from modes.gpu_ft.fact_checker import GPUFTFactCheckerAgent
+from modes.gpu_ft.writer import GPUFTWriterAgent
 
 __all__ = [
     'GPUFTRetrievalAgent',
@@ -10,9 +10,4 @@ __all__ = [
     'GPUFTSummarizerAgent',
     'GPUFTFactCheckerAgent',
     'GPUFTWriterAgent',
-    'KaggleFNRetrievalAgent',
-    'KaggleFNReaderAgent',
-    'KaggleFNSummarizerAgent',
-    'KaggleFNFactCheckerAgent',
-    'KaggleFNWriterAgent',
 ]

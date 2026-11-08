@@ -1,5 +1,5 @@
 """
-Kaggle FN Mode - Writer Agent.
+GPU FT Mode - Writer Agent.
 Academic report generation utilizing remote GPU worker generation.
 """
 
@@ -12,7 +12,7 @@ from agents.agent5_writer.components.report_builder import build_academic_report
 
 
 class GPUFTWriterAgent(BaseAgent):
-    """Writer Agent for Kaggle Fine-Tuned mode."""
+    """Writer Agent for GPU Fine-Tuned mode."""
 
     def __init__(self, max_internal_retry: int = 2):
         super().__init__(name="GPUFTWriterAgent", max_internal_retry=max_internal_retry)
@@ -25,7 +25,7 @@ class GPUFTWriterAgent(BaseAgent):
         answer = state.get("answer", "")
         evidence_spans = state.get("evidence_spans", []) or []
 
-        self.logger.info(f"[Kaggle FN Writer] Formatting academic report for query: '{query}'")
+        self.logger.info(f"[GPU FT Writer] Formatting academic report for query: '{query}'")
 
         final_report, report_data = build_academic_report(
             query=query,
@@ -45,5 +45,3 @@ class GPUFTWriterAgent(BaseAgent):
         }
 
 
-# Backward compatibility alias
-KaggleFNWriterAgent = GPUFTWriterAgent

@@ -1,5 +1,5 @@
 """
-Kaggle FN Mode - Agentic Retrieval Agent (L3 Multi-LoRA Specialist).
+GPU FT Mode - Agentic Retrieval Agent (L3 Multi-LoRA Specialist).
 Leverages Remote Kaggle GPU Worker with Fine-Tuned 'router' (agent1_router) QLoRA:
   - Calls /api/router (or /generate with adapter='router') to obtain intent, sub_queries, alpha, top_k.
   - Dynamically scopes to user-selected PDF (state["pdf_path"]) via load_or_parse_selected_pdf().
@@ -30,7 +30,7 @@ ROUTER_TRAINING_SYSTEM_PROMPT = (
 
 
 class GPUFTRetrievalAgent(BaseAgent):
-    """Retrieval Agent powered by Kaggle Fine-Tuned Router QLoRA ('router' / 'agent1_router')."""
+    """Retrieval Agent powered by GPU Fine-Tuned Router QLoRA ('router' / 'agent1_router')."""
 
     def __init__(self, max_internal_retry: int = 2):
         super().__init__(name="GPUFTRetrievalAgent", max_internal_retry=max_internal_retry)
@@ -50,7 +50,7 @@ class GPUFTRetrievalAgent(BaseAgent):
                         if line:
                             docs.append(json.loads(line))
             except Exception as e:
-                self.logger.warning(f"[Kaggle FN Retrieval] Corpus load failed: {e}")
+                self.logger.warning(f"[GPU FT Retrieval] Corpus load failed: {e}")
         self.corpus_docs = docs
         if docs:
             self.fts5_searcher.fit(docs)
@@ -70,7 +70,7 @@ class GPUFTRetrievalAgent(BaseAgent):
         top_k = int(state.get("top_k") or local_plan.top_k)
         intent = local_plan.intent
 
-        self.logger.info(f"[Kaggle FN Retrieval] Calling fine-tuned 'router' adapter for: '{query[:65]}'")
+        self.logger.info(f"[GPU FT Retrieval] Calling fine-tuned 'router' adapter for: '{query[:65]}'")
 
         if self.settings.REMOTE_INFERENCE_URL and retry_count == 0:
             try:
@@ -90,7 +90,7 @@ class GPUFTRetrievalAgent(BaseAgent):
                 top_k = lora_plan.top_k
                 intent = lora_plan.intent
             except Exception as e:
-                self.logger.warning(f"[Kaggle FN Retrieval] Remote router adapter fallback to Supervisor ({e})")
+                self.logger.warning(f"[GPU FT Retrieval] Remote router adapter fallback to Supervisor ({e})")
 
         # 1. Scope strictly to user-selected PDF if provided
         pdf_chunks = load_or_parse_selected_pdf(pdf_path) if pdf_path else []
@@ -177,5 +177,3 @@ class GPUFTRetrievalAgent(BaseAgent):
         }
 
 
-# Backward compatibility alias
-KaggleFNRetrievalAgent = GPUFTRetrievalAgent

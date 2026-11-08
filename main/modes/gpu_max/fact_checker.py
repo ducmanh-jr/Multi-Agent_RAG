@@ -1,5 +1,5 @@
 """
-Kaggle Max Mode - Batch 32B Reasoning Fact Checker Agent (L3-L4 on Dual T4).
+GPU Max Mode - Batch 32B Reasoning Fact Checker Agent (L3-L4 on Dual T4).
 Combines:
   1. Deterministic Numerical & Date Guard.
   2. Single-Call Batch CoT Verification on Qwen3-32B-AWQ / QwQ-32B-AWQ.
@@ -72,7 +72,7 @@ class GPUMaxFactCheckerAgent(BaseAgent):
         claims = split_answer_into_atomic_claims(answer, combined_units, existing_claims=raw_claims)
         full_context = "\n\n".join(str(u.get("text", "")) for u in combined_units[:8])
 
-        self.logger.info(f"[Kaggle Max FactChecker] Batch 32B CoT validation on {len(claims)} claims.")
+        self.logger.info(f"[GPU Max FactChecker] Batch 32B CoT validation on {len(claims)} claims.")
 
         verified: list[dict[str, Any]] = []
         rejected: list[dict[str, Any]] = []
@@ -115,7 +115,7 @@ class GPUMaxFactCheckerAgent(BaseAgent):
                 f'Chỉ trả về JSON: {{"results": [{{"claim_id": "claim_1", "status": "SUPPORT"|"CONTRADICT"|"NOT_ENOUGH_INFO", "rationale": "..."}}]}}'
             )
             try:
-                res_32b = llm_client.call_kaggle_max_32b(
+                res_32b = llm_client.call_gpu_max_32b(
                     prompt=batch_prompt,
                     enable_thinking=False,  # Fast batch judgment
                     temperature=0.1,
@@ -174,5 +174,3 @@ class GPUMaxFactCheckerAgent(BaseAgent):
         }
 
 
-# Backward compatibility alias
-KaggleMaxFactCheckerAgent = GPUMaxFactCheckerAgent

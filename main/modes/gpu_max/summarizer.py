@@ -1,5 +1,5 @@
 """
-Kaggle Max Mode - Agentic 32B Reasoning Summarizer Agent (L3-L4 on Dual Tesla T4 TP=2).
+GPU Max Mode - Agentic 32B Reasoning Summarizer Agent (L3-L4 on Dual Tesla T4 TP=2).
 Deploys Qwen/Qwen3-32B-AWQ (or QwQ-32B-AWQ) with /think Chain-of-Thought reasoning:
   - Streams <think>...</think> reasoning steps into thinking_trace & reasoning_trace for UI display.
   - Synthesizes deeply reasoned answers with [1], [2] citations and self-critique.
@@ -43,14 +43,14 @@ class GPUMaxSummarizerAgent(BaseAgent):
         clean_q = query.strip()
         is_ood, ood_reason = check_out_of_domain(clean_q, source_units)
         if is_ood:
-            self.logger.info(f"[Kaggle Max Summarizer] Zero-Hallucination Guard triggered: {ood_reason}")
+            self.logger.info(f"[GPU Max Summarizer] Zero-Hallucination Guard triggered: {ood_reason}")
             res = build_out_of_domain_response(clean_q, model_family="qwen3_32b_awq")
             res["thinking_trace"] = f"<think>Phát hiện câu hỏi nằm ngoài phạm vi tài liệu ({ood_reason}). Kích hoạt phản hồi Zero-Hallucination Honest Refusal.</think>"
             trace = self.log_action("gpu_max_summarization_completed", {"status": "out_of_domain", "reason": ood_reason})
             res["reasoning_trace"] = [trace]
             return res
 
-        self.logger.info(f"[Kaggle Max Summarizer] 32B /think CoT reasoning on Dual T4 for: '{query[:65]}'")
+        self.logger.info(f"[GPU Max Summarizer] 32B /think CoT reasoning on Dual T4 for: '{query[:65]}'")
 
         context_str, _ = pack_context_by_token_budget(source_units, max_tokens=6000)
 
@@ -84,7 +84,7 @@ YÊU CẦU TRẢ VỀ ĐÚNG ĐỊNH DẠNG JSON:
 
         if self.settings.REMOTE_INFERENCE_URL:
             try:
-                res_32b = llm_client.call_kaggle_max_32b(
+                res_32b = llm_client.call_gpu_max_32b(
                     prompt=prompt,
                     enable_thinking=True,  # Deep /think CoT mode for 32B synthesis!
                     temperature=0.2,
@@ -107,12 +107,12 @@ YÊU CẦU TRẢ VỀ ĐÚNG ĐỊNH DẠNG JSON:
                 elif res_32b.get("text"):
                     answer = str(res_32b["text"]).strip()
             except Exception as e:
-                self.logger.warning(f"[Kaggle Max Summarizer] Remote 32B GPU error: {e}")
+                self.logger.warning(f"[GPU Max Summarizer] Remote 32B GPU error: {e}")
 
         if not answer or len(answer.strip()) < 50 or "chế độ dự phòng" in answer:
-            self.logger.warning("[Kaggle Max Summarizer] Remote 32B GPU offline/timeout, falling back to High-Precision CPU Engine.")
+            self.logger.warning("[GPU Max Summarizer] Remote 32B GPU offline/timeout, falling back to High-Precision CPU Engine.")
             res = self.cpu_engine.run(state)
-            res["generator_model_family"] = "kaggle_max_cpu_fallback"
+            res["generator_model_family"] = "gpu_max_cpu_fallback"
             return res
 
         evidence_spans: list[dict[str, Any]] = []
@@ -157,5 +157,3 @@ YÊU CẦU TRẢ VỀ ĐÚNG ĐỊNH DẠNG JSON:
         }
 
 
-# Backward compatibility alias
-KaggleMaxSummarizerAgent = GPUMaxSummarizerAgent

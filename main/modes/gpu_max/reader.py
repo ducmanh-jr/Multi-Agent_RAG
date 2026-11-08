@@ -1,5 +1,5 @@
 """
-Kaggle Max Mode - Agentic Reader Agent (L3-L4 32B Reasoning on Dual T4).
+GPU Max Mode - Agentic Reader Agent (L3-L4 32B Reasoning on Dual T4).
 Converts ranked retrieved chunks from the selected PDF into SourceUnits and extracts
 structured Markdown tables on top hit pages.
 """
@@ -16,7 +16,7 @@ from core.tools import extract_table_or_equations_tool
 
 
 class GPUMaxReaderAgent(BaseAgent):
-    """Reader Agent for Kaggle Max Mode: Ranked SourceUnit builder + Table Extractor."""
+    """Reader Agent for GPU Max Mode: Ranked SourceUnit builder + Table Extractor."""
 
     def __init__(self, max_internal_retry: int = 2):
         super().__init__(name="GPUMaxReaderAgent", max_internal_retry=max_internal_retry)
@@ -27,7 +27,7 @@ class GPUMaxReaderAgent(BaseAgent):
         retrieved_docs = state.get("retrieved_docs", []) or []
 
         self.logger.info(
-            f"[Kaggle Max Reader] Building SourceUnits from {len(retrieved_docs)} chunks "
+            f"[GPU Max Reader] Building SourceUnits from {len(retrieved_docs)} chunks "
             f"(pdf_paths={len(pdf_paths)})"
         )
 
@@ -97,5 +97,3 @@ class GPUMaxReaderAgent(BaseAgent):
         }
 
 
-# Backward compatibility alias
-KaggleMaxReaderAgent = GPUMaxReaderAgent

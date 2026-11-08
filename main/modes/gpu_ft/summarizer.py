@@ -1,5 +1,5 @@
 """
-Kaggle FN Mode - Agentic Summarizer Agent (L3 Multi-LoRA Specialist).
+GPU FT Mode - Agentic Summarizer Agent (L3 Multi-LoRA Specialist).
 Implements the full Generator ('generator') -> Critic ('critic') -> Action self-correction loop
 trained in training_lab/agent3_summarizer/Code/node.py:
   - Uses exact TRAINING_LAB_GENERATOR_SYSTEM_PROMPT and TRAINING_LAB_CRITIC_SYSTEM_PROMPT.
@@ -44,15 +44,15 @@ class GPUFTSummarizerAgent(BaseAgent):
         source_units = state.get("source_units", []) or []
 
         self.logger.info(
-            f"[Kaggle FN Summarizer] Running Multi-LoRA Generator -> Critic loop for: '{query[:65]}' "
+            f"[GPU FT Summarizer] Running Multi-LoRA Generator -> Critic loop for: '{query[:65]}' "
             f"({len(source_units)} units)"
         )
 
         clean_q = query.strip()
         is_ood, ood_reason = check_out_of_domain(clean_q, source_units)
         if is_ood:
-            self.logger.info(f"[Kaggle FN Summarizer] Zero-Hallucination Guard triggered: {ood_reason}")
-            res = build_out_of_domain_response(clean_q, model_family="kaggle_fn_guard")
+            self.logger.info(f"[GPU FT Summarizer] Zero-Hallucination Guard triggered: {ood_reason}")
+            res = build_out_of_domain_response(clean_q, model_family="gpu_ft_guard")
             trace = self.log_action("gpu_ft_summarization_completed", {"status": "out_of_domain", "reason": ood_reason})
             res["reasoning_trace"] = [trace]
             return res
@@ -122,11 +122,11 @@ class GPUFTSummarizerAgent(BaseAgent):
                 )
                 critic_out = SummarizerCriticOutput.from_dict(critic_dict)
             except Exception as e:
-                self.logger.warning(f"[Kaggle FN Summarizer] Remote tunnel offline ({e}), using local grounded synthesis.")
+                self.logger.warning(f"[GPU FT Summarizer] Remote tunnel offline ({e}), using local grounded synthesis.")
                 break
 
             self.logger.info(
-                f"[Kaggle FN Critic] Pass {internal_attempts}/{self.max_internal_retry}: "
+                f"[GPU FT Critic] Pass {internal_attempts}/{self.max_internal_retry}: "
                 f"is_supported={critic_out.is_supported}, action={critic_out.action}, conf={critic_out.confidence}"
             )
 
@@ -142,9 +142,9 @@ class GPUFTSummarizerAgent(BaseAgent):
                 )
 
         if not current_answer or len(current_answer.strip()) < 50 or "chế độ dự phòng" in current_answer:
-            self.logger.warning("[Kaggle FN Summarizer] Remote GPU offline/timeout, falling back to High-Precision CPU Engine.")
+            self.logger.warning("[GPU FT Summarizer] Remote GPU offline/timeout, falling back to High-Precision CPU Engine.")
             res = self.cpu_engine.run(state)
-            res["generator_model_family"] = "kaggle_fn_cpu_fallback"
+            res["generator_model_family"] = "gpu_ft_cpu_fallback"
             return res
 
         # Build structured EvidenceSpans & AtomicClaims
@@ -202,5 +202,3 @@ class GPUFTSummarizerAgent(BaseAgent):
         }
 
 
-# Backward compatibility alias
-KaggleFNSummarizerAgent = GPUFTSummarizerAgent

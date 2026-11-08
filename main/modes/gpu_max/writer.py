@@ -1,5 +1,5 @@
 """
-Kaggle Max Mode - Writer Agent.
+GPU Max Mode - Writer Agent.
 Comprehensive Scientific Paper and Report Generator on Dual T4 GPUs.
 """
 
@@ -12,7 +12,7 @@ from agents.agent5_writer.components.report_builder import build_academic_report
 
 
 class GPUMaxWriterAgent(BaseAgent):
-    """Writer Agent for Kaggle Max: Comprehensive scholarly paper builder."""
+    """Writer Agent for GPU Max: Comprehensive scholarly paper builder."""
 
     def __init__(self, max_internal_retry: int = 2):
         super().__init__(name="GPUMaxWriterAgent", max_internal_retry=max_internal_retry)
@@ -25,7 +25,7 @@ class GPUMaxWriterAgent(BaseAgent):
         answer = state.get("answer", "")
         evidence_spans = state.get("evidence_spans", []) or []
 
-        self.logger.info(f"[Kaggle Max Writer] Synthesizing full paper for: '{query}'")
+        self.logger.info(f"[GPU Max Writer] Synthesizing full paper for: '{query}'")
 
         final_report, report_data = build_academic_report(
             query=query,
@@ -45,5 +45,3 @@ class GPUMaxWriterAgent(BaseAgent):
         }
 
 
-# Backward compatibility alias
-KaggleMaxWriterAgent = GPUMaxWriterAgent
