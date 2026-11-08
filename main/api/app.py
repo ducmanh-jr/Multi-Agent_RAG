@@ -712,6 +712,8 @@ def set_agent_modes(req: SetAgentModesRequest):
             return "cpu_max"
         elif m in ["gpu_ft", "gpuft", "ft", "kaggle_fn", "fn"]:
             return "gpu_ft"
+        elif m in ["gpu_finetune", "finetune", "gpufinetune", "gpu_ft_new"]:
+            return "gpu_finetune"
         elif m in ["gpu_max", "gpumax", "kaggle_max", "kaggle", "model"]:
             return "gpu_max"
         elif m in ["hybrid", "auto", "optimal"]:
