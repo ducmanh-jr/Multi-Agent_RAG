@@ -83,7 +83,7 @@ def patch_environment():
         m_bnb_nn.modules = types.ModuleType("bitsandbytes.nn.modules")
         m_bnb_nn.modules.__spec__ = importlib.machinery.ModuleSpec("bitsandbytes.nn.modules", None)
         m_bnb.nn = m_bnb_nn
-        m_bnb.__version__ = "0.44.1"
+        m_bnb.__version__ = "0.47.0"
         sys.modules["bitsandbytes"] = m_bnb
         sys.modules["bitsandbytes.nn"] = m_bnb_nn
         sys.modules["bitsandbytes.nn.modules"] = m_bnb_nn.modules

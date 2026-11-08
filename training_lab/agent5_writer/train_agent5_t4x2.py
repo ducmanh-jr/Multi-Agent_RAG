@@ -52,7 +52,7 @@ def patch_environment():
         m_bnb_nn.modules = types.ModuleType("bitsandbytes.nn.modules")
         m_bnb_nn.modules.__spec__ = importlib.machinery.ModuleSpec("bitsandbytes.nn.modules", None)
         m_bnb.nn = m_bnb_nn
-        m_bnb.__version__ = "0.44.1"
+        m_bnb.__version__ = "0.47.0"
         sys.modules["bitsandbytes"] = m_bnb
         sys.modules["bitsandbytes.nn"] = m_bnb_nn
         sys.modules["bitsandbytes.nn.modules"] = m_bnb_nn.modules
@@ -67,7 +67,7 @@ def patch_environment():
                 return _orig_meta_version(distribution_name)
             except Exception:
                 if distribution_name == "bitsandbytes":
-                    return "0.44.1"
+                    return "0.47.0"
                 raise
         importlib.metadata.version = _safe_meta_version
     except Exception:

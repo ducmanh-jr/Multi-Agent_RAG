@@ -1,0 +1,10 @@
+{
+  "eval_loss": 0.020715663209557533,
+  "eval_ndcg_10": 1.0,
+  "eval_mrr_10": 1.0,
+  "eval_map_10": 10.0,
+  "eval_runtime": 170.6662,
+  "eval_samples_per_second": 17.578,
+  "eval_steps_per_second": 0.551,
+  "epoch": 2.997177798682973
+}
