@@ -174,7 +174,7 @@ def run_writer_sft_and_rpo_training(cfg: Agent5TrainingConfig):
     dpo_file = cfg.dataset_dir / "writer_dpo.jsonl"
     dpo_successful = False
     dpo_trainer_inst = None
-    if dpo_file.exists():
+    if dpo_file.exists() and cfg.epochs_dpo > 0:
         try:
             print("🎯 [Agent 5 Writer] Starting Stage 2 RPO/DPO Citation Alignment...")
             train_dpo, val_dpo = load_writer_dpo_dataset(dpo_file, seed=cfg.seed)
@@ -208,6 +208,8 @@ def run_writer_sft_and_rpo_training(cfg: Agent5TrainingConfig):
             dpo_successful = True
         except Exception as e:
             print(f"ℹ️ [Agent 5 Writer] DPO notice ({e}). Lưu trọng số SFT hoàn chỉnh.")
+    else:
+        print("⏩ [Agent 5 Writer] Bỏ qua Stage 2 DPO theo yêu cầu (epochs_dpo = 0). Tiến hành đóng gói mô hình SFT.")
 
     active_trainer = dpo_trainer_inst if dpo_successful else sft_trainer
     active_trainer.save_model(str(cfg.output_dir))
