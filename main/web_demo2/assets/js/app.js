@@ -3178,14 +3178,7 @@ document.addEventListener("DOMContentLoaded", () => {
       return `<button class="inline-citation-badge" data-ev="${evIdx}"${pageAttr}${docAttr} title="Nhấn để mở và nhảy đến Trang ${pageNum || 1} của tài liệu">[${num}] ${escapeHtml(shortName)}${pageInfo}</button>`;
     });
 
-    // 6b. Direct Page References: (Trang 4), *(Trang 4)*, (trang 4), (Trang 4, 5)
-    html = html.replace(/(?:\*|_)?\(([Tt]rang|\bpage)\s+(\d+(?:[,\s]+\d+)*)\)(?:\*|_)?/gi, (match, prefix, numList) => {
-      const pageNums = numList.match(/\d+/g) || [];
-      if (!pageNums.length) return match;
-      return " " + pageNums.map(p => 
-        `<button class="inline-page-badge" data-page="${p}" title="Nhấn để mở tài liệu và nhảy đến Trang ${p}">📄 Trang ${p}</button>`
-      ).join(" ") + " ";
-    });
+    // 6b. Direct Page References: disabled by user request
 
     // 7. Structured List Parsing with Lookahead & Tag Symmetry
     const lines = html.split(/\r?\n/);

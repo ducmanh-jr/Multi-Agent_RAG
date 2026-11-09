@@ -2337,7 +2337,7 @@ body {
 }
 /* Direct Page Badge (e.g. Trang 4, Trang 476) */
 .inline-page-badge {
-  display: inline-flex;
+  display: none !important;
   align-items: center;
   gap: 3px;
   font-family: inherit;
