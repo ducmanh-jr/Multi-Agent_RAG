@@ -23,6 +23,7 @@ if hasattr(sys.stdout, "reconfigure"):
 import time
 from typing import Any, Optional
 from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import httpx
@@ -104,7 +105,9 @@ def spawn_worker_finetune():
         "--port", "8001",
         "--app-dir", os.path.join(PROJECT_DIR, "kaggle"),
     ]
-    _worker_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    log_file_path = os.path.join(PROJECT_DIR, "kaggle", "worker_finetune.log")
+    worker_log = open(log_file_path, "a", encoding="utf-8", errors="ignore")
+    _worker_process = subprocess.Popen(cmd, stdout=worker_log, stderr=subprocess.STDOUT)
 
 
 def spawn_worker_max():
@@ -124,7 +127,18 @@ def spawn_worker_max():
         "--max-model-len", "8192",
         "--port", "8002",
     ]
-    _vllm_process = subprocess.Popen(cmd)
+    log_file_path = os.path.join(PROJECT_DIR, "kaggle", "worker_max.log")
+    vllm_log = open(log_file_path, "a", encoding="utf-8", errors="ignore")
+    _vllm_process = subprocess.Popen(cmd, stdout=vllm_log, stderr=subprocess.STDOUT)
+
+
+async def is_worker_healthy(url: str) -> bool:
+    """Check if worker responds 200 OK immediately."""
+    try:
+        r = await _http_client.get(f"{url}/health", timeout=2.0)
+        return r.status_code == 200
+    except Exception:
+        return False
 
 
 async def wait_for_worker_health(url: str, max_retries: int = 60) -> bool:
@@ -132,7 +146,7 @@ async def wait_for_worker_health(url: str, max_retries: int = 60) -> bool:
     health_url = f"{url}/health"
     for i in range(max_retries):
         try:
-            r = await _http_client.get(health_url, timeout=2.0)
+            r = await _http_client.get(health_url, timeout=2.5)
             if r.status_code == 200:
                 print(f"[Supervisor] Worker at {url} is ONLINE!")
                 return True
@@ -181,6 +195,23 @@ async def health():
     }
 
 
+@app.get("/api/admin/logs")
+async def get_logs():
+    res = {}
+    for log_name in ["supervisor.log", "worker_finetune.log", "worker_max.log"]:
+        lp = os.path.join(PROJECT_DIR, "kaggle", log_name)
+        if os.path.exists(lp):
+            try:
+                with open(lp, "r", encoding="utf-8", errors="ignore") as f:
+                    lines = f.readlines()
+                    res[log_name] = "".join(lines[-50:])
+            except Exception as e:
+                res[log_name] = f"Error reading log: {e}"
+        else:
+            res[log_name] = "Not found"
+    return res
+
+
 @app.post("/api/admin/switch_mode")
 async def switch_mode(req: SwitchModeRequest):
     target = req.target_mode.lower().strip()
@@ -192,7 +223,11 @@ async def switch_mode(req: SwitchModeRequest):
         target = "gpu_finetune"
 
     if _state["active_mode"] == target:
-        return {"status": "already_active", "active_mode": target, "message": f"Chế độ {target} đang hoạt động."}
+        # Check if the active worker is actually alive and healthy!
+        alive = await is_worker_healthy(get_active_worker_url())
+        if alive:
+            return {"status": "already_active", "active_mode": target, "message": f"Chế độ {target} đang hoạt động."}
+        print(f"[Supervisor] Mode {target} was active but worker is dead! Respawning...")
 
     if _state["is_switching"]:
         raise HTTPException(status_code=429, detail="Hệ thống đang trong quá trình tráo đổi VRAM, xin vui lòng chờ.")
@@ -206,11 +241,16 @@ async def switch_mode(req: SwitchModeRequest):
             online = await wait_for_worker_health("http://127.0.0.1:8002", max_retries=60)
         else:
             spawn_worker_finetune()
-            online = await wait_for_worker_health("http://127.0.0.1:8001", max_retries=45)
+            online = await wait_for_worker_health("http://127.0.0.1:8001", max_retries=60)
 
         if not online:
             _state["is_switching"] = False
-            _state["switch_message"] = f"Lỗi khởi động mô hình {target} sau 90 giây."
+            _state["switch_message"] = f"Lỗi khởi động mô hình {target} sau 120 giây."
+            # Fallback: if gpu_max failed, restore gpu_finetune so cluster doesn't stay dead!
+            if target == "gpu_max":
+                print("[Supervisor] Fallback: Respawning Worker A (gpu_finetune)...")
+                spawn_worker_finetune()
+                _state["active_mode"] = "gpu_finetune"
             raise HTTPException(status_code=500, detail=_state["switch_message"])
 
         _state["active_mode"] = target
@@ -226,6 +266,11 @@ async def switch_mode(req: SwitchModeRequest):
     except Exception as e:
         _state["is_switching"] = False
         _state["switch_message"] = f"Lỗi tráo đổi: {e}"
+        # Ensure worker A is restored if dead
+        if not await is_worker_healthy("http://127.0.0.1:8001"):
+            print("[Supervisor] Recovery: Respawning Worker A...")
+            spawn_worker_finetune()
+            _state["active_mode"] = "gpu_finetune"
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -283,7 +328,16 @@ async def proxy_all(request: Request, path: str):
         )
         return Response(content=resp.content, status_code=resp.status_code, headers=dict(resp.headers))
     except Exception as e:
-        return JSONResponse(status_code=502, content={"error": f"Không thể kết nối đến Worker nội bộ ({e})"})
+        # If worker is unreachable, auto-respawn if dead
+        alive = await is_worker_healthy(active_url)
+        if not alive and not _state["is_switching"]:
+            print(f"[Supervisor] Worker {active_url} is dead on request to /{path}! Respawning Worker A...")
+            spawn_worker_finetune()
+            _state["active_mode"] = "gpu_finetune"
+        return JSONResponse(
+            status_code=503,
+            content={"error": f"Máy chủ GPU Worker đang khởi động hoặc nạp lại ({e}). Vui lòng thử lại sau vài giây."}
+        )
 
 
 if __name__ == "__main__":

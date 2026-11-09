@@ -1982,6 +1982,11 @@ async def create_run(req: CreateRunRequest):
                 step_start_time = time.time()
 
                 for chunk in graph.stream(initial_state, stream_mode="updates"):
+                    chk = db.get_run(run_id)
+                    if chk and chk.get("status") == "cancelled":
+                        logger.info(f"[RunCancel] Run {run_id} was cancelled by user. Terminating graph stream.")
+                        return final_res, accumulated_traces
+
                     now = time.time()
                     step_duration = round(max(0.1, now - step_start_time), 1)
                     step_start_time = now
@@ -2008,6 +2013,10 @@ async def create_run(req: CreateRunRequest):
 
             loop = asyncio.get_event_loop()
             final_res, accumulated_traces = await loop.run_in_executor(None, _run_streaming)
+
+            current_run = db.get_run(run_id)
+            if current_run and current_run.get("status") == "cancelled":
+                return
 
             db.update_run_result(
                 run_id=run_id,

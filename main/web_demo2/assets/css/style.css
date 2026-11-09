@@ -3519,7 +3519,10 @@ body.dark .slash-command-footer kbd {
    OFFLINE / UNCONNECTED DIMMED BUTTONS (MỜ XÁM NHẠT KHI CHƯA HOẠT ĐỘNG)
    ========================================================================== */
 .quick-select-btn.mode-offline-dimmed,
-.quick-btn-split.mode-offline-dimmed .quick-select-btn.split-main {
+.quick-select-btn.mode-offline-dimmed.active,
+.quick-btn-split.mode-offline-dimmed,
+.quick-btn-split.mode-offline-dimmed .quick-select-btn.split-main,
+.quick-btn-split.mode-offline-dimmed .quick-select-btn.split-main.active {
   opacity: 0.35 !important;
   cursor: not-allowed !important;
   background-color: #f1f5f9 !important;
@@ -3530,7 +3533,9 @@ body.dark .slash-command-footer kbd {
 }
 
 .quick-select-btn.mode-offline-dimmed:hover,
-.quick-btn-split.mode-offline-dimmed .quick-select-btn.split-main:hover {
+.quick-select-btn.mode-offline-dimmed.active:hover,
+.quick-btn-split.mode-offline-dimmed .quick-select-btn.split-main:hover,
+.quick-btn-split.mode-offline-dimmed .quick-select-btn.split-main.active:hover {
   background-color: #f1f5f9 !important;
   border-color: #cbd5e1 !important;
   color: #94a3b8 !important;

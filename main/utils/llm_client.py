@@ -443,7 +443,7 @@ class UnifiedLLMClient:
           3. /v1/chat/completions (vLLM Dual T4 server for Qwen3-32B-AWQ / QwQ-32B-AWQ)
         """
         base_url = self.settings.REMOTE_INFERENCE_URL.rstrip("/")
-        timeout = min(2.0, float(self.settings.REMOTE_TIMEOUT_SECONDS))
+        timeout = max(30.0, float(self.settings.REMOTE_TIMEOUT_SECONDS or 90.0))
 
         # Circuit Breaker: Fail fast in 0.001s if remote recently timed out
         now = time.time()
@@ -471,7 +471,7 @@ class UnifiedLLMClient:
                         )
                     return str(result)
             except (httpx.TimeoutException, httpx.ConnectError) as exc:
-                self._circuit_breaker_until = time.time() + 60.0
+                self._circuit_breaker_until = time.time() + 10.0
                 raise RuntimeError(f"Không thể kết nối tới Kaggle GPU Worker tại {base_url}.") from exc
             except Exception:
                 pass
@@ -484,7 +484,7 @@ class UnifiedLLMClient:
                     result = resp.json()
                     return result.get("output", result)
             except (httpx.TimeoutException, httpx.ConnectError) as exc:
-                self._circuit_breaker_until = time.time() + 60.0
+                self._circuit_breaker_until = time.time() + 10.0
                 raise RuntimeError(f"Không thể kết nối tới Kaggle GPU Worker tại {base_url}.") from exc
             except Exception:
                 pass
@@ -512,12 +512,12 @@ class UnifiedLLMClient:
                 data = resp.json()
                 return data["choices"][0]["message"]["content"]
         except (httpx.TimeoutException, httpx.ConnectError) as exc:
-            self._circuit_breaker_until = time.time() + 60.0
+            self._circuit_breaker_until = time.time() + 10.0
             raise RuntimeError(f"Không thể kết nối tới Kaggle GPU Worker tại {base_url}.") from exc
         except Exception:
             pass
 
-        self._circuit_breaker_until = time.time() + 60.0
+        self._circuit_breaker_until = time.time() + 10.0
         raise RuntimeError(f"Không thể kết nối tới Kaggle GPU Worker tại {base_url}.")
 
     def _clean_and_parse_json(self, raw_text: str) -> dict[str, Any]:

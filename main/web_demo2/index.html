@@ -288,24 +288,21 @@
                       <button class="quick-select-btn active" data-mode="cpu_min" title="Áp dụng CPU Min cho toàn bộ 5 Agent">
                         CPU Min
                       </button>
-                      <div class="quick-btn-split" id="cpuMaxSplit">
-                        <button class="quick-select-btn split-main" data-mode="cpu_max" title="Áp dụng CPU Max cho toàn bộ 5 Agent">
+                      <div class="quick-btn-split mode-offline-dimmed" id="cpuMaxSplit">
+                        <button class="quick-select-btn split-main mode-offline-dimmed" data-mode="cpu_max" title="Áp dụng CPU Max cho toàn bộ 5 Agent">
                           CPU Max
                         </button>
                         <button class="split-action-btn offline" id="ollamaToggleBtn" title="Chuyển trạng thái server Ollama CPU (localhost:11434)">
                           <span class="action-text">OFF</span>
                         </button>
                       </div>
-                      <button class="quick-select-btn" data-mode="gpu_ft" title="Áp dụng GPU FT cho toàn bộ 5 Agent">
-                        GPU FT
-                      </button>
-                      <button class="quick-select-btn" data-mode="gpu_finetune" title="Áp dụng GPU Finetune (Cụm 7 Mô Hình SOTA) cho toàn bộ 5 Agent">
+                      <button class="quick-select-btn mode-offline-dimmed" data-mode="gpu_finetune" title="Áp dụng GPU Finetune (Cụm 7 Mô Hình SOTA) cho toàn bộ 5 Agent">
                         GPU Finetune
                       </button>
-                      <button class="quick-select-btn" data-mode="gpu_max" title="Áp dụng GPU Max (Đại mô hình 32B AWQ TP=2) cho toàn bộ 5 Agent">
+                      <button class="quick-select-btn mode-offline-dimmed" data-mode="gpu_max" title="Áp dụng GPU Max (Đại mô hình 32B AWQ TP=2) cho toàn bộ 5 Agent">
                         GPU Max
                       </button>
-                      <button class="quick-select-btn" data-mode="hybrid" title="Áp dụng Hybrid (Điều phối đa mô hình & Kiểm chứng chéo tối ưu nhất) cho toàn bộ 5 Agent">
+                      <button class="quick-select-btn mode-offline-dimmed" data-mode="hybrid" title="Áp dụng Hybrid (Điều phối đa mô hình &amp; Kiểm chứng chéo tối ưu nhất) cho toàn bộ 5 Agent">
                         Hybrid
                       </button>
                     </div>
@@ -365,11 +362,10 @@
                       <select class="agent-model-select" data-agent="retrieval">
                         <option value="gemini">Gemini API</option>
                         <option value="cpu_min" selected>CPU Min</option>
-                        <option value="cpu_max">CPU Max</option>
-                        <option value="gpu_ft">GPU FT</option>
-                        <option value="gpu_finetune">GPU Finetune</option>
-                        <option value="gpu_max">GPU Max</option>
-                        <option value="hybrid">Hybrid</option>
+                        <option value="cpu_max" disabled>CPU Max (Đang tắt)</option>
+                        <option value="gpu_finetune" disabled>GPU Finetune (Chưa kết nối)</option>
+                        <option value="gpu_max" disabled>GPU Max (Chưa kết nối)</option>
+                        <option value="hybrid" disabled>Hybrid (Chưa kết nối)</option>
                       </select>
                     </div>
 
@@ -384,11 +380,10 @@
                       <select class="agent-model-select" data-agent="reader">
                         <option value="gemini">Gemini API</option>
                         <option value="cpu_min" selected>CPU Min</option>
-                        <option value="cpu_max">CPU Max</option>
-                        <option value="gpu_ft">GPU FT</option>
-                        <option value="gpu_finetune">GPU Finetune</option>
-                        <option value="gpu_max">GPU Max</option>
-                        <option value="hybrid">Hybrid</option>
+                        <option value="cpu_max" disabled>CPU Max (Đang tắt)</option>
+                        <option value="gpu_finetune" disabled>GPU Finetune (Chưa kết nối)</option>
+                        <option value="gpu_max" disabled>GPU Max (Chưa kết nối)</option>
+                        <option value="hybrid" disabled>Hybrid (Chưa kết nối)</option>
                       </select>
                     </div>
 
@@ -403,11 +398,10 @@
                       <select class="agent-model-select" data-agent="summarizer">
                         <option value="gemini">Gemini API</option>
                         <option value="cpu_min" selected>CPU Min</option>
-                        <option value="cpu_max">CPU Max</option>
-                        <option value="gpu_ft">GPU FT</option>
-                        <option value="gpu_finetune">GPU Finetune</option>
-                        <option value="gpu_max">GPU Max</option>
-                        <option value="hybrid">Hybrid</option>
+                        <option value="cpu_max" disabled>CPU Max (Đang tắt)</option>
+                        <option value="gpu_finetune" disabled>GPU Finetune (Chưa kết nối)</option>
+                        <option value="gpu_max" disabled>GPU Max (Chưa kết nối)</option>
+                        <option value="hybrid" disabled>Hybrid (Chưa kết nối)</option>
                       </select>
                     </div>
 
@@ -422,11 +416,10 @@
                       <select class="agent-model-select" data-agent="factchecker">
                         <option value="gemini">Gemini API</option>
                         <option value="cpu_min" selected>CPU Min</option>
-                        <option value="cpu_max">CPU Max</option>
-                        <option value="gpu_ft">GPU FT</option>
-                        <option value="gpu_finetune">GPU Finetune</option>
-                        <option value="gpu_max">GPU Max</option>
-                        <option value="hybrid">Hybrid</option>
+                        <option value="cpu_max" disabled>CPU Max (Đang tắt)</option>
+                        <option value="gpu_finetune" disabled>GPU Finetune (Chưa kết nối)</option>
+                        <option value="gpu_max" disabled>GPU Max (Chưa kết nối)</option>
+                        <option value="hybrid" disabled>Hybrid (Chưa kết nối)</option>
                       </select>
                     </div>
 
@@ -441,11 +434,10 @@
                       <select class="agent-model-select" data-agent="writer">
                         <option value="gemini">Gemini API</option>
                         <option value="cpu_min" selected>CPU Min</option>
-                        <option value="cpu_max">CPU Max</option>
-                        <option value="gpu_ft">GPU FT</option>
-                        <option value="gpu_finetune">GPU Finetune</option>
-                        <option value="gpu_max">GPU Max</option>
-                        <option value="hybrid">Hybrid</option>
+                        <option value="cpu_max" disabled>CPU Max (Đang tắt)</option>
+                        <option value="gpu_finetune" disabled>GPU Finetune (Chưa kết nối)</option>
+                        <option value="gpu_max" disabled>GPU Max (Chưa kết nối)</option>
+                        <option value="hybrid" disabled>Hybrid (Chưa kết nối)</option>
                       </select>
                     </div>
                   </div>

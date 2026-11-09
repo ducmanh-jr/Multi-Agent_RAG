@@ -152,8 +152,9 @@ document.addEventListener("DOMContentLoaded", () => {
       if (state.activeRunId) {
         fetch(`/api/runs/${state.activeRunId}/cancel`, { method: "POST" }).catch(() => {});
       }
+      stopAllThinkingSpinners();
       if (activeMessageCard) {
-        updateAgentSkeletonError(activeMessageCard, "Đã dừng quá trình thực thi theo yêu cầu người dùng.");
+        updateAgentSkeletonError(activeMessageCard, "Đã dừng quá trình thực thi theo yêu cầu người dùng.", true);
         activeMessageCard = null;
       }
       setButtonState(promptInput && promptInput.value.trim().length > 0 ? "ready" : "idle");
@@ -990,6 +991,10 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   async function submitQuery(queryText) {
+    if (sendBtn && sendBtn.classList.contains("running")) {
+      console.warn("Một tác vụ đang được thực thi. Vui lòng đợi hoặc bấm nút Dừng màu đỏ trước khi gửi câu hỏi mới.");
+      return;
+    }
     const text = (queryText || promptInput.value || "").trim();
     if (!text) return;
 
@@ -1511,14 +1516,82 @@ document.addEventListener("DOMContentLoaded", () => {
     traceBox.innerHTML = html;
   }
 
-  function updateAgentSkeletonError(messageCard, errorMsg) {
+  function stopAllThinkingSpinners() {
+    document.querySelectorAll(".thinking-node.active").forEach(node => {
+      node.remove();
+    });
+    document.querySelectorAll(".thinking-accordion").forEach(acc => {
+      const sparkle = acc.querySelector(".thinking-sparkle");
+      if (sparkle) {
+        sparkle.classList.add("completed");
+        const svg = sparkle.querySelector("svg");
+        if (svg) svg.style.animation = "none";
+      }
+      const dots = acc.querySelector(".thinking-dots-anim");
+      if (dots) {
+        dots.style.display = "none";
+      }
+      const shimmer = acc.querySelector(".thinking-shimmer");
+      if (shimmer) {
+        shimmer.classList.remove("thinking-shimmer");
+        shimmer.classList.add("thinking-label-completed");
+      }
+    });
+  }
+
+  function updateAgentSkeletonError(messageCard, errorMsg, isCancelled = false) {
+    if (!messageCard) return;
+    const acc = messageCard.querySelector(".thinking-accordion");
+    if (acc) {
+      acc.classList.remove("open");
+      const titleDiv = acc.querySelector(".thinking-title");
+      if (titleDiv) {
+        const timerEl = acc.querySelector(".live-timer");
+        const elapsed = timerEl ? timerEl.textContent : "";
+        const label = isCancelled ? "Đã dừng" : "Lỗi thực thi";
+        titleDiv.innerHTML = `
+          <span class="thinking-sparkle ${isCancelled ? 'cancelled' : 'failed'}">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="15" y1="9" x2="9" y2="15"></line>
+              <line x1="9" y1="9" x2="15" y2="15"></line>
+            </svg>
+          </span>
+          <span class="thinking-label-completed">${label}</span>
+          ${elapsed ? `<span class="thinking-timer">${elapsed}</span>` : ""}
+          <span class="thinking-task-sep">•</span>
+          <span class="thinking-task-text">${escapeHtml(errorMsg)}</span>
+        `;
+      }
+      const activeNode = acc.querySelector(".thinking-node.active");
+      if (activeNode) {
+        activeNode.remove();
+      }
+      const dots = acc.querySelector(".thinking-dots-anim");
+      if (dots) dots.style.display = "none";
+      const sparkle = acc.querySelector(".thinking-sparkle");
+      if (sparkle) {
+        sparkle.classList.add("completed");
+        const svg = sparkle.querySelector("svg");
+        if (svg) svg.style.animation = "none";
+      }
+    }
+
     const container = messageCard.querySelector(".agent-response-container");
-    container.innerHTML = `
-      ${autonomyBannerHtml}
-        <div class="direct-qa-view">
-        <p class="text-sm text-neutral-600">${escapeHtml(errorMsg)}</p>
-      </div>
-    `;
+    if (container) {
+      let statusBox = container.querySelector(".agent-status-box");
+      if (!statusBox) {
+        statusBox = document.createElement("div");
+        statusBox.className = "agent-status-box agent-output-block";
+        statusBox.style.marginTop = "10px";
+        container.appendChild(statusBox);
+      }
+      statusBox.innerHTML = `
+        <div class="direct-qa-view" style="padding: 12px 16px; background: ${isCancelled ? '#f8fafc' : '#fef2f2'}; border-left: 3px solid ${isCancelled ? '#94a3b8' : '#ef4444'}; border-radius: 8px;">
+          <p class="text-sm ${isCancelled ? 'text-neutral-500' : 'text-red-700'}" style="margin: 0; font-size: 13px; font-weight: 500;">${escapeHtml(errorMsg)}</p>
+        </div>
+      `;
+    }
   }
 
   // ==================== 5.5 RENDER SCOUT RESULTS (AGENT 0 STANDALONE) ====================
@@ -2410,6 +2483,9 @@ document.addEventListener("DOMContentLoaded", () => {
       if (e.key === "Enter" && !e.shiftKey) {
         if (e.isComposing || e.keyCode === 229) return;
         e.preventDefault();
+        if (sendBtn && sendBtn.classList.contains("running")) {
+          return;
+        }
         submitQuery();
       }
     });
@@ -2508,7 +2584,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // ==================== 10. SYSTEM CONFIG & KAGGLE ====================
-    function updateModelOptionsAvailability(isKaggleOnline, isGeminiOnline = true, isOllamaOnline = false) {
+  function updateModelOptionsAvailability(isKaggleOnline, isGeminiOnline = true, isOllamaOnline = false) {
     state.isKaggleOnline = Boolean(isKaggleOnline);
     state.isGeminiOnline = Boolean(isGeminiOnline);
     state.isOllamaOnline = Boolean(isOllamaOnline);
@@ -2588,7 +2664,15 @@ document.addEventListener("DOMContentLoaded", () => {
           opt.classList.remove("model-option-disabled");
         }
       }
+
+      // Tự động fallback về cpu_min nếu option hiện tại đang bị disabled
+      const curOpt = select.options[select.selectedIndex];
+      if (curOpt && curOpt.disabled) {
+        select.value = "cpu_min";
+      }
     });
+
+    syncModelLabelsFromDropdowns();
   }
 
   // ==================== GEMINI USAGE QUOTA TRACKER ====================
@@ -2597,14 +2681,21 @@ document.addEventListener("DOMContentLoaded", () => {
   function syncModelLabelsFromDropdowns() {
     const selects = Array.from(document.querySelectorAll(".agent-model-select"));
     if (!selects.length) return;
-    const allValues = selects.map(s => s.value);
+    const allValues = selects.map(s => {
+      let v = s.value;
+      if (v === "gpu_ft") v = "gpu_finetune";
+      return v;
+    });
     const allSame = allValues.every(v => v === allValues[0]);
 
     if (allSame) {
       const mode = allValues[0];
       const label = MODE_LABELS[mode] || mode;
       quickSelectBtns.forEach(btn => {
-        btn.classList.toggle("active", btn.dataset.mode === mode);
+        let btnMode = btn.dataset.mode;
+        if (btnMode === "gpu_ft") btnMode = "gpu_finetune";
+        const isOffline = btn.classList.contains("mode-offline-dimmed") || (btn.parentElement && btn.parentElement.classList.contains("mode-offline-dimmed"));
+        btn.classList.toggle("active", btnMode === mode && !isOffline);
       });
       if (quickActivePill) quickActivePill.textContent = label;
       if (activeModelLabel) activeModelLabel.textContent = label;
@@ -2875,7 +2966,7 @@ document.addEventListener("DOMContentLoaded", () => {
             let targetMode = data.agent_modes[agentKey];
             if (targetMode === "cpu") targetMode = "cpu_min";
             if (targetMode === "model" || targetMode === "kaggle" || targetMode === "kaggle_max") targetMode = "gpu_max";
-            if (targetMode === "kaggle_fn" || targetMode === "fn") targetMode = "gpu_ft";
+            if (targetMode === "kaggle_fn" || targetMode === "fn" || targetMode === "gpu_ft") targetMode = "gpu_finetune";
             if (targetMode === "api") targetMode = "gemini";
             if (targetMode) {
               const opt = Array.from(select.options).find(o => o.value === targetMode);
@@ -2904,11 +2995,20 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   async function setAllAgentsMode(mode) {
+    let canonMode = mode;
+    if (canonMode === "gpu_ft" || canonMode === "kaggle_fn" || canonMode === "fn") canonMode = "gpu_finetune";
     const agentModes = {};
     document.querySelectorAll(".agent-model-select").forEach(select => {
       const agentKey = select.dataset.agent;
-      select.value = mode;
-      agentModes[agentKey] = mode;
+      select.value = canonMode;
+      if (!select.value) {
+        const matchingOpt = Array.from(select.options).find(o => o.value === canonMode || (canonMode === "gpu_finetune" && o.value === "gpu_ft"));
+        if (matchingOpt) select.value = matchingOpt.value;
+      }
+      if (!select.value) {
+        select.value = "cpu_min";
+      }
+      agentModes[agentKey] = select.value;
     });
 
     syncModelLabelsFromDropdowns();

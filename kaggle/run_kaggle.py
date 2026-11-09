@@ -163,8 +163,8 @@ def run():
         "--app-dir", os.path.join(repo_dir, "kaggle"),
     ], stdout=supervisor_log, stderr=subprocess.STDOUT)
 
-    # Animated progress bar waiting for worker warmup
-    total_seconds = 50
+    # Animated progress bar waiting for worker warmup (Wait until Worker A finishes loading weights)
+    total_seconds = 75
     is_ready = False
     with tqdm(total=total_seconds, desc="    ⏳ Nạp mô hình vào 2 GPU", unit="s") as pbar:
         for s in range(total_seconds):
@@ -173,19 +173,23 @@ def run():
             try:
                 res = urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=2)
                 if res.status == 200:
-                    is_ready = True
-                    pbar.update(total_seconds - s - 1)
-                    break
+                    payload = json.loads(res.read().decode())
+                    wh = payload.get("worker_health", {})
+                    if wh.get("status") == "online":
+                        is_ready = True
+                        pbar.update(total_seconds - s - 1)
+                        break
             except Exception:
                 pass
 
     if not is_ready:
-        log_file = os.path.join(repo_dir, "kaggle", "supervisor.log")
-        if os.path.exists(log_file):
-            print("\n    ⚠️ Nhật ký lỗi khởi động Gateway:")
-            with open(log_file, "r", encoding="utf-8", errors="ignore") as lf:
-                for line in lf.readlines()[-15:]:
-                    print("      " + line.strip())
+        for log_name in ["supervisor.log", "worker_finetune.log"]:
+            lf_path = os.path.join(repo_dir, "kaggle", log_name)
+            if os.path.exists(lf_path):
+                print(f"\n    ⚠️ Nhật ký {log_name}:")
+                with open(lf_path, "r", encoding="utf-8", errors="ignore") as lf:
+                    for line in lf.readlines()[-10:]:
+                        print("      " + line.strip())
 
     # Print Detailed Per-GPU VRAM Allocation Dashboard
     print("\n" + "─" * 78)
@@ -193,17 +197,19 @@ def run():
     print("─" * 78)
     try:
         res = urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=3)
-        data = json.loads(res.read())
-        gpus = data.get("gpus", {})
-        if isinstance(gpus, dict):
+        data = json.loads(res.read().decode())
+        wh = data.get("worker_health", {})
+        gpus = wh.get("gpus", {})
+        if isinstance(gpus, dict) and gpus:
             for k, v in gpus.items():
-                print(f"  🔥 {k.upper()}: {v.get('name')}")
-                print(f"     ├── VRAM đã cấp phát: {v.get('vram_used_gb')} / {v.get('vram_total_gb')} GB")
-                print(f"     └── VRAM còn trống:   {v.get('vram_free_gb')} GB (Headroom an toàn)")
-        elif isinstance(gpus, list):
-            for g in gpus:
-                print(f"  🔥 {g.get('device', '').upper()}: {g.get('name')}")
-                print(f"     ├── VRAM đã cấp phát: {g.get('allocated_gb')} / {g.get('total_gb')} GB")
+                v_used = v.get('vram_used_gb', 0)
+                v_tot = v.get('vram_total_gb', 16.0)
+                v_free = round(v_tot - v_used, 2)
+                print(f"  🔥 {k.upper()}: {v.get('name', 'Tesla T4')}")
+                print(f"     ├── VRAM đã cấp phát: {v_used} / {v_tot} GB")
+                print(f"     └── VRAM còn trống:   {v_free} GB (Headroom an toàn)")
+        else:
+            print("    ✔ Cụm GPU đã nạp xong trọng số và sẵn sàng phục vụ suy luận.")
     except Exception as e:
         print(f"    (Thông tin VRAM chi tiết: {e})")
 

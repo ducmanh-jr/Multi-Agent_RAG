@@ -33,7 +33,7 @@ class Settings:
     REMOTE_INFERENCE_URL: str = field(
         default_factory=lambda: os.getenv("REMOTE_INFERENCE_URL", "").rstrip("/")
     )
-    REMOTE_TIMEOUT_SECONDS: int = int(os.getenv("REMOTE_TIMEOUT_SECONDS", "2"))
+    REMOTE_TIMEOUT_SECONDS: int = int(os.getenv("REMOTE_TIMEOUT_SECONDS", "90"))
 
     # Local CPU Inference Engine (Ollama / Llama.cpp / GGUF on user's PC)
     LOCAL_CPU_URL: str = field(
