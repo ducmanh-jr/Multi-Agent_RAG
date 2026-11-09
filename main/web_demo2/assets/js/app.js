@@ -51,6 +51,7 @@ document.addEventListener("DOMContentLoaded", () => {
     cpu_min: "CPU Min",
     cpu_max: "CPU Max",
     gpu_ft: "GPU FT",
+    gpu_finetune: "GPU Finetune",
     gpu_max: "GPU Max",
     kaggle_fn: "GPU FT",
     kaggle_max: "GPU Max",
