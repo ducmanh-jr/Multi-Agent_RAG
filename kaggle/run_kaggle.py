@@ -45,20 +45,45 @@ def run():
         print(f"    ⚠️ Lỗi kiểm tra CUDA: {e}")
 
     # -------------------------------------------------------------------------
-    # 2. Package Installation with Real-Time Visibility
+    # 2. Package Installation: Single Clean Progress Bar (No Pip Spam)
     # -------------------------------------------------------------------------
     print("\n📦 [BƯỚC 2/4] KIỂM TRA & CÀI ĐẶT THƯ VIỆN CẦN THIẾT:")
-    pkgs = [
-        "fastapi", "uvicorn", "pydantic", "httpx", "pycloudflared",
-        "transformers", "peft", "accelerate", "bitsandbytes",
-        "sentence-transformers", "gdown", "vllm", "tqdm"
-    ]
-    print(f"    ⏳ Đang kiểm tra và cài đặt: {', '.join(pkgs[:6])}...")
-    
-    # We install with visible pip progress bar
-    cmd = [sys.executable, "-m", "pip", "install", "--progress-bar", "on"] + pkgs
-    subprocess.run(cmd, check=False)
-    print("    ✔ Hoàn tất cài đặt các gói thư viện tối ưu hóa!")
+    import importlib.util
+    try:
+        from tqdm.auto import tqdm
+    except ImportError:
+        subprocess.run([sys.executable, "-m", "pip", "install", "-q", "tqdm"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        from tqdm.auto import tqdm
+
+    pkg_map = {
+        "fastapi": "fastapi",
+        "uvicorn": "uvicorn",
+        "pydantic": "pydantic",
+        "httpx": "httpx",
+        "pycloudflared": "pycloudflared",
+        "transformers": "transformers",
+        "peft": "peft",
+        "accelerate": "accelerate",
+        "bitsandbytes": "bitsandbytes",
+        "sentence-transformers": "sentence_transformers",
+        "gdown": "gdown",
+        "vllm": "vllm"
+    }
+
+    missing_pkgs = [pkg for pkg, mod in pkg_map.items() if importlib.util.find_spec(mod) is None]
+
+    with tqdm(total=len(pkg_map), desc="    ⏳ Cài đặt thư viện", unit="pkg") as pbar:
+        for pkg, mod in pkg_map.items():
+            if importlib.util.find_spec(mod) is None:
+                subprocess.run(
+                    [sys.executable, "-m", "pip", "install", "-q", pkg],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False
+                )
+            pbar.update(1)
+
+    print("    ✔ Toàn bộ thư viện cần thiết đã sẵn sàng!")
 
     # -------------------------------------------------------------------------
     # 3. Synchronize 7-Model SOTA Weights from Google Drive with % Progress
