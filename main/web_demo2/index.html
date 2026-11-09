@@ -299,12 +299,24 @@
                       <button class="quick-select-btn" data-mode="gpu_ft" title="Áp dụng GPU FT cho toàn bộ 5 Agent">
                         GPU FT
                       </button>
-                      <button class="quick-select-btn" data-mode="gpu_max" title="Áp dụng GPU Max cho toàn bộ 5 Agent">
+                      <button class="quick-select-btn" data-mode="gpu_finetune" title="Áp dụng GPU Finetune (Cụm 7 Mô Hình SOTA) cho toàn bộ 5 Agent">
+                        GPU Finetune
+                      </button>
+                      <button class="quick-select-btn" data-mode="gpu_max" title="Áp dụng GPU Max (Đại mô hình 32B AWQ TP=2) cho toàn bộ 5 Agent">
                         GPU Max
                       </button>
                       <button class="quick-select-btn" data-mode="hybrid" title="Áp dụng Hybrid (Điều phối đa mô hình & Kiểm chứng chéo tối ưu nhất) cho toàn bộ 5 Agent">
                         Hybrid
                       </button>
+                    </div>
+
+                    <!-- Banner Thông Báo Độc Quyền VRAM khi chạy 32B -->
+                    <div class="hot-swap-banner" id="hotSwapBanner">
+                      <div class="hot-swap-banner-text">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+                        <span>GPU Max 32B độc chiếm 32GB VRAM</span>
+                      </div>
+                      <button type="button" class="hot-swap-revert-btn" id="revertTo7ModelsBtn">Đổi về 7 Mô Hình</button>
                     </div>
                   </div>
 

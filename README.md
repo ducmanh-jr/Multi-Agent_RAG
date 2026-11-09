@@ -60,11 +60,9 @@ Dự án được tổ chức theo tiêu chuẩn MLOps chuyên nghiệp bao gồ
 │   └── evaluation/                        # Bộ kiểm thử Ablation Study và World-Class Benchmark
 │
 └── kaggle/                                # [3] TRIỂN KHAI ĐÁM MÂY & GPU WORKER (Distributed Inference)
-    ├── kaggle_finetune_worker.ipynb       # GPU Worker cho kiến trúc toàn diện 7 mô hình (gpu_finetune & hybrid)
+    ├── kaggle_master_worker.ipynb         # 🌟 Notebook duy nhất chạy toàn bộ các tùy chọn GPU (All-in-One)
     ├── kaggle_finetune_server.py          # Máy chủ FastAPI điều phối song song 7 mô hình trên Dual T4
-    ├── kaggle_worker.ipynb                # GPU Worker cho kiến trúc tiêu chuẩn 3 adapter (gpu_ft)
-    ├── kaggle_server.py                   # Máy chủ FastAPI cho kiến trúc tiêu chuẩn 3 adapter
-    └── kaggle_max_32b_vllm.ipynb          # GPU Worker cho đại mô hình suy luận 32B AWQ (gpu_max)
+    └── kaggle_server.py                   # Máy chủ FastAPI cho kiến trúc tiêu chuẩn 3 adapter
 ```
 
 ---
@@ -389,17 +387,21 @@ py -3.10 -X utf8 main.py --serve
 - Hệ thống hỗ trợ chuyển đổi tức thì giữa cả 7 chế độ chỉ với một thao tác nhấp chuột.
 
 ### 8.2. Khởi chạy Tác vụ Suy luận Phân tán trên Kaggle GPU (`kaggle/`)
-1. **Vận hành Kiến trúc Tinh chỉnh Toàn diện (`gpu_finetune`) & Nhánh GPU của `hybrid`**:
-   - Mở notebook [`kaggle/kaggle_finetune_worker.ipynb`](kaggle/kaggle_finetune_worker.ipynb).
+1. **Khởi chạy Notebook Hợp Nhất Duy Nhất**:
+   - Mở notebook [`kaggle/kaggle_master_worker.ipynb`](kaggle/kaggle_master_worker.ipynb).
    - Chọn phần cứng: **Accelerator: GPU T4 x 2**, bật **Internet: On**.
-   - Bấm **Run All**. Notebook tự động nạp gói trọng số `final_weights_bundle.zip` (2.85 GB) từ Google Drive ID `1UPF13BNjxFFhd8YFv5PpuyfOR4G-VNte` và xuất bản địa chỉ Cloudflare Tunnel.
-2. **Vận hành Kiến trúc Tinh chỉnh Tiêu chuẩn Đối chứng (`gpu_ft`)**:
-   - Mở notebook [`kaggle/kaggle_worker.ipynb`](kaggle/kaggle_worker.ipynb).
-   - Tự động nạp gói trọng số `weights_bundle.zip` từ Google Drive ID `1upmXzTIlxpcCVGU8Vp9ZGV3xNa1yu-Q6`.
-3. **Vận hành Đại Mô hình Suy luận 32B AWQ (`gpu_max`)**:
-   - Mở notebook [`kaggle/kaggle_max_32b_vllm.ipynb`](kaggle/kaggle_max_32b_vllm.ipynb).
-4. **Kết nối vào Hệ thống**:
+   - Tại Cell 1, chọn chế độ bạn muốn chạy:
+     - `SELECTED_GPU_MODE = "gpu_finetune"`: Kiến trúc SOTA 7 mô hình (Đề xuất khuyên dùng).
+     - `SELECTED_GPU_MODE = "gpu_ft"`: Kiến trúc cơ sở 3 adapter đối chứng.
+     - `SELECTED_GPU_MODE = "gpu_max"`: Đại mô hình suy luận sâu 32B AWQ qua vLLM TP=2.
+   - Bấm **Run All**. Notebook tự động nạp toàn bộ các GPU và xuất bản địa chỉ Cloudflare Tunnel:
+     ```text
+     🎉 TOÀN BỘ CÁC GPU ĐÃ KHỞI ĐỘNG VÀ ONLINE THÀNH CÔNG!
+     🚀 REMOTE_INFERENCE_URL=https://xxxx-xxxx-xxxx.trycloudflare.com
+     ```
+2. **Kết nối vào Hệ thống Cục bộ**:
    - Cập nhật địa chỉ đường hầm vào tệp [`.env`](.env) tại máy trạm cục bộ:
      ```env
      REMOTE_INFERENCE_URL=https://xxxx-xxxx-xxxx.trycloudflare.com
+     EXECUTION_MODE=gpu_finetune
      ```

@@ -73,7 +73,7 @@ def main():
     parser.add_argument("--test-retry", action="store_true", help="Kích hoạt kiểm thử vòng lặp retry 3 lần và escalation")
     parser.add_argument("--serve", action="store_true", help="Khởi động máy chủ Web Workspace UI trên localhost:8000")
     parser.add_argument("--port", type=int, default=8000, help="Cổng chạy server (mặc định 8000)")
-    parser.add_argument("--mode", type=str, default=None, choices=["gemini", "cpu_min", "cpu_max", "gpu_ft", "gpu_max", "kaggle_fn", "kaggle_max", "hybrid"], help="Chế độ thực thi 5 agent (gemini, cpu_min, cpu_max, gpu_ft, gpu_max, hybrid)")
+    parser.add_argument("--mode", type=str, default=None, choices=["gemini", "cpu_min", "cpu_max", "gpu_ft", "gpu_finetune", "gpu_max", "kaggle_fn", "kaggle_max", "hybrid"], help="Chế độ thực thi 5 agent (gemini, cpu_min, cpu_max, gpu_ft, gpu_finetune, gpu_max, hybrid)")
     args = parser.parse_args()
 
     if args.serve:

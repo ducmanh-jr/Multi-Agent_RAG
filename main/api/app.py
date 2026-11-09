@@ -257,17 +257,17 @@ class SetRemoteUrlRequest(BaseModel):
 
 
 @app.post("/api/config/mode")
-
 def set_execution_mode(req: SetModeRequest):
-
-    if req.mode not in ["local_api", "kaggle_gpu"]:
-
+    from modes.registry import normalize_mode
+    norm_mode = normalize_mode(req.mode)
+    valid_modes = [
+        "gemini", "cpu_min", "cpu_max", "gpu_ft", "gpu_finetune",
+        "gpu_max", "hybrid", "local_api", "kaggle_gpu", "local_cpu"
+    ]
+    if norm_mode not in valid_modes and req.mode not in valid_modes:
         raise HTTPException(status_code=400, detail="Chế độ không hợp lệ")
-
-    settings.EXECUTION_MODE = req.mode
-
-    update_env_file("EXECUTION_MODE", req.mode)
-
+    settings.EXECUTION_MODE = norm_mode
+    update_env_file("EXECUTION_MODE", norm_mode)
     return get_config()
 
 
@@ -363,10 +363,11 @@ async def test_remote_url():
                     health_data = resp.json()
                 except Exception:
                     health_data = {}
-                mw = health_data.get('model_worker') or 'DeepSeek-R1-32B TP=2'
+                mw = health_data.get('model_worker') or health_data.get('active_mode') or 'Kaggle Dual T4 Worker'
                 return {
                     "is_online": True,
                     "details": f"Online - {health_data.get('gpu_count', 2)}x GPU ({mw})",
+                    "raw_health": health_data,
                 }
 
             return {"is_online": False, "details": f"Worker trả về HTTP {resp.status_code}"}
@@ -374,6 +375,78 @@ async def test_remote_url():
     except Exception as e:
 
         return {"is_online": False, "details": f"Không thể kết nối: {str(e)[:60]}"}
+
+
+class RemoteSwitchModeRequest(BaseModel):
+    target_mode: str  # "gpu_finetune" | "gpu_max"
+
+
+@app.post("/api/remote/switch-mode")
+async def remote_switch_gpu_mode(req: RemoteSwitchModeRequest):
+    """Ra lệnh cho Kaggle Master Supervisor tráo đổi nóng VRAM giữa 7 Mô hình SOTA và 32B AWQ."""
+    url = settings.REMOTE_INFERENCE_URL
+    if not url:
+        raise HTTPException(status_code=400, detail="Chưa cấu hình REMOTE_INFERENCE_URL (Kaggle Cloudflare Tunnel).")
+
+    target = req.target_mode.lower().strip()
+    if target not in ["gpu_finetune", "gpu_max", "gpu_ft"]:
+        raise HTTPException(status_code=400, detail="Chỉ hỗ trợ chuyển đổi giữa 'gpu_finetune' và 'gpu_max'")
+
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            resp = await client.post(f"{url}/api/admin/switch_mode", json={"target_mode": target})
+            if resp.status_code == 200:
+                data = resp.json()
+                settings.EXECUTION_MODE = target
+                update_env_file("EXECUTION_MODE", target)
+                return {
+                    "status": "success",
+                    "active_mode": target,
+                    "message": data.get("message", f"Đã chuyển đổi thành công sang {target.upper()}"),
+                    "remote_data": data,
+                }
+            else:
+                raise HTTPException(status_code=resp.status_code, detail=f"Kaggle Supervisor báo lỗi: {resp.text[:120]}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Không thể kết nối tới Kaggle Supervisor: {e}")
+
+
+@app.get("/api/remote/gpu-status")
+async def get_remote_gpu_status():
+    """Thăm dò Kaggle Supervisor để biết chế độ nào đang độc chiếm VRAM."""
+    url = settings.REMOTE_INFERENCE_URL
+    if not url:
+        return {"is_online": False, "active_mode": "offline", "is_switching": False, "details": "Chưa cấu hình URL Kaggle Worker."}
+
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=4.0) as client:
+            resp = await client.get(f"{url}/health")
+            if resp.status_code == 200:
+                data = resp.json()
+                active_mode = data.get("active_mode")
+                if not active_mode:
+                    if data.get("has_vllm_32b"):
+                        active_mode = "gpu_max"
+                    elif "gpu_finetune" in data.get("pipeline", ""):
+                        active_mode = "gpu_finetune"
+                    else:
+                        active_mode = settings.EXECUTION_MODE
+
+                return {
+                    "is_online": True,
+                    "active_mode": active_mode,
+                    "is_switching": data.get("is_switching", False),
+                    "switch_message": data.get("switch_message", ""),
+                    "supervisor": data.get("supervisor", ""),
+                    "worker_health": data.get("worker_health", {}),
+                }
+            return {"is_online": False, "active_mode": "error", "details": f"HTTP {resp.status_code}"}
+    except Exception as e:
+        return {"is_online": False, "active_mode": "unreachable", "details": str(e)[:60]}
 
 
 

@@ -42,8 +42,11 @@ def find_weight_path(sub_path: str) -> Optional[str]:
     """Search common Kaggle and local paths for fine_weights directories."""
     candidates = [
         Path("/kaggle/working/Multi-Agent_RAG/training_lab/final_weights") / sub_path,
+        Path("/kaggle/working/Multi-Agent_RAG/training_lab/final_weights/final_weights") / sub_path,
         Path("/kaggle/working/training_lab/final_weights") / sub_path,
+        Path("/kaggle/working/training_lab/final_weights/final_weights") / sub_path,
         Path("/kaggle/working/final_weights") / sub_path,
+        Path("/kaggle/working/drive_download") / sub_path,
         Path.cwd() / "training_lab" / "final_weights" / sub_path,
         Path("./training_lab/final_weights") / sub_path,
         Path("../training_lab/final_weights") / sub_path,
@@ -52,6 +55,11 @@ def find_weight_path(sub_path: str) -> Optional[str]:
     for c in candidates:
         if c.exists():
             return str(c.resolve())
+    working_dir = Path("/kaggle/working")
+    if working_dir.exists():
+        for match in working_dir.glob(f"**/{sub_path}"):
+            if match.exists():
+                return str(match.resolve())
     return None
 
 
@@ -248,15 +256,48 @@ class GenerateRequest(BaseModel):
     temperature: float = 0.2
 
 
+@app.on_event("startup")
+def warmup_all_gpus():
+    print("\n" + "=" * 65)
+    print("🔥 [STARTUP] KHỞI ĐỘNG VÀ NẠP TOÀN BỘ CÁC GPU (DUAL TESLA T4)...")
+    print("=" * 65)
+    # GPU 0: Qwen 7B + 4 LoRA
+    print("[GPU 0] Nạp Base Qwen2.5-7B (4-bit NF4) + 4 LoRA Adapters...")
+    load_qwen_lora_cluster()
+    if torch.cuda.is_available() and torch.cuda.device_count() >= 1:
+        vram0 = torch.cuda.memory_allocated(0) / (1024 ** 3)
+        print(f"✅ GPU 0 SẴN SÀNG! VRAM chiếm dụng: {vram0:.2f} GB")
+
+    # GPU 1: Fact-Checker NLI Head
+    print("\n[GPU 1] Nạp Agent 4 Fact-Checker NLI Head...")
+    load_factcheck_model()
+    if torch.cuda.is_available() and torch.cuda.device_count() >= 2:
+        vram1 = torch.cuda.memory_allocated(1) / (1024 ** 3)
+        print(f"✅ GPU 1 SẴN SÀNG! VRAM chiếm dụng: {vram1:.2f} GB")
+
+    print("\n" + "=" * 65)
+    print("🎉 TOÀN BỘ CỤM DUAL GPU ĐÃ ĐƯỢC KÍCH HOẠT VÀ NẠP SẴN SÀNG 100%!")
+    print("=" * 65 + "\n")
+
+
 @app.get("/")
 @app.get("/health")
 def healthcheck():
+    gpu_info = {}
+    if torch.cuda.is_available():
+        for i in range(torch.cuda.device_count()):
+            gpu_info[f"gpu_{i}"] = {
+                "name": torch.cuda.get_device_name(i),
+                "vram_used_gb": round(torch.cuda.memory_allocated(i) / (1024 ** 3), 2),
+                "vram_total_gb": round(torch.cuda.get_device_properties(i).total_memory / (1024 ** 3), 2),
+            }
     return {
         "status": "online",
         "pipeline": "gpu_finetune_7_models",
         "gpus_available": torch.cuda.device_count() if torch.cuda.is_available() else 0,
         "loaded_adapters": _loaded_adapters,
         "active_models": list(_models.keys()),
+        "gpus": gpu_info,
     }
 
 

@@ -10,7 +10,7 @@ from core.graph import build_research_rag_graph
 from modes.registry import get_mode_agents, get_agent, normalize_mode, MODE_MAP
 
 
-MODES = ["gemini", "cpu_min", "cpu_max", "kaggle_fn", "kaggle_max"]
+MODES = ["gemini", "cpu_min", "cpu_max", "gpu_ft", "gpu_finetune", "gpu_max", "hybrid"]
 EXPECTED_AGENTS = ["retrieval", "reader", "summarizer", "fact_checker", "writer"]
 
 
@@ -37,6 +37,9 @@ def test_normalize_mode_aliases():
     assert normalize_mode("API") == "gemini"
     assert normalize_mode("local_api") == "gemini"
     assert normalize_mode("cpu") == "cpu_max"
-    assert normalize_mode("kaggle") == "kaggle_max"
-    assert normalize_mode("kaggle_fn") == "kaggle_fn"
+    assert normalize_mode("kaggle") == "gpu_max"
+    assert normalize_mode("kaggle_max") == "gpu_max"
+    assert normalize_mode("kaggle_fn") == "gpu_ft"
+    assert normalize_mode("gpu_ft") == "gpu_ft"
+    assert normalize_mode("gpu_finetune") == "gpu_finetune"
     assert normalize_mode("cpu_min") == "cpu_min"

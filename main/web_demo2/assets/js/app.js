@@ -2881,10 +2881,159 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  // ==================== HOT-SWAP GPU VRAM MUTUAL EXCLUSION ====================
+  let isGpuMaxActive = false;
+
+  function updateGpuMutualExclusionUI(is32b) {
+    isGpuMaxActive = Boolean(is32b);
+    const hotSwapBanner = document.getElementById("hotSwapBanner");
+    const gpuFtBtn = document.querySelector('.quick-select-btn[data-mode="gpu_ft"]');
+    const gpuFnBtn = document.querySelector('.quick-select-btn[data-mode="gpu_finetune"]');
+
+    if (isGpuMaxActive) {
+      if (hotSwapBanner) hotSwapBanner.classList.add("show");
+      if (gpuFtBtn) {
+        gpuFtBtn.classList.add("vram-locked-dimmed");
+        gpuFtBtn.title = "⚠️ Đang khóa: Toàn bộ 32GB VRAM đang được GPU Max 32B độc chiếm.";
+      }
+      if (gpuFnBtn) {
+        gpuFnBtn.classList.add("vram-locked-dimmed");
+        gpuFnBtn.title = "⚠️ Đang khóa: Toàn bộ 32GB VRAM đang được GPU Max 32B độc chiếm.";
+      }
+      document.querySelectorAll(".agent-model-select").forEach(sel => {
+        Array.from(sel.options).forEach(opt => {
+          if (opt.value === "gpu_ft" || opt.value === "gpu_finetune") {
+            opt.disabled = true;
+          }
+        });
+      });
+    } else {
+      if (hotSwapBanner) hotSwapBanner.classList.remove("show");
+      if (gpuFtBtn) {
+        gpuFtBtn.classList.remove("vram-locked-dimmed");
+        gpuFtBtn.title = "Áp dụng GPU FT cho toàn bộ 5 Agent";
+      }
+      if (gpuFnBtn) {
+        gpuFnBtn.classList.remove("vram-locked-dimmed");
+        gpuFnBtn.title = "Áp dụng GPU Finetune (Cụm 7 Mô Hình SOTA) cho toàn bộ 5 Agent";
+      }
+      document.querySelectorAll(".agent-model-select").forEach(sel => {
+        Array.from(sel.options).forEach(opt => {
+          if (opt.value === "gpu_ft" || opt.value === "gpu_finetune") {
+            opt.disabled = false;
+          }
+        });
+      });
+    }
+  }
+
+  function showHotSwapModal(targetTitle, estimatedSeconds) {
+    const existing = document.getElementById("hotSwapModalOverlay");
+    if (existing) existing.remove();
+
+    const overlay = document.createElement("div");
+    overlay.id = "hotSwapModalOverlay";
+    overlay.className = "hot-swap-overlay";
+    overlay.innerHTML = `
+      <div class="hot-swap-card">
+        <div class="hot-swap-title">🔄 Đang Hoán Đổi VRAM Trên Kaggle GPU...</div>
+        <div class="hot-swap-desc">
+          Hệ thống đang thu hồi bộ nhớ và nạp <strong>${targetTitle}</strong> vào cụm Dual Tesla T4.<br>
+          Thời gian ước tính: khoảng <span id="hotSwapCountdown">${estimatedSeconds}</span> giây.
+        </div>
+        <div class="hot-swap-progress-bar-bg">
+          <div class="hot-swap-progress-bar-fill" id="hotSwapProgressBar"></div>
+        </div>
+        <div style="font-size: 11px; color: #64748b;">Vui lòng giữ nguyên màn hình, không đóng trình duyệt...</div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    let progress = 0;
+    const progressFill = document.getElementById("hotSwapProgressBar");
+    const countdownEl = document.getElementById("hotSwapCountdown");
+    let remaining = estimatedSeconds;
+
+    const interval = setInterval(() => {
+      progress += (100 / (estimatedSeconds * 10));
+      if (progress > 95) progress = 95;
+      if (progressFill) progressFill.style.width = progress + "%";
+      remaining -= 0.1;
+      if (countdownEl && remaining > 0) {
+        countdownEl.textContent = Math.ceil(remaining);
+      }
+    }, 100);
+
+    return {
+      close: () => {
+        clearInterval(interval);
+        if (progressFill) progressFill.style.width = "100%";
+        setTimeout(() => {
+          const el = document.getElementById("hotSwapModalOverlay");
+          if (el) el.remove();
+        }, 400);
+      }
+    };
+  }
+
+  async function executeRemoteHotSwap(targetMode) {
+    const isTo32B = (targetMode === "gpu_max");
+    const title = isTo32B ? "Đại Mô Hình Qwen 32B AWQ (TP=2)" : "Cụm 7 Mô Hình SOTA Finetune";
+    const estSec = isTo32B ? 55 : 35;
+
+    const modal = showHotSwapModal(title, estSec);
+    try {
+      const res = await fetch("/api/remote/switch-mode", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ target_mode: targetMode })
+      });
+      const data = await res.json();
+      modal.close();
+
+      if (!res.ok) {
+        alert("Lỗi hoán đổi VRAM: " + (data.detail || res.statusText));
+        return false;
+      }
+
+      await setAllAgentsMode(targetMode);
+      updateGpuMutualExclusionUI(isTo32B);
+      alert("🎉 " + (data.message || "Hoán đổi GPU thành công!"));
+      return true;
+    } catch (err) {
+      modal.close();
+      alert("Không thể kết nối đến máy chủ Kaggle: " + err.message);
+      return false;
+    }
+  }
+
+  // Hook revert button
+  const revertTo7ModelsBtn = document.getElementById("revertTo7ModelsBtn");
+  if (revertTo7ModelsBtn) {
+    revertTo7ModelsBtn.addEventListener("click", async () => {
+      if (confirm("Bạn có chắc muốn giải phóng 32B để nạp lại Cụm 7 Mô Hình SOTA trên Dual T4 không?")) {
+        await executeRemoteHotSwap("gpu_finetune");
+      }
+    });
+  }
+
   quickSelectBtns.forEach(btn => {
-    btn.addEventListener("click", () => {
+    btn.addEventListener("click", async () => {
       const mode = btn.dataset.mode;
+      if (btn.classList.contains("vram-locked-dimmed")) {
+        alert("⚠️ Chế độ này đang bị tạm khóa vì GPU Max 32B đang độc chiếm toàn bộ 32GB VRAM. Hãy bấm nút 'Đổi về 7 Mô Hình' trên thanh banner để giải phóng 32B trước!");
+        return;
+      }
+      if (mode === "gpu_max" && !isGpuMaxActive) {
+        if (confirm("⚡ Bạn đang chọn GPU Max (Đại mô hình 32B AWQ).\n\nĐể chạy mô hình này, hệ thống sẽ tự động giải phóng cụm 7 mô hình và nạp Qwen-32B vào 2x GPU T4 (mất khoảng 50s).\n\nBạn có muốn tiến hành hoán đổi VRAM ngay bây giờ không?")) {
+          await executeRemoteHotSwap("gpu_max");
+        }
+        return;
+      }
       setAllAgentsMode(mode);
+      if (mode !== "gpu_max") {
+        updateGpuMutualExclusionUI(false);
+      }
     });
   });
 

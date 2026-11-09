@@ -3399,3 +3399,118 @@ body.dark .slash-command-footer kbd {
 .agent-autonomy-banner .autonomy-icon {
   font-size: 13px;
 }
+
+
+/* ==============================================================================
+   HOT-SWAP GPU VRAM STATE & MUTUAL EXCLUSION STYLING
+   ============================================================================== */
+
+/* Khi GPU Max đang kích hoạt, các nút GPU khác bị khóa mờ */
+.quick-select-btn.vram-locked-dimmed {
+  opacity: 0.28 !important;
+  cursor: not-allowed !important;
+  pointer-events: none !important;
+  filter: grayscale(90%) !important;
+  background-color: #f1f5f9 !important;
+  border-color: #cbd5e1 !important;
+  color: #94a3b8 !important;
+}
+
+/* Banner Thông Báo Độc Quyền VRAM */
+.hot-swap-banner {
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  background: linear-gradient(135deg, #1e1b4b, #312e81);
+  color: #ffffff;
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-top: 10px;
+  margin-bottom: 6px;
+  font-size: 11px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+
+.hot-swap-banner.show {
+  display: flex !important;
+}
+
+.hot-swap-banner-text {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+}
+
+.hot-swap-revert-btn {
+  background-color: #ffffff;
+  color: #1e1b4b;
+  border: none;
+  border-radius: 5px;
+  padding: 4px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.hot-swap-revert-btn:hover {
+  background-color: #f8fafc;
+  transform: scale(1.02);
+}
+
+/* Modal Countdown Overlay */
+.hot-swap-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background-color: rgba(15, 23, 42, 0.75);
+  backdrop-filter: blur(4px);
+  z-index: 99999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.hot-swap-card {
+  background-color: #ffffff;
+  border-radius: 14px;
+  padding: 24px 28px;
+  width: 90%;
+  max-width: 440px;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.hot-swap-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.hot-swap-desc {
+  font-size: 13px;
+  color: #475569;
+  line-height: 1.5;
+}
+
+.hot-swap-progress-bar-bg {
+  width: 100%;
+  height: 8px;
+  background-color: #e2e8f0;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.hot-swap-progress-bar-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #6366f1, #8b5cf6);
+  border-radius: 999px;
+  transition: width 0.3s ease;
+}
