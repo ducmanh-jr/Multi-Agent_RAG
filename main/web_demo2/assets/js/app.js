@@ -2566,6 +2566,7 @@ document.addEventListener("DOMContentLoaded", () => {
       agentMatrixPopover.classList.toggle("open");
       if (agentMatrixPopover.classList.contains("open")) {
         updateGeminiUsageBadge();
+        checkKaggleStatus();
       }
     });
 
@@ -2754,6 +2755,14 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       await checkKaggleStatus();
+      // Tự động kiểm tra lại khi người dùng quay lại tab trình duyệt
+      window.addEventListener("focus", () => {
+        checkKaggleStatus();
+      });
+      // Heartbeat kiểm tra định kỳ mỗi 15 giây
+      setInterval(() => {
+        checkKaggleStatus();
+      }, 15000);
       checkOllamaStatus();
 
   // Ollama CPU Status Check & 1-Click Power Button
