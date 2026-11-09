@@ -134,22 +134,21 @@ def extract_clean_sentences(text: str) -> list[str]:
         )
         s_clean = s_clean.strip()
 
-        if len(s_clean) < 28:
+        if len(s_clean) < 20:
             continue
-        if s_clean.startswith("#") or s_clean.startswith("---") or "http" in s_clean:
+        if s_clean.startswith("#") or s_clean.startswith("---"):
+            continue
+        # Filter table artifacts and metadata banners
+        if re.match(r"^\*{0,2}(?:Task|Người thực hiện|Ước lượng|Point|Bảng|STT|Tác giả|Năm xuất bản|Nguồn công bố|Liên kết|Quyền riêng tư|Ảnh:|Theo tư liệu)\b", s_clean, re.I):
             continue
         if any(
             banner in s_clean.lower()
             for banner in ["chính sách bảo vệ", "dữ liệu cá nhân", "đồng ý tất cả", "cookie", "chấp nhận tất cả"]
         ):
             continue
-        if re.match(
-            r"^\*{0,2}(Tác giả|Năm xuất bản|Nguồn công bố|Liên kết|Quyền riêng tư|Ảnh:|Theo tư liệu)",
-            s_clean,
-            re.I,
-        ):
-            continue
-        if s_clean[-1] not in '.!?:"”':
+        # Allow technical lines, code blocks, semicolon configurations and standard punctuation
+        valid_endings = ('.', '!', '?', ':', ';', '}', '{', ')', ']', '"', '”', '`')
+        if s_clean[-1] not in valid_endings and not re.search(r"\b(?:nginx|systemctl|curl|docker|openssl|certbot|server)\b", s_clean, re.I):
             continue
 
         words = re.findall(r"\w+", s_clean)
@@ -249,19 +248,24 @@ class CPUMinSummarizerAgent(BaseAgent):
             )
         ) and not (is_date_q or is_year_q)
 
-        is_comparison_q = any(
-            w in clean_q.lower()
-            for w in ["so sánh", "đối chiếu", "so sanh", "doi chieu", "khác nhau", "khác biệt", "so-sanh", "so_sanh", "compare", "/so-sanh"]
-        ) or bool(state.get("is_comparative_query") or state.get("intent") == "compare")
+        is_comparison_q = (
+            any(
+                w in clean_q.lower()
+                for w in ["so sánh", "đối chiếu", "so sanh", "doi chieu", "/so-sanh", "compare"]
+            ) or bool(state.get("is_comparative_query") or state.get("intent") == "compare")
+        )
 
-        is_general_summary = any(
-            w in clean_q.lower()
-            for w in [
-                "tóm tắt", "tổng quan", "nội dung chính", "chính", "summary", "overview",
-                "abstract", "giới thiệu", "phương pháp", "kết quả", "đóng góp", "2 bài báo",
-                "các bài báo", "nói về gì", "nói về cái gì", "/tom-tat", "tom-tat"
-            ]
-        ) or is_comparison_q or bool(state.get("is_comparative_query") or state.get("intent") == "compare")
+        is_general_summary = (
+            clean_q.startswith("/")
+            or clean_q.lower().strip() in ["tóm tắt", "tổng quan", "nội dung chính", "tom-tat", "/tom-tat"]
+            or any(
+                kw in clean_q.lower()
+                for kw in [
+                    "tóm tắt", "tổng quan", "nội dung chính của tài liệu", "nội dung chính của bài báo",
+                    "tổng quát bài báo", "/tom-tat", "tom-tat", "summary", "overview", "abstract"
+                ]
+            )
+        )
 
         # 2. Group source units by distinct document
         docs_map: dict[str, list[dict[str, Any]]] = {}
@@ -303,69 +307,7 @@ class CPUMinSummarizerAgent(BaseAgent):
         ]
         token_cov = len(token_overlap) / max(len(q_tokens), 1)
 
-        # Precision Out-of-Domain Guard (Zero Hallucination)
-        NUM_WORDS = {'1': 'một', '2': 'hai', '3': 'ba', '4': 'bốn', '5': 'năm', '6': 'sáu', '7': 'bảy', '8': 'tám', '9': 'chín', '10': 'mười'}
-        cap_tokens = [w for w in re.findall(r"\b[A-ZĐ][A-Za-zà-ỹ0-9_-]+\b", clean_q) if len(w) > 2]
-        tech_terms = [
-            w.lower() for idx_w, w in enumerate(cap_tokens)
-            if (idx_w > 0 or w.lower() not in {"mô", "giá", "làm", "vì", "một", "báo", "hãy", "cho", "theo", "cấu"})
-            and w.lower() not in VIETNAMESE_STOP_WORDS
-        ]
-        ACRONYMS = {
-            "hđnd": "hội đồng nhân dân",
-            "ubnd": "ủy ban nhân dân",
-            "ttxvn": "thông tấn xã việt nam",
-            "fe": "frontend",
-            "be": "backend",
-        }
-        missing_tech = [
-            t for t in tech_terms
-            if t not in doc_full_text
-            and strip_accents(t) not in doc_full_text_unaccent
-            and (t not in ACRONYMS or ACRONYMS[t] not in doc_full_text)
-        ]
-
-        num_group_match = re.search(r"\b(\d+)\s+(nhóm|bước|phần|nguyên nhân|biện pháp)\b", clean_q.lower())
-        missing_group_phrase = False
-        if num_group_match:
-            digit = num_group_match.group(1)
-            word_entity = num_group_match.group(2)
-            word_form = NUM_WORDS.get(digit, digit)
-            cand1 = f"{digit} {word_entity}"
-            cand2 = f"{word_form} {word_entity}"
-            if cand1 not in doc_full_text and cand2 not in doc_full_text and strip_accents(cand2) not in doc_full_text_unaccent:
-                missing_group_phrase = True
-
-        is_out_of_domain = False
-        if not is_general_summary and not is_comparison_q:
-            if missing_tech or missing_group_phrase:
-                is_out_of_domain = True
-            elif proper_noun_phrases and not any(
-                p.lower() in doc_full_text or strip_accents(p.lower()) in doc_full_text_unaccent
-                for p in proper_noun_phrases
-            ):
-                is_out_of_domain = True
-            elif entities and not ent_present and token_cov < 0.5:
-                is_out_of_domain = True
-            elif token_cov < 0.35:
-                is_out_of_domain = True
-
-        if is_out_of_domain:
-            no_doc_msg = (
-                f"Dựa trên các bài báo/tài liệu hiện có trong hệ thống, thông tin về \"{clean_q}\" "
-                f"**hoàn toàn không được đề cập**.\n\n"
-                f"💡 **Gợi ý**: Bạn có thể tải thêm file PDF hoặc bài báo liên quan đến vấn đề này lên hệ thống "
-                f"để tôi đọc và phân tích cho bạn."
-            )
-            return {
-                "answer": no_doc_msg,
-                "claims": [{"id": "claim_1", "text": f"Tài liệu hiện có không đề cập đến '{clean_q}'.", "unit_id": None}],
-                "evidence_spans": [],
-                "critic_action": "approve",
-                "critic_feedback": {"action": "approve", "confidence": 1.0, "reason": "out_of_domain"},
-                "generator_model_family": "cpu_min_extractive",
-                "reasoning_trace": [self.log_action("cpu_min_summarization_completed", {"status": "out_of_domain"})],
-            }
+        # Out-of-domain is authoritatively handled by check_out_of_domain() at entry.
 
         # 5. MULTI-DOCUMENT SUMMARY (when user selects >= 2 documents)
         if len(docs_map) > 1 and (is_general_summary or is_comparison_q):
@@ -539,6 +481,7 @@ class CPUMinSummarizerAgent(BaseAgent):
             }
 
         # 7. SINGLE QUESTION EVALUATION & SCORING
+        quotes_in_q = [q.strip() for q in re.findall(r'[\"\'\`\“](.*?)[\"\'\`\”]', clean_q) if len(q.strip()) >= 2]
         all_candidates: list[dict[str, Any]] = []
         for u in source_units:
             u_text = str(u.get("text", ""))
@@ -556,7 +499,8 @@ class CPUMinSummarizerAgent(BaseAgent):
                 has_list = ":" in s and (";" in s or any(w in s_lower for w in ["thứ nhất", "nhóm vấn đề", "nội dung:"]))
                 has_num = bool(re.search(r"\b\d+(?:[.,]\d+)?%?\b", s))
 
-                score = token_hits * 3 + bigram_hits * 6 + ent_hits * 4 + req_ent_hits * 4
+                quote_hits = sum(1 for qt in quotes_in_q if _has_phrase(qt, s_lower, s_lower_unaccent, bool(re.search(r"[à-ỹÀ-Ỹ]", qt))))
+                score = token_hits * 3 + bigram_hits * 6 + ent_hits * 4 + req_ent_hits * 4 + quote_hits * 25
 
                 if is_date_q:
                     if has_date:
@@ -579,6 +523,9 @@ class CPUMinSummarizerAgent(BaseAgent):
 
                 richness = 3 if 60 <= len(s) <= 350 else 1
                 score += richness
+                # Deprioritize course meta-objectives when query is not asking for goals
+                if "mục tiêu" not in clean_q.lower() and re.match(r"^\s*Mục tiêu\b", s, re.I):
+                    score -= 35
 
                 if score >= 3 and (bigram_hits >= 1 or token_hits >= 1 or ent_hits >= 1 or is_general_summary):
                     all_candidates.append(
@@ -761,6 +708,20 @@ class CPUMinSummarizerAgent(BaseAgent):
 
         # CASE C: GENERAL FACTUAL SYNTHESIS
         else:
+            # Check if there is an immediate explanation sentence following top_sent in the same unit text
+            u_full_text = str(top_u.get("text", ""))
+            explanation_context = ""
+            if top_sent in u_full_text:
+                after_idx = u_full_text.find(top_sent) + len(top_sent)
+                subsequent = u_full_text[after_idx:after_idx + 450].strip()
+                for prefix in ["Giải thích:", "Lưu ý:", "Nguyên nhân:", "Mục đích:", "Tác dụng:", "Cụ thể:"]:
+                    if prefix.lower() in subsequent.lower():
+                        p_pos = subsequent.lower().find(prefix.lower())
+                        end_pos = subsequent.find("\n", p_pos)
+                        if end_pos == -1: end_pos = len(subsequent)
+                        explanation_context = subsequent[p_pos:end_pos].strip()
+                        break
+
             details = []
             for idx, cand in enumerate(selected_candidates[:5], 1):
                 pno = cand.get("page_no", 1)
@@ -774,9 +735,13 @@ class CPUMinSummarizerAgent(BaseAgent):
                 )
             details_str = "\n".join(details)
 
+            direct_ans_body = f"{top_sent} [1] *(Trang {top_page})*."
+            if explanation_context:
+                direct_ans_body += f"\n\n**Giải thích chi tiết:** {explanation_context}"
+
             answer = (
                 f"> **Câu trả lời trực tiếp:**\n"
-                f"Dựa trên tài liệu nghiên cứu (**{doc_name}**), {top_sent} [1] *(Trang {top_page})*.\n\n"
+                f"Dựa trên tài liệu nghiên cứu (**{doc_name}**), {direct_ans_body}\n\n"
                 f"**Thông tin chi tiết được ghi nhận từ tài liệu:**\n"
                 f"{details_str}\n"
             )

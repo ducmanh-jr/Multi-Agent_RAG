@@ -2846,8 +2846,9 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
 
-      // Mặc định khi tải lại trang là CPU Min cho toàn bộ 5 Agent
-      await setAllAgentsMode("cpu_min");
+      // Khôi phục mode đã lưu của người dùng (mặc định là gemini hoặc mode trước đó)
+      const savedMode = localStorage.getItem("rag_preferred_mode") || "gemini";
+      await setAllAgentsMode(savedMode);
       await updateGeminiUsageBadge();
     } catch (e) {
       console.warn("Failed to load /api/config:", e);
@@ -3016,6 +3017,7 @@ document.addEventListener("DOMContentLoaded", () => {
   async function setAllAgentsMode(mode) {
     let canonMode = mode;
     if (canonMode === "kaggle_fn" || canonMode === "fn") canonMode = "gpu_finetune";
+    try { localStorage.setItem("rag_preferred_mode", canonMode); } catch (_) {}
     const agentModes = {};
     document.querySelectorAll(".agent-model-select").forEach(select => {
       const agentKey = select.dataset.agent;
