@@ -154,16 +154,18 @@ def run():
     os.environ["PROJECT_DIR"] = repo_dir
 
     print("    ⚙️  Đang khởi động Master Gateway trên cổng 8000...")
+    supervisor_log = open(os.path.join(repo_dir, "kaggle", "supervisor.log"), "w", encoding="utf-8", errors="ignore")
     server_process = subprocess.Popen([
         sys.executable, "-m", "uvicorn",
-        "kaggle.kaggle_supervisor_gateway:app",
+        "kaggle_supervisor_gateway:app",
         "--host", "0.0.0.0",
         "--port", "8000",
-        "--app-dir", repo_dir,
-    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        "--app-dir", os.path.join(repo_dir, "kaggle"),
+    ], stdout=supervisor_log, stderr=subprocess.STDOUT)
 
     # Animated progress bar waiting for worker warmup
-    total_seconds = 45
+    total_seconds = 50
+    is_ready = False
     with tqdm(total=total_seconds, desc="    ⏳ Nạp mô hình vào 2 GPU", unit="s") as pbar:
         for s in range(total_seconds):
             time.sleep(1)
@@ -171,10 +173,19 @@ def run():
             try:
                 res = urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=2)
                 if res.status == 200:
+                    is_ready = True
                     pbar.update(total_seconds - s - 1)
                     break
             except Exception:
                 pass
+
+    if not is_ready:
+        log_file = os.path.join(repo_dir, "kaggle", "supervisor.log")
+        if os.path.exists(log_file):
+            print("\n    ⚠️ Nhật ký lỗi khởi động Gateway:")
+            with open(log_file, "r", encoding="utf-8", errors="ignore") as lf:
+                for line in lf.readlines()[-15:]:
+                    print("      " + line.strip())
 
     # Print Detailed Per-GPU VRAM Allocation Dashboard
     print("\n" + "─" * 78)

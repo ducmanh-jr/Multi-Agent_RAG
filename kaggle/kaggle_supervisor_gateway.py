@@ -14,6 +14,12 @@ import os
 import signal
 import subprocess
 import sys
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="ignore")
+        sys.stderr.reconfigure(encoding="utf-8", errors="ignore")
+    except Exception:
+        pass
 import time
 from typing import Any, Optional
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -93,10 +99,10 @@ def spawn_worker_finetune():
 
     cmd = [
         sys.executable, "-m", "uvicorn",
-        "kaggle.kaggle_finetune_server:app",
+        "kaggle_finetune_server:app",
         "--host", "127.0.0.1",
         "--port", "8001",
-        "--app-dir", PROJECT_DIR,
+        "--app-dir", os.path.join(PROJECT_DIR, "kaggle"),
     ]
     _worker_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
 
