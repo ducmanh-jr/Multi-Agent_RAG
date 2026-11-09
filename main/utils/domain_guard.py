@@ -45,21 +45,25 @@ VN_ASCII_WORDS = {
     "cac", "mot", "nay", "trong", "duoc", "giao", "tiep", "nhau", "qua", "lai",
     "cung", "chay", "cach", "theo", "bang", "thuc", "hien", "dung", "de", "khong",
     "phan", "biet", "nguoi", "nhom", "truong", "buoc", "dong", "them", "sua",
-    "con", "chi", "gia", "ban", "moi", "muc", "kem", "neu", "bai", "co"
+    "con", "chi", "gia", "ban", "moi", "muc", "kem", "neu", "bai", "co",
+    "mang", "tinh", "loi", "ich", "cao", "san", "sang", "giup", "biet", "ve"
 }
 
 
 def _has_phrase(phrase: str, doc_lower: str, doc_unaccented: str, query_has_accents: bool) -> bool:
-    """Matches a phrase or technical token with word boundary guards."""
+    """Matches a phrase or technical token with word boundary and multi-whitespace guards."""
     if not phrase:
         return False
-    p_c = re.escape(phrase.lower().strip())
+    words = phrase.lower().strip().split()
+    if not words:
+        return False
+    p_c = r"\s+".join(re.escape(w) for w in words)
     pat1 = r"(?<![\wà-ỹÀ-Ỹ])" + p_c + r"(?![\wà-ỹÀ-Ỹ])"
     if re.search(pat1, doc_lower):
         return True
     # Only fall back to unaccented match if the query itself was typed without accents
     if not query_has_accents:
-        p_u = re.escape(strip_accents(phrase.lower().strip()))
+        p_u = r"\s+".join(re.escape(strip_accents(w)) for w in words)
         pat2 = r"(?<!\w)" + p_u + r"(?!\w)"
         if re.search(pat2, doc_unaccented):
             return True
@@ -117,17 +121,17 @@ def check_out_of_domain(query: str, source_units: list[dict[str, Any]]) -> Tuple
 
     # Aggregate full document text
     raw_doc_text = " ".join(str(u.get("text", "")) for u in source_units)
-    doc_l = raw_doc_text.lower()
+    doc_l = re.sub(r"\s+", " ", raw_doc_text.lower())
     doc_unaccent = strip_accents(doc_l)
     query_has_accents = bool(re.search(r"[à-ỹÀ-Ỹ]", clean_q))
 
-    # 1. Check quoted entities FIRST: if user explicitly probes a quoted entity absent from document
+    # 1. Check quoted entities FIRST: if user explicitly probes quoted entities absent from document
     quotes = re.findall(r"[\"\'\`“](.*?)[\"\'\`”]", clean_q)
-    for q_entity in quotes:
-        q_clean_ent = q_entity.strip()
-        if len(q_clean_ent) >= 3 and not _has_phrase(q_clean_ent, doc_l, doc_unaccent, query_has_accents):
-            return True, f"quoted_entity_absent: '{q_clean_ent}'"
-
+    substantive_quotes = [q.strip() for q in quotes if len(q.strip()) >= 3]
+    if substantive_quotes:
+        matched_quotes = [q for q in substantive_quotes if _has_phrase(q, doc_l, doc_unaccent, query_has_accents)]
+        if not matched_quotes:
+            return True, f"quoted_entities_absent: {substantive_quotes}"
     # 2. Summary / Overview / Comparison commands are always in-domain (meta-document queries)
     is_slash_cmd = clean_q.startswith("/")
     is_general_summary = is_slash_cmd or any(
@@ -146,9 +150,10 @@ def check_out_of_domain(query: str, source_units: list[dict[str, Any]]) -> Tuple
         d_name = str(u.get("doc_id", "") or u.get("title", "") or u.get("filename", "")).lower()
         doc_id_tokens.update(re.findall(r"[a-zA-Z0-9]{2,}", d_name))
 
-    # 3. Check for foreign/English technical terms (excluding document's own name tokens)
+    # 3. Check for foreign/English technical terms (excluding document's own name tokens and parenthetical glosses)
+    q_no_parens = re.sub(r"\(.*?\)", " ", clean_q)
     foreign_terms = [
-        t for t in re.findall(r"\b[A-Za-z0-9_-]{4,}\b", clean_q)
+        t for t in re.findall(r"\b[A-Za-z0-9_-]{4,}\b", q_no_parens)
         if t.lower() not in VN_ASCII_WORDS
         and not re.search(r"[à-ỹÀ-Ỹ]", t)
         and t.lower() not in GENERIC_COMMON_WORDS
@@ -157,7 +162,11 @@ def check_out_of_domain(query: str, source_units: list[dict[str, Any]]) -> Tuple
     ]
     missing_foreign = [t for t in foreign_terms if not _has_phrase(t, doc_l, doc_unaccent, query_has_accents)]
     if foreign_terms and len(missing_foreign) == len(foreign_terms):
-        return True, f"foreign_term_absent: {foreign_terms}"
+        # Only reject if there are no other substantive matched subject phrases in the query
+        phrases = extract_core_subject_phrases(clean_q)
+        has_other_match = any(_has_phrase(p, doc_l, doc_unaccent, query_has_accents) for p in phrases if p.lower() not in [f.lower() for f in foreign_terms])
+        if not has_other_match:
+            return True, f"foreign_term_absent: {foreign_terms}"
 
     # 4. Check core subject phrases & compound n-grams (excluding document's own name tokens)
     phrases = extract_core_subject_phrases(clean_q)
