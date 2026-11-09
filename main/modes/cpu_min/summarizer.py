@@ -710,16 +710,24 @@ class CPUMinSummarizerAgent(BaseAgent):
         else:
             # Check if there is an immediate explanation sentence following top_sent in the same unit text
             u_full_text = str(top_u.get("text", ""))
+            u_norm = re.sub(r"\s+", " ", u_full_text)
+            top_norm = re.sub(r"\s+", " ", top_sent)
             explanation_context = ""
-            if top_sent in u_full_text:
-                after_idx = u_full_text.find(top_sent) + len(top_sent)
-                subsequent = u_full_text[after_idx:after_idx + 450].strip()
+            if top_norm in u_norm:
+                after_idx = u_norm.find(top_norm) + len(top_norm)
+                subsequent = u_norm[after_idx:after_idx + 650].strip()
                 for prefix in ["Giải thích:", "Lưu ý:", "Nguyên nhân:", "Mục đích:", "Tác dụng:", "Cụ thể:"]:
                     if prefix.lower() in subsequent.lower():
                         p_pos = subsequent.lower().find(prefix.lower())
-                        end_pos = subsequent.find("\n", p_pos)
-                        if end_pos == -1: end_pos = len(subsequent)
-                        explanation_context = subsequent[p_pos:end_pos].strip()
+                        para = subsequent[p_pos:]
+                        # Stop at next section heading like '2.4. Upstream'
+                        para_clean = re.split(r"(?:\s|^)\d+\.\d+\.\s+[A-ZĐ]", para)[0].strip()
+                        # cut at end of sentence
+                        m_end = re.search(r"(?<=[a-zà-ỹ\)])\.(?:\s+|$)", para_clean)
+                        if m_end:
+                            explanation_context = para_clean[:m_end.end()].strip()
+                        else:
+                            explanation_context = para_clean[:350].strip()
                         break
 
             details = []
