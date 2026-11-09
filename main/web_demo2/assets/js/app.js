@@ -2576,6 +2576,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (agentMatrixPopover.classList.contains("open")) {
         updateGeminiUsageBadge();
         checkKaggleStatus();
+        checkOllamaStatus();
       }
     });
 
@@ -2594,10 +2595,10 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // ==================== 10. SYSTEM CONFIG & KAGGLE ====================
-  function updateModelOptionsAvailability(isKaggleOnline, isGeminiOnline = true, isOllamaOnline = false) {
-    state.isKaggleOnline = Boolean(isKaggleOnline);
-    state.isGeminiOnline = Boolean(isGeminiOnline);
-    state.isOllamaOnline = Boolean(isOllamaOnline);
+  function updateModelOptionsAvailability(isKaggleOnline, isGeminiOnline, isOllamaOnline) {
+    if (isKaggleOnline !== undefined) state.isKaggleOnline = Boolean(isKaggleOnline);
+    if (isGeminiOnline !== undefined) state.isGeminiOnline = Boolean(isGeminiOnline);
+    if (isOllamaOnline !== undefined) state.isOllamaOnline = Boolean(isOllamaOnline);
 
     // 1. Cập nhật các nút Quick Select (Mờ xám nhạt và chặn chọn khi Offline)
     const gpuButtons = document.querySelectorAll('.quick-select-btn[data-mode="gpu_ft"], .quick-select-btn[data-mode="gpu_finetune"], .quick-select-btn[data-mode="gpu_max"], .quick-select-btn[data-mode="hybrid"]');
@@ -2767,10 +2768,12 @@ document.addEventListener("DOMContentLoaded", () => {
       // Tự động kiểm tra lại khi người dùng quay lại tab trình duyệt
       window.addEventListener("focus", () => {
         checkKaggleStatus();
+        checkOllamaStatus();
       });
       // Heartbeat kiểm tra định kỳ mỗi 15 giây
       setInterval(() => {
         checkKaggleStatus();
+        checkOllamaStatus();
       }, 15000);
       checkOllamaStatus();
 
@@ -2823,6 +2826,9 @@ document.addEventListener("DOMContentLoaded", () => {
           ollamaToggleBtn.className = "split-action-btn online";
           ollamaToggleBtn.innerHTML = '<span class="action-text">ON</span>';
           ollamaToggleBtn.title = "Ollama CPU đang chạy (Online)";
+          state.isOllamaOnline = true;
+          updateModelOptionsAvailability(undefined, undefined, true);
+          setAllAgentsMode("cpu_max");
           alert(data.message || "Đã khởi động Ollama CPU thành công.");
         } else {
           ollamaToggleBtn.className = "split-action-btn offline";
