@@ -2681,19 +2681,14 @@ document.addEventListener("DOMContentLoaded", () => {
   function syncModelLabelsFromDropdowns() {
     const selects = Array.from(document.querySelectorAll(".agent-model-select"));
     if (!selects.length) return;
-    const allValues = selects.map(s => {
-      let v = s.value;
-      if (v === "gpu_ft") v = "gpu_finetune";
-      return v;
-    });
+    const allValues = selects.map(s => s.value);
     const allSame = allValues.every(v => v === allValues[0]);
 
     if (allSame) {
       const mode = allValues[0];
       const label = MODE_LABELS[mode] || mode;
       quickSelectBtns.forEach(btn => {
-        let btnMode = btn.dataset.mode;
-        if (btnMode === "gpu_ft") btnMode = "gpu_finetune";
+        const btnMode = btn.dataset.mode;
         const isOffline = btn.classList.contains("mode-offline-dimmed") || (btn.parentElement && btn.parentElement.classList.contains("mode-offline-dimmed"));
         btn.classList.toggle("active", btnMode === mode && !isOffline);
       });
@@ -2966,7 +2961,7 @@ document.addEventListener("DOMContentLoaded", () => {
             let targetMode = data.agent_modes[agentKey];
             if (targetMode === "cpu") targetMode = "cpu_min";
             if (targetMode === "model" || targetMode === "kaggle" || targetMode === "kaggle_max") targetMode = "gpu_max";
-            if (targetMode === "kaggle_fn" || targetMode === "fn" || targetMode === "gpu_ft") targetMode = "gpu_finetune";
+            if (targetMode === "kaggle_fn" || targetMode === "fn") targetMode = "gpu_ft";
             if (targetMode === "api") targetMode = "gemini";
             if (targetMode) {
               const opt = Array.from(select.options).find(o => o.value === targetMode);
@@ -2996,13 +2991,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
   async function setAllAgentsMode(mode) {
     let canonMode = mode;
-    if (canonMode === "gpu_ft" || canonMode === "kaggle_fn" || canonMode === "fn") canonMode = "gpu_finetune";
+    if (canonMode === "kaggle_fn" || canonMode === "fn") canonMode = "gpu_finetune";
     const agentModes = {};
     document.querySelectorAll(".agent-model-select").forEach(select => {
       const agentKey = select.dataset.agent;
       select.value = canonMode;
       if (!select.value) {
-        const matchingOpt = Array.from(select.options).find(o => o.value === canonMode || (canonMode === "gpu_finetune" && o.value === "gpu_ft"));
+        const matchingOpt = Array.from(select.options).find(o => o.value === canonMode);
         if (matchingOpt) select.value = matchingOpt.value;
       }
       if (!select.value) {
