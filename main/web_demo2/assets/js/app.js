@@ -1004,7 +1004,7 @@ document.addEventListener("DOMContentLoaded", () => {
     setButtonState("running");
 
     if (welcomeHero) welcomeHero.style.display = "none";
-    appendUserMessage(text);
+    const userMsgCard = appendUserMessage(text);
 
     // KIỂM TRA KẾT NỐI MÔ HÌNH: Nếu người dùng chọn mô hình chưa kết nối (VD: Kaggle FN / Kaggle Max chưa kết nối)
     const hasUnconnectedModel = Array.from(document.querySelectorAll(".agent-model-select")).some(select => {
@@ -1074,7 +1074,15 @@ document.addEventListener("DOMContentLoaded", () => {
     const messageCard = createAgentSkeleton(initialTask);
     activeMessageCard = messageCard;
     messageFeed.appendChild(messageCard);
-    messageFeed.scrollTo({ top: messageFeed.scrollHeight, behavior: "smooth" });
+
+    // Cuộn câu hỏi lên ngang tầm giữa màn hình (center) để nội dung bên dưới rộng rãi, không bị thanh chat che
+    setTimeout(() => {
+      if (userMsgCard) {
+        userMsgCard.scrollIntoView({ behavior: "smooth", block: "center" });
+      } else {
+        messageCard.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    }, 60);
 
     // Live Stopwatch Timer
     const startTime = performance.now();
@@ -1247,13 +1255,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function appendUserMessage(text) {
     const div = document.createElement("div");
-    div.className = "message-card";
+    div.className = "message-card user-message-card";
     div.innerHTML = `
       <div class="user-query-row">
         <div class="user-query-bubble">${escapeHtml(text)}</div>
       </div>
     `;
     messageFeed.appendChild(div);
+    return div;
   }
 
   function createAgentSkeleton(initialTask = "Đang đọc hiểu tài liệu và đối soát") {
@@ -2166,7 +2175,7 @@ document.addEventListener("DOMContentLoaded", () => {
       });
 
       container.appendChild(card);
-      messageFeed.scrollTo({ top: messageFeed.scrollHeight, behavior: "smooth" });
+      card.scrollIntoView({ behavior: "smooth", block: "nearest" });
     } catch (err) {
       console.error("[ResearchDesk] Critical error in renderFinalAnswer:", err);
       const fallbackCard = document.createElement("div");
@@ -2180,7 +2189,7 @@ document.addEventListener("DOMContentLoaded", () => {
         </div>
       `;
       container.appendChild(fallbackCard);
-      messageFeed.scrollTo({ top: messageFeed.scrollHeight, behavior: "smooth" });
+      fallbackCard.scrollIntoView({ behavior: "smooth", block: "nearest" });
     }
   }
 
