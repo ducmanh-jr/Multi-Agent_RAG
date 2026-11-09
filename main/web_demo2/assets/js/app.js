@@ -2507,18 +2507,46 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // ==================== 10. SYSTEM CONFIG & KAGGLE ====================
-  function updateModelOptionsAvailability(isKaggleOnline, isGeminiOnline = true) {
+    function updateModelOptionsAvailability(isKaggleOnline, isGeminiOnline = true, isOllamaOnline = false) {
     state.isKaggleOnline = Boolean(isKaggleOnline);
     state.isGeminiOnline = Boolean(isGeminiOnline);
+    state.isOllamaOnline = Boolean(isOllamaOnline);
 
+    // 1. Cập nhật các nút Quick Select (Mờ xám nhạt và chặn chọn khi Offline)
+    const gpuButtons = document.querySelectorAll('.quick-select-btn[data-mode="gpu_ft"], .quick-select-btn[data-mode="gpu_finetune"], .quick-select-btn[data-mode="gpu_max"], .quick-select-btn[data-mode="hybrid"]');
+    gpuButtons.forEach(btn => {
+      if (!state.isKaggleOnline) {
+        btn.classList.add("mode-offline-dimmed");
+        btn.classList.remove("active");
+        btn.title = "⚠️ Cụm Kaggle GPU chưa kết nối (Offline). Hãy khởi động Kaggle và nhập URL để kích hoạt.";
+      } else {
+        btn.classList.remove("mode-offline-dimmed");
+      }
+    });
+
+    const cpuMaxBtn = document.querySelector('.quick-select-btn[data-mode="cpu_max"]');
+    const cpuMaxSplit = document.getElementById("cpuMaxSplit");
+    if (cpuMaxBtn && cpuMaxSplit) {
+      if (!state.isOllamaOnline) {
+        cpuMaxSplit.classList.add("mode-offline-dimmed");
+        cpuMaxBtn.classList.add("mode-offline-dimmed");
+        cpuMaxBtn.classList.remove("active");
+        cpuMaxBtn.title = "⚠️ Máy chủ Ollama CPU Max đang TẮT (OFF). Hãy nhấn nút [OFF] màu đỏ bên cạnh để bật.";
+      } else {
+        cpuMaxSplit.classList.remove("mode-offline-dimmed");
+        cpuMaxBtn.classList.remove("mode-offline-dimmed");
+        cpuMaxBtn.title = "Áp dụng CPU Max cho toàn bộ 5 Agent";
+      }
+    }
+
+    // 2. Cập nhật thẻ select của từng Agent
     agentModelSelects.forEach(select => {
       const options = select.options;
-
       for (let i = 0; i < options.length; i++) {
         const opt = options[i];
-        if (opt.value.startsWith("kaggle") || opt.value.startsWith("gpu")) {
-          opt.disabled = false;
-          if (!isKaggleOnline) {
+        if (opt.value.startsWith("kaggle") || opt.value.startsWith("gpu") || opt.value === "hybrid") {
+          opt.disabled = !state.isKaggleOnline;
+          if (!state.isKaggleOnline) {
             opt.dataset.connected = "false";
             opt.classList.add("model-option-disabled");
             if (!opt.textContent.includes("(Chưa kết nối)")) {
@@ -2526,6 +2554,17 @@ document.addEventListener("DOMContentLoaded", () => {
             }
           } else {
             opt.dataset.connected = "true";
+            opt.classList.remove("model-option-disabled");
+            opt.textContent = opt.textContent.replace(/\s*\(.*?\)/, "") + " (Sẵn sàng)";
+          }
+        } else if (opt.value === "cpu_max") {
+          opt.disabled = !state.isOllamaOnline;
+          if (!state.isOllamaOnline) {
+            opt.classList.add("model-option-disabled");
+            if (!opt.textContent.includes("(Đang tắt)")) {
+              opt.textContent = opt.textContent.replace(/\s*\(.*?\)/, "") + " (Đang tắt)";
+            }
+          } else {
             opt.classList.remove("model-option-disabled");
             opt.textContent = opt.textContent.replace(/\s*\(.*?\)/, "") + " (Sẵn sàng)";
           }
@@ -2542,7 +2581,7 @@ document.addEventListener("DOMContentLoaded", () => {
             opt.classList.remove("model-option-disabled");
             opt.textContent = opt.textContent.replace(/\s*\(.*?\)/, "") + " (Sẵn sàng)";
           }
-        } else if (opt.value.startsWith("cpu") || opt.value === "hybrid") {
+        } else if (opt.value === "cpu_min") {
           opt.disabled = false;
           opt.dataset.connected = "true";
           opt.classList.remove("model-option-disabled");
@@ -2551,7 +2590,6 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  
   // ==================== GEMINI USAGE QUOTA TRACKER ====================
   let lastGeminiBadge = "0 / 1.500";
 
@@ -2640,26 +2678,29 @@ document.addEventListener("DOMContentLoaded", () => {
       const res = await fetch("/api/config/local-cpu/test");
       const data = await res.json();
       const isOnline = Boolean(data.is_online);
+      state.isOllamaOnline = isOnline;
       if (isOnline) {
         ollamaToggleBtn.className = "split-action-btn online";
         ollamaToggleBtn.innerHTML = '<span class="action-text">ON</span>';
-        ollamaToggleBtn.title = "Ollama CPU đang chạy (Online). Nhấp để kiểm tra lại.";
+        ollamaToggleBtn.title = "Ollama CPU đang chạy (Online).";
       } else {
         ollamaToggleBtn.className = "split-action-btn offline";
         ollamaToggleBtn.innerHTML = '<span class="action-text">OFF</span>';
         ollamaToggleBtn.title = "Ollama CPU chưa bật. Nhấp để bật ngay.";
       }
+      updateModelOptionsAvailability(state.isKaggleOnline, state.isGeminiOnline, isOnline);
       return isOnline;
     } catch (e) {
+      state.isOllamaOnline = false;
       if (ollamaToggleBtn) {
         ollamaToggleBtn.className = "split-action-btn offline";
         ollamaToggleBtn.innerHTML = '<span class="action-text">OFF</span>';
         ollamaToggleBtn.title = "Chưa kết nối server CPU. Nhấp để bật.";
       }
+      updateModelOptionsAvailability(state.isKaggleOnline, state.isGeminiOnline, false);
       return false;
     }
   }
-
   if (ollamaToggleBtn) {
     ollamaToggleBtn.addEventListener("click", async (e) => {
       e.stopPropagation();
@@ -2707,6 +2748,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const res = await fetch("/api/config/remote-url/test");
       const data = await res.json();
       const isOnline = Boolean(data.is_online);
+      state.isKaggleOnline = isOnline;
       if (isOnline && kaggleStatusBadge) {
         kaggleStatusBadge.textContent = "Online";
         kaggleStatusBadge.className = "kaggle-status-badge online";
@@ -2714,10 +2756,11 @@ document.addEventListener("DOMContentLoaded", () => {
         kaggleStatusBadge.textContent = "Offline";
         kaggleStatusBadge.className = "kaggle-status-badge";
       }
-      updateModelOptionsAvailability(isOnline, true);
+      updateModelOptionsAvailability(isOnline, state.isGeminiOnline, state.isOllamaOnline);
       return isOnline;
     } catch (e) {
-      updateModelOptionsAvailability(false, true);
+      state.isKaggleOnline = false;
+      updateModelOptionsAvailability(false, state.isGeminiOnline, state.isOllamaOnline);
       return false;
     }
   }
@@ -3020,6 +3063,14 @@ document.addEventListener("DOMContentLoaded", () => {
   quickSelectBtns.forEach(btn => {
     btn.addEventListener("click", async () => {
       const mode = btn.dataset.mode;
+      if (btn.classList.contains("mode-offline-dimmed") || (btn.parentElement && btn.parentElement.classList.contains("mode-offline-dimmed"))) {
+        if (mode === "cpu_max") {
+          alert("⚠️ Máy chủ CPU Max (Ollama) đang TẮT [OFF]!\n\nVui lòng nhấn nút [OFF] màu đỏ bên cạnh để khởi động máy chủ Ollama trên localhost:11434 trước khi chọn.");
+        } else if (mode.startsWith("gpu") || mode === "hybrid") {
+          alert("⚠️ Cụm Kaggle GPU chưa được kết nối [Offline]!\n\nVui lòng khởi chạy notebook trên Kaggle và nhập đường dẫn REMOTE_INFERENCE_URL vào ô cấu hình để kích hoạt các chế độ GPU.");
+        }
+        return;
+      }
       if (btn.classList.contains("vram-locked-dimmed")) {
         alert("⚠️ Chế độ này đang bị tạm khóa vì GPU Max 32B đang độc chiếm toàn bộ 32GB VRAM. Hãy bấm nút 'Đổi về 7 Mô Hình' trên thanh banner để giải phóng 32B trước!");
         return;
