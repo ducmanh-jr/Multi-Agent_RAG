@@ -8,6 +8,9 @@ Combines:
 
 from __future__ import annotations
 
+import re
+
+
 from typing import Any, Optional
 from core.base_agent import BaseAgent
 from core.state import AgentState, ClaimCheckResult, EvidenceGap
@@ -166,15 +169,29 @@ class FactCheckerAgent(BaseAgent):
         # 5. Senior Peer-Reviewer Statistical Audit
         stat_audit = audit_statistical_methodology(claims_to_check, context_corpus)
 
-        # 6. Formal Mathematical / Tensor Sandbox Verification
+        # 6. Formal Mathematical / Tensor Sandbox Verification (Grounded in query/claim numbers)
         code_verif = None
-        lower_q = query.lower()
-        if "lora" in lower_q or "nén tham số" in lower_q or "low-rank" in lower_q:
-            self.logger.info(f"[{self.name}] Kích hoạt Python Sandbox kiểm chứng công thức phân rã ma trận LoRA...")
-            code_verif = verify_lora_decomposition()
-        elif "attention" in lower_q or "chú ý" in lower_q or "transformer" in lower_q or "flashattention" in lower_q:
-            self.logger.info(f"[{self.name}] Kích hoạt Python Sandbox kiểm chứng kích thước chiều ma trận Attention...")
-            code_verif = verify_attention_matrix_shapes()
+        full_text_to_audit = f"{query} {' '.join(claims_to_check)}"
+        
+        has_lora_math = any(kw in full_text_to_audit.lower() for kw in ["lora", "low-rank", "phân rã ma trận"]) and bool(re.search(r"\b(?:rank|r\s*=|\d+\s*(?:x|×)\s*\d+)\b", full_text_to_audit, re.IGNORECASE))
+        has_attn_math = any(kw in full_text_to_audit.lower() for kw in ["attention", "transformer", "flashattention"]) and bool(re.search(r"\b(?:heads?|qk\^t|chiều ma trận|num_heads)\b", full_text_to_audit, re.IGNORECASE))
+
+        if has_lora_math:
+            r_match = re.search(r"\b(?:rank|r)\s*[=:]?\s*(\d+)\b", full_text_to_audit, re.IGNORECASE)
+            dim_match = re.search(r"\b(?:dim|dimension|d)\s*[=:]?\s*(\d+)\b", full_text_to_audit, re.IGNORECASE)
+            if r_match:
+                rank_val = int(r_match.group(1))
+                dim_val = int(dim_match.group(1)) if dim_match else 4096
+                self.logger.info(f"[{self.name}] Kích hoạt Python Sandbox kiểm chứng LoRA rank={rank_val}, dim={dim_val}...")
+                code_verif = verify_lora_decomposition(d_in=dim_val, d_out=dim_val, rank=rank_val)
+        elif has_attn_math:
+            heads_match = re.search(r"\b(?:heads?|h)\s*[=:]?\s*(\d+)\b", full_text_to_audit, re.IGNORECASE)
+            dim_match = re.search(r"\b(?:dim|d_model|d)\s*[=:]?\s*(\d+)\b", full_text_to_audit, re.IGNORECASE)
+            if heads_match:
+                heads_val = int(heads_match.group(1))
+                dim_val = int(dim_match.group(1)) if dim_match else 64
+                self.logger.info(f"[{self.name}] Kích hoạt Python Sandbox kiểm chứng Attention heads={heads_val}, dim={dim_val}...")
+                code_verif = verify_attention_matrix_shapes(d_model=dim_val, num_heads=heads_val)
 
         # 7. Classify Answer Status and Generate Short Answer
         status_category, short_ans = classify_answer_and_status(

@@ -38,3 +38,27 @@ def test_summarizer_agent_run():
     assert "claims" in output
     assert "evidence_spans" in output
     assert len(output["claims"]) > 0
+
+
+def test_out_of_domain_response_principles():
+    from utils.domain_guard import build_out_of_domain_response
+    res = build_out_of_domain_response("Lịch sử phát triển tàu vũ trụ Apollo")
+    assert "hoàn toàn không được đề cập" in res["answer"]
+    assert "Vui lòng hỏi các câu hỏi liên quan đến nội dung tài liệu được cung cấp" in res["answer"]
+    assert res["is_out_of_domain"] is True
+    assert res.get("answer_status") == "NOT_FOUND_IN_DOCUMENT"
+
+
+def test_ambiguous_clarification_response_principles():
+    from utils.domain_guard import build_ambiguous_clarification_response
+    branches = [
+        {"topic": "Mô hình Base", "ref": "Bảng 2, Trang 7", "preview": "BLEU đạt 27.3"},
+        {"topic": "Mô hình Big", "ref": "Bảng 2, Trang 7", "preview": "BLEU đạt 28.4"},
+    ]
+    res = build_ambiguous_clarification_response("kết quả thực nghiệm", branches)
+    assert "Vui lòng cung cấp thêm chi tiết để tôi hỗ trợ chính xác hơn dựa trên tài liệu." in res["answer"]
+    assert "Mô hình Base" in res["answer"]
+    assert "Mô hình Big" in res["answer"]
+    assert res["is_ambiguous"] is True
+    assert res["answer_status"] == "CLARIFICATION_NEEDED"
+

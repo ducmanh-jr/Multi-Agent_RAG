@@ -52,7 +52,7 @@ class HybridFactCheckerAgent(BaseAgent):
             q_entities = [
                 e.lower()
                 for e in re.findall(r"\b[A-Za-z0-9_-]{4,}\b", query)
-                if e.lower() not in {"trong", "tai", "lieu", "trang", "theo", "chinh", "xac", "khong"}
+                if e.lower() not in {"trong", "tai", "lieu", "trang", "theo", "chinh", "xac", "khong", "thong", "tin", "duoc", "nhung", "dong", "thoi", "hoan", "toan", "nao", "sao", "gi", "bang", "giua", "cac", "nhung"}
             ]
             
             found_entities = [e for e in q_entities if e in full_text] if (full_text and q_entities) else []
@@ -91,7 +91,7 @@ class HybridFactCheckerAgent(BaseAgent):
                 self.logger.warning(f"[Hybrid FactChecker] GPU Finetune NLI failed ({exc}), cascading...")
 
         # Priority 2: Local CPU Max MiniCheck NLI + Deterministic Numerical Guard (100% offline)
-        if not out.get("verified_claims") and not out.get("rejected_claims"):
+        if not out or "fact_check_label" not in out:
             try:
                 selected_verifier = "local_cpu_minicheck_nli"
                 out = self._cpu_max_fc.run(state)
@@ -100,7 +100,7 @@ class HybridFactCheckerAgent(BaseAgent):
                 self.logger.warning(f"[Hybrid FactChecker] Local CPU verifier failed ({exc}), cascading...")
 
         # Priority 3: GPU Max 32B CoT Judge nếu online
-        if not out.get("verified_claims") and not out.get("rejected_claims") and caps.get("kaggle_max", {}).get("online") and caps.get("kaggle_max", {}).get("has_vllm_32b"):
+        if (not out or "fact_check_label" not in out) and caps.get("kaggle_max", {}).get("online") and caps.get("kaggle_max", {}).get("has_vllm_32b"):
             try:
                 selected_verifier = "gpu_max_32b_cot_judge"
                 out = self._gpu_max_fc.run(state)
@@ -108,7 +108,7 @@ class HybridFactCheckerAgent(BaseAgent):
                 self.logger.warning(f"[Hybrid FactChecker] GPU Max judge failed ({exc}), cascading...")
 
         # Priority 4 (Ưu tiên CUỐI CÙNG): Gemini Batch NLI API (Chỉ khi GPU & Local CPU đều offline)
-        if not out.get("verified_claims") and not out.get("rejected_claims") and caps.get("gemini", {}).get("online"):
+        if (not out or "fact_check_label" not in out) and caps.get("gemini", {}).get("online"):
             try:
                 selected_verifier = "gemini_batch_nli_fallback"
                 out = self._gemini_fc.run(state)
@@ -116,7 +116,7 @@ class HybridFactCheckerAgent(BaseAgent):
                 self.logger.warning(f"[Hybrid FactChecker] Gemini verifier fallback failed ({exc})")
 
         # Emergency fallback: deterministic local verification
-        if not out.get("verified_claims") and not out.get("rejected_claims"):
+        if not out or "fact_check_label" not in out:
             out = self._cpu_max_fc.run(state)
             selected_verifier = "deterministic_emergency"
 

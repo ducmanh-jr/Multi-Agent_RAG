@@ -56,15 +56,17 @@ class CPUMinReaderAgent(BaseAgent):
             doc_id = str(doc.get("doc_id") or doc.get("title") or f"doc_{idx + 1}")
             page_no = int(doc.get("page_no") or doc.get("page") or 1)
             pages_covered.add(page_no)
+            orig_offset = doc.get("character_offset") or doc.get("start_offset") or doc.get("offset")
+            unit_offset = int(orig_offset) if orig_offset is not None else curr_offset
             unit = SourceUnit(
                 id=str(doc.get("id") or f"{doc_id}_p{page_no}_u{idx + 1}"),
                 text=clean_text,
                 doc_id=doc_id,
                 page_no=page_no,
-                character_offset=curr_offset,
+                character_offset=unit_offset,
             )
             source_units.append(unit.to_dict())
-            curr_offset += len(clean_text) + 1
+            curr_offset = unit_offset + len(clean_text) + 1
 
         # 2. Fallback if retrieved_docs was empty but pdf_paths exist
         if not source_units and pdf_paths:
@@ -77,15 +79,17 @@ class CPUMinReaderAgent(BaseAgent):
                     clean_text = sanitize_unit_text(raw_text)
                     if not clean_text:
                         continue
+                    orig_offset = ch.get("character_offset") or ch.get("start_offset") or ch.get("offset")
+                    unit_offset = int(orig_offset) if orig_offset is not None else curr_offset
                     unit = SourceUnit(
                         id=str(ch.get("id", f"u_{len(source_units) + 1}")),
                         text=clean_text,
                         doc_id=str(ch.get("doc_id", os.path.basename(p))),
                         page_no=int(ch.get("page_no", 1)),
-                        character_offset=curr_offset,
+                        character_offset=unit_offset,
                     )
                     source_units.append(unit.to_dict())
-                    curr_offset += len(clean_text) + 1
+                    curr_offset = unit_offset + len(clean_text) + 1
 
         document_schema = {
             "doc_id": source_units[0]["doc_id"] if source_units else "unknown",

@@ -93,11 +93,16 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Tracking Active Polling & Timer Intervals (prevents memory leak & overlapping poll cycles)
   let activePollInterval = null;
+  let activePollTimeout = null;
   let activeTimerInterval = null;
   let activeMessageCard = null;
   let activeAbortController = null;
 
   function clearActivePolling() {
+    if (activePollTimeout) {
+      clearTimeout(activePollTimeout);
+      activePollTimeout = null;
+    }
     if (activePollInterval) {
       clearInterval(activePollInterval);
       activePollInterval = null;
@@ -392,6 +397,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   async function selectSession(sessionId) {
     clearActivePolling();
+    clearActiveTimer();
     state.activeSessionId = sessionId;
     localStorage.setItem("researchdesk_active_session", sessionId);
 
@@ -483,6 +489,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function resetToWelcomeScreen() {
     clearActivePolling();
+    clearActiveTimer();
     messageFeed.innerHTML = "";
     if (welcomeHero) {
       messageFeed.appendChild(welcomeHero);
@@ -528,10 +535,10 @@ document.addEventListener("DOMContentLoaded", () => {
       const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
       const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
 
-      if (diffMins < 5) return "Vừa xong";
-      if (diffMins < 60) return `${diffMins} phút trước`;
-      if (diffHours < 24) return `${diffHours} giờ trước`;
-      if (diffDays === 1) return "Hôm qua";
+      if (diffMins < 5) return "V\xc3\xb9a xong";
+      if (diffMins < 60) return `${diffMins} ph\xc3\xba t tr\xc6\xb0\xe1\xbb\x9bc`;
+      if (diffHours < 24) return `${diffHours} gi\xe1\xbb\x9d tr\xc6\xb0\xe1\xbb\x9bc`;
+      if (diffDays === 1) return "H\xc3\xb4m qua";
       return `${d.getDate()}/${d.getMonth() + 1}`;
     } catch (e) {
       return "";
@@ -547,6 +554,9 @@ document.addEventListener("DOMContentLoaded", () => {
       if (docCount) docCount.textContent = state.documents.length;
       if (docCountBadge) docCountBadge.textContent = state.documents.length;
       renderDocuments();
+      if (state.documents.length > 0 && !state.selectedDocId && state.checkedDocIds.size === 0 && !state.autoScout) {
+        selectDocument(state.documents[0].id, false);
+      }
     } catch (err) {
       console.error("Failed to load documents:", err);
       docList.innerHTML = `<div class="doc-empty-state">Lỗi nạp kho tài liệu</div>`;
@@ -1147,9 +1157,12 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       // NẾU TẮT AUTO-SCOUT: CHẠY QUY TRÌNH THẨM ĐỊNH 5 AGENT CŨ TRÊN TÀI LIỆU ĐÃ CHỌN
+      const currentMode = getCurrentSelectedMode();
       const payload = {
         query: text,
         document_ids: docIds,
+        mode: currentMode,
+        model: currentMode,
         max_iterations: state.maxReflectionLoops || 2,
         chat_history: getRecentChatHistory(3),
         session_id: state.activeSessionId || null,
@@ -1192,20 +1205,25 @@ document.addEventListener("DOMContentLoaded", () => {
   function pollRunStatus(runId, messageCard, query, startTime, timerInterval) {
     const maxPolls = 300;
     let polls = 0;
+    let consecutiveErrors = 0;
+    let isStopped = false;
 
     clearActivePolling();
     setButtonState("running");
 
-    activePollInterval = setInterval(async () => {
+    async function pollStep() {
+      if (isStopped) return;
       polls++;
       try {
         const res = await fetch(`/api/runs/${runId}`);
         if (!res.ok) throw new Error("HTTP " + res.status);
         const data = await res.json();
+        consecutiveErrors = 0;
 
         updateThinkingTraces(messageCard, data, startTime);
 
         if (data.status === "completed") {
+          isStopped = true;
           if (timerInterval) clearInterval(timerInterval);
           clearActiveTimer();
           clearActivePolling();
@@ -1214,9 +1232,11 @@ document.addEventListener("DOMContentLoaded", () => {
           updateThinkingTraces(messageCard, data, startTime, true, finalElapsed);
           renderFinalAnswer(messageCard, data, query, finalElapsed);
           await loadChatHistory();
-          updateGeminiUsageBadge(); // Refresh quota
+          updateGeminiUsageBadge();
           setButtonState(promptInput.value.trim().length > 0 ? "ready" : "idle");
+          return;
         } else if (data.status === "failed" || data.status === "cancelled") {
+          isStopped = true;
           if (timerInterval) clearInterval(timerInterval);
           clearActiveTimer();
           clearActivePolling();
@@ -1229,19 +1249,25 @@ document.addEventListener("DOMContentLoaded", () => {
           await loadChatHistory();
           updateGeminiUsageBadge();
           setButtonState(promptInput.value.trim().length > 0 ? "ready" : "idle");
+          return;
         } else if (polls >= maxPolls) {
+          isStopped = true;
           if (timerInterval) clearInterval(timerInterval);
           clearActiveTimer();
           clearActivePolling();
           activeMessageCard = null;
           const finalElapsed = startTime ? ((performance.now() - startTime) / 1000).toFixed(1) : null;
           updateThinkingTraces(messageCard, data, startTime, true, finalElapsed);
-          renderFinalAnswer(messageCard, data, query, finalElapsed);
+          if (data && (data.final_report || data.answer)) {
+            renderFinalAnswer(messageCard, data, query, finalElapsed);
+          } else {
+            updateAgentSkeletonError(messageCard, "Quá thời gian xử lý yêu cầu (timeout). Vui lòng thử lại hoặc giảm độ phức tạp truy vấn.");
+          }
           await loadChatHistory();
           updateGeminiUsageBadge();
           setButtonState(promptInput.value.trim().length > 0 ? "ready" : "idle");
+          return;
         } else {
-          // Still processing -> guarantee red Stop button remains visible & refresh quota live
           setButtonState("running");
           if (polls % 2 === 0) {
             updateGeminiUsageBadge();
@@ -1249,8 +1275,26 @@ document.addEventListener("DOMContentLoaded", () => {
         }
       } catch (e) {
         console.error("Polling error:", e);
+        consecutiveErrors++;
+        if (consecutiveErrors >= 10) {
+          isStopped = true;
+          if (timerInterval) clearInterval(timerInterval);
+          clearActiveTimer();
+          clearActivePolling();
+          activeMessageCard = null;
+          updateAgentSkeletonError(messageCard, "Mất kết nối với máy chủ khi đang theo dõi tiến trình (Network error).");
+          setButtonState(promptInput.value.trim().length > 0 ? "ready" : "idle");
+          return;
+        }
       }
-    }, 350);
+
+      if (!isStopped) {
+        const delay = consecutiveErrors > 0 ? Math.min(1000 * Math.pow(1.5, consecutiveErrors), 5000) : 450;
+        activePollTimeout = setTimeout(pollStep, delay);
+      }
+    }
+
+    activePollTimeout = setTimeout(pollStep, 100);
   }
 
   function appendUserMessage(text) {
@@ -1768,22 +1812,10 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     });
 
-    card.querySelectorAll(".inline-citation-badge").forEach(badge => {
-      badge.addEventListener("click", (e) => {
-        e.stopPropagation();
-        state.currentEvidence = evidence;
-        updateSidecarEvidence(evidence);
-        const evIdx = parseInt(badge.dataset.ev, 10);
-        const ev = evidence[evIdx];
-        if (ev) {
-          const pNum = ev.page || ev.page_no || 1;
-          const targetDoc = state.documents.find(d => d.id === (ev.doc_id || state.selectedDocId)) || state.documents[0];
-          if (targetDoc && pdfFrame) {
-            pdfFrame.src = `/api/documents/${encodeURIComponent(targetDoc.id)}/file#page=${encodeURIComponent(pNum)}`;
-          }
-        }
-      });
-    });
+    // Inline citation badges are delegated centrally on messageFeed to prevent double-firing race conditions.
+    if (evidence) {
+      state.currentEvidence = evidence;
+    }
 
     // Bind event for view document buttons (open side-by-side in sidecar)
     card.querySelectorAll(".view-scout-doc-btn").forEach(btn => {
@@ -1842,6 +1874,9 @@ document.addEventListener("DOMContentLoaded", () => {
         const titleDiv = acc.querySelector(".thinking-title");
         if (titleDiv) {
           const timeStr = finalElapsed ? `${finalElapsed}s` : "";
+          const runMode = (data && (data.execution_mode || data.mode)) || getCurrentSelectedMode();
+          const modeLabel = MODE_LABELS[runMode] || (runMode ? runMode.toUpperCase() : "");
+          const modeSuffix = modeLabel ? ` • <strong>${modeLabel}</strong>` : "";
           titleDiv.innerHTML = `
             <span class="thinking-sparkle completed">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
@@ -1851,7 +1886,7 @@ document.addEventListener("DOMContentLoaded", () => {
             <span class="thinking-label-completed">Thought for</span>
             ${timeStr ? `<span class="thinking-timer">${timeStr}</span>` : ""}
             <span class="thinking-task-sep">•</span>
-            <span class="thinking-task-text">5 bước suy luận & đối soát hoàn tất</span>
+            <span class="thinking-task-text">5 bước suy luận & đối soát hoàn tất${modeSuffix}</span>
           `;
         }
       }
@@ -1865,11 +1900,28 @@ document.addEventListener("DOMContentLoaded", () => {
         const reportPane = document.getElementById("sidecarReportPane");
         if (reportPane) {
           try {
+            const cleanReportForSidecar = report
+              .split("<!-- DUAL_REPORT_SPLIT -->")[0]
+              .replace(/^###\s*Câu trả lời Trực tiếp\s*$/gim, "")
+              .replace(/^>\s*\*\*Câu trả lời (?:trực tiếp|Trực tiếp):\*\*\s*/gim, "")
+              .trim();
             reportPane.innerHTML = `
               <div class="sidecar-report-content report-markdown-view">
-                ${renderMarkdown(report, evidence)}
+                ${renderMarkdown(cleanReportForSidecar, evidence)}
               </div>
             `;
+            reportPane.querySelectorAll(".inline-citation-badge").forEach(btn => {
+              btn.addEventListener("click", (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const evIdx = parseInt(btn.dataset.ev, 10);
+                const ev = (!isNaN(evIdx) && evidence && evidence[evIdx]) ? evidence[evIdx] : null;
+                const pageNo = (ev && (ev.page || ev.page_no)) || btn.dataset.page || 1;
+                const targetDocId = btn.dataset.doc || (ev && (ev.doc_id || ev.document_id)) || state.selectedDocId;
+                const quote = (ev && (ev.quote || ev.text)) || btn.title || "";
+                jumpToPdfPage(pageNo, targetDocId, quote);
+              });
+            });
           } catch (e) { console.warn("sidecarReportPane render:", e); }
         }
       }
@@ -1877,8 +1929,8 @@ document.addEventListener("DOMContentLoaded", () => {
       // 1. Extract the direct conversational AI answer
       let mainAnswer = "";
       
-      const execMatch = report.match(/## 1\.\s*(?:Tóm\s*tắt\s*Tổng\s*quan|Executive\s*Summary)[\s\S]*?\n([\s\S]*?)(?=\n## 2|\n---|\Z)/i);
-      const directAnsMatch = report.match(/> \*\*Câu trả lời Trực tiếp:\*\* \*\*([\s\S]*?)\*\*/);
+      const execMatch = report.match(/## 1\.\s*(?:Tóm\s*tắt\s*Tổng\s*quan|Executive\s*Summary)[\s\S]*?\n([\s\S]*?)(?=\n## [2-9]|\n# [A-ZÀ-Ỹ0-9]|\n<!--|$)/i);
+      const directAnsMatch = report.match(/(?:> \*\*Câu trả lời Trực tiếp:\*\*|### Câu trả lời Trực tiếp)[\s\*]*([\s\S]*?)(?=\n---|## 1|$)/i);
 
       if (execMatch && execMatch[1].trim() && !execMatch[1].includes("Thông tin nghiên cứu học thuật xác thực liên quan đến: tóm tắt.")) {
         mainAnswer = execMatch[1].trim();
@@ -1887,7 +1939,7 @@ document.addEventListener("DOMContentLoaded", () => {
       } else if (data && data.answer && data.answer.trim()) {
         mainAnswer = data.answer.trim();
       } else {
-        const findingsMatch = report.match(/## 2\.\s*(?:Kết quả Nghiên cứu|Các Luận Điểm)[\s\S]*?\n([\s\S]*?)(?=\n## 3|\n---|\Z)/i);
+        const findingsMatch = report.match(/## 2\.\s*(?:Kết quả Nghiên cứu|Các Luận Điểm)[\s\S]*?\n([\s\S]*?)(?=\n## [3-9]|\n# [A-ZÀ-Ỹ0-9]|\n<!--|$)/i);
         if (findingsMatch && findingsMatch[1].trim()) {
           mainAnswer = findingsMatch[1].trim();
         } else if (report && report.trim()) {
@@ -1921,9 +1973,10 @@ document.addEventListener("DOMContentLoaded", () => {
       if (evidence && evidence.length > 0) {
         citationBadgesHtml = evidence.slice(0, 4).map((ev, i) => {
           const pNum = ev.page || ev.page_no || 1;
-          const evDocClean = ev.doc_id ? cleanTitle(ev.doc_id) : shortDocName;
+          const rawEvDocId = ev.doc_id || ev.document_id || (docObj ? docObj.id : "");
+          const evDocClean = rawEvDocId ? cleanTitle(rawEvDocId) : shortDocName;
           const badgeLabel = evDocClean.length > 18 ? evDocClean.slice(0, 16) + "..." : evDocClean;
-          return `<button class="inline-citation-badge" data-ev="${i}" title="${escapeHtml(ev.quote || '')}">${escapeHtml(badgeLabel)} • Trang ${pNum}</button>`;
+          return `<button class="inline-citation-badge" data-ev="${i}" data-page="${pNum}" data-doc="${escapeHtml(rawEvDocId)}" title="${escapeHtml(ev.quote || '')}">${escapeHtml(badgeLabel)} • Trang ${pNum}</button>`;
         }).join(" ");
       }
 
@@ -2089,8 +2142,13 @@ document.addEventListener("DOMContentLoaded", () => {
           const activeTab = card.querySelector(".report-segment-tab.active");
           const isAudit = activeTab && activeTab.dataset.target === "paneAuditLedger";
           const pane = card.querySelector(isAudit ? "#paneAuditLedger" : "#paneAcademicReport");
-          const bodyHtml = pane ? pane.innerHTML : "";
+          const rawHtml = pane ? pane.innerHTML : "";
           const docTitle = isAudit ? "Sổ cái Thẩm định & Đối soát Bằng chứng" : "Báo cáo Nghiên cứu Khoa học";
+          const safeTitle = escapeHtml(docTitle);
+          const sanitizedHtml = (typeof DOMPurify !== "undefined" && DOMPurify.sanitize)
+            ? DOMPurify.sanitize(rawHtml, { FORBID_TAGS: ["script", "iframe", "object", "embed"] })
+            : rawHtml.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
+                     .replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, "");
 
           const printWin = window.open("", "_blank", "width=850,height=900");
           if (printWin) {
@@ -2099,7 +2157,7 @@ document.addEventListener("DOMContentLoaded", () => {
               <html>
               <head>
                 <meta charset="utf-8">
-                <title>${docTitle}</title>
+                <title>${safeTitle}</title>
                 <style>
                   body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; padding: 40px; color: #18181b; line-height: 1.6; font-size: 11pt; }
                   h1 { font-size: 18pt; border-bottom: 2px solid #e4e4e7; padding-bottom: 8px; margin-bottom: 16px; color: #09090b; }
@@ -2116,7 +2174,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 </style>
               </head>
               <body>
-                ${bodyHtml}
+                ${sanitizedHtml}
                 <script>
                   window.onload = function() {
                     setTimeout(() => { window.print(); }, 250);
@@ -2158,21 +2216,11 @@ document.addEventListener("DOMContentLoaded", () => {
         });
       }
 
-      // Citation pill clicks jump to Sidecar evidence & page
-      card.querySelectorAll(".inline-citation-badge").forEach(pillBtn => {
-        pillBtn.addEventListener("click", () => {
-          const evIdx = parseInt(pillBtn.dataset.ev, 10) || 0;
-          openSidecar();
-          if (evidence && evidence[evIdx]) {
-            const ev = evidence[evIdx];
-            const pageNo = ev.page || ev.page_no || 1;
-            const doc = (state.documents && state.documents.find(d => d.id === state.selectedDocId)) || (state.documents && state.documents[0]);
-            if (doc && pdfFrame) {
-              pdfFrame.src = `/api/documents/${encodeURIComponent(doc.id)}/file#page=${encodeURIComponent(pageNo)}`;
-            }
-          }
-        });
-      });
+      // State & sidecar evidence update (clicks are delegated globally on messageFeed)
+      if (evidence) {
+        state.currentEvidence = evidence;
+        try { updateSidecarEvidence(evidence); } catch (_) {}
+      }
 
       container.appendChild(card);
       card.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -2208,10 +2256,16 @@ document.addEventListener("DOMContentLoaded", () => {
     sidecarEvidenceList.innerHTML = evidence.map((ev, idx) => {
       const pageNum = ev.page || ev.page_no || 1;
       const quoteStr = ev.quote || ev.text || '';
+      let matchScore = 100;
+      if (typeof ev.score === 'number' && !isNaN(ev.score)) {
+        matchScore = Math.max(10, Math.min(100, Math.round(ev.score > 1 ? ev.score : ev.score * 100)));
+      } else if (typeof ev.confidence_score === 'number' && !isNaN(ev.confidence_score)) {
+        matchScore = Math.max(10, Math.min(100, Math.round(ev.confidence_score > 1 ? ev.confidence_score : ev.confidence_score * 100)));
+      }
       return `
         <div class="evidence-card-mono" data-idx="${idx}">
           <div class="ev-header">
-            <span class="ev-badge-mono">100% Khớp</span>
+            <span class="ev-badge-mono">${matchScore}% Khớp</span>
             <span class="ev-page">Trang ${pageNum}</span>
           </div>
           <div class="ev-quote">“${escapeHtml(quoteStr)}”</div>
@@ -2225,7 +2279,8 @@ document.addEventListener("DOMContentLoaded", () => {
         const ev = evidence[idx];
         const pageNum = ev ? (ev.page || ev.page_no || 1) : 1;
         const docId = ev ? (ev.doc_id || ev.document_id || state.selectedDocId) : state.selectedDocId;
-        jumpToPdfPage(pageNum, docId);
+        const quote = ev ? (ev.quote || ev.text || "") : "";
+        jumpToPdfPage(pageNum, docId, quote);
       });
     });
   }
@@ -2236,28 +2291,292 @@ document.addEventListener("DOMContentLoaded", () => {
     });
     ["evidenceTab", "pdfViewerTab", "reportViewTab"].forEach(id => {
       const el = document.getElementById(id);
-      if (el) el.classList.toggle("active", id === targetTab);
+      if (el) {
+        const isActive = (id === targetTab);
+        el.classList.toggle("active", isActive);
+        el.style.display = isActive ? "flex" : "none";
+      }
+    });
+  }
+
+  // ==================== PDF.JS TEXT LAYER & EXACT CITATION HIGHLIGHT OVERLAY ====================
+  let currentPdfDoc = null;
+  let currentPdfUrl = null;
+  let currentPdfPage = 1;
+  let currentPdfScale = 1.25;
+  let currentHighlightPhrase = null;
+  let isPdfjsRendering = false;
+  let pdfRenderJobCounter = 0;
+  let activePdfCanvasTask = null;
+
+  function normalizeDocLookupKey(str) {
+    if (!str) return "";
+    return String(str)
+      .replace(/^(?:gemini|doc)_corpus_[a-f0-9]+_/i, "")
+      .replace(/^(?:gemini|doc)_[a-f0-9]+_/i, "")
+      .replace(/^(?:gemini|doc)_/i, "")
+      .replace(/\.(?:pdf|md|txt)$/i, "")
+      .replace(/[_\s-]+/g, " ")
+      .trim()
+      .toLowerCase();
+  }
+
+  function resolveTargetDocument(docId) {
+    const docs = state.documents || [];
+    if (docId) {
+      const rawId = String(docId).trim();
+      const normKey = normalizeDocLookupKey(rawId);
+      // 1. Exact ID or name match
+      let found = docs.find(d => d.id === rawId || d.doc_id === rawId || d.name === rawId);
+      if (found) return found;
+      // 2. Normalized title/filename match
+      if (normKey) {
+        found = docs.find(d => {
+          const dNormId = normalizeDocLookupKey(d.id || "");
+          const dNormName = normalizeDocLookupKey(d.name || d.title || "");
+          return dNormId === normKey || dNormName === normKey ||
+                 (dNormId && (dNormId.includes(normKey) || normKey.includes(dNormId))) ||
+                 (dNormName && (dNormName.includes(normKey) || normKey.includes(dNormName)));
+        });
+        if (found) return found;
+      }
+    }
+    if (state.selectedDocId) {
+      const sel = docs.find(d => d.id === state.selectedDocId);
+      if (sel) return sel;
+    }
+    return docs[0] || null;
+  }
+
+  async function renderPdfWithHighlight(docFileUrl, pageNo, highlightText = null) {
+    const pdfjsContainer = document.getElementById("pdfjsContainer");
+    const pdfjsToolbar = document.getElementById("pdfjsToolbar");
+    const pdfWrapper = document.getElementById("pdfFrameWrapper");
+    const mdViewer = document.getElementById("docMdViewer");
+    const canvas = document.getElementById("pdfCanvas");
+    const pageWrapper = document.getElementById("pdfPageWrapper");
+    const textLayerDiv = document.getElementById("pdfTextLayer");
+
+    if (typeof window.pdfjsLib === "undefined" || !canvas || !textLayerDiv) {
+      console.warn("PDF.js library not ready, falling back to native iframe");
+      if (pdfjsContainer) pdfjsContainer.style.display = "none";
+      if (pdfjsToolbar) pdfjsToolbar.style.display = "none";
+      if (pdfWrapper) pdfWrapper.style.display = "block";
+      return false;
+    }
+
+    const myJobId = ++pdfRenderJobCounter;
+    if (activePdfCanvasTask && typeof activePdfCanvasTask.cancel === "function") {
+      try { activePdfCanvasTask.cancel(); } catch (_) {}
+      activePdfCanvasTask = null;
+    }
+
+    try {
+      isPdfjsRendering = true;
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = "assets/vendor/pdf.worker.min.js";
+
+      // Immediately hide native iframe & markdown viewer so two viewers never stack
+      if (pdfWrapper) {
+        pdfWrapper.style.display = "none";
+        if (pdfFrame && pdfFrame.src !== "about:blank") {
+          pdfFrame.src = "about:blank";
+        }
+      }
+      if (mdViewer) mdViewer.style.display = "none";
+
+      let pdfDocToUse = currentPdfDoc;
+      if (currentPdfUrl !== docFileUrl || !pdfDocToUse) {
+        // Clear canvas context immediately when document changes so old page is cleared
+        const initCtx = canvas.getContext("2d");
+        if (initCtx) initCtx.clearRect(0, 0, canvas.width, canvas.height);
+        textLayerDiv.innerHTML = "";
+        currentPdfDoc = null;
+
+        const loadedDoc = await window.pdfjsLib.getDocument(docFileUrl).promise;
+        if (myJobId !== pdfRenderJobCounter) return true;
+        currentPdfUrl = docFileUrl;
+        currentPdfDoc = loadedDoc;
+        pdfDocToUse = loadedDoc;
+      }
+
+      const targetPage = Math.min(Math.max(1, parseInt(pageNo, 10) || 1), pdfDocToUse.numPages);
+      const page = await pdfDocToUse.getPage(targetPage);
+      if (myJobId !== pdfRenderJobCounter) return true;
+
+      currentPdfPage = targetPage;
+      currentHighlightPhrase = highlightText;
+      const viewport = page.getViewport({ scale: currentPdfScale });
+
+      const ctx = canvas.getContext("2d");
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      if (pageWrapper) {
+        pageWrapper.style.width = `${viewport.width}px`;
+        pageWrapper.style.height = `${viewport.height}px`;
+      }
+
+      textLayerDiv.innerHTML = "";
+      textLayerDiv.style.width = `${viewport.width}px`;
+      textLayerDiv.style.height = `${viewport.height}px`;
+
+      // 1. Render canvas with cancellation guard
+      activePdfCanvasTask = page.render({ canvasContext: ctx, viewport });
+      await activePdfCanvasTask.promise;
+      activePdfCanvasTask = null;
+      if (myJobId !== pdfRenderJobCounter) return true;
+
+      // 2. Render text layer
+      const textContent = await page.getTextContent();
+      if (myJobId !== pdfRenderJobCounter) return true;
+
+      if (window.pdfjsLib.renderTextLayer) {
+        textLayerDiv.innerHTML = "";
+        await window.pdfjsLib.renderTextLayer({
+          textContentSource: textContent,
+          container: textLayerDiv,
+          viewport: viewport,
+          textDivs: []
+        }).promise;
+      }
+      if (myJobId !== pdfRenderJobCounter) return true;
+
+      // 3. Apply soft transparent blue highlight overlay on matching spans
+      applyBlueHighlightOnTextLayer(textLayerDiv, highlightText);
+
+      // Show PDF.js view and ensure native iframe stays hidden
+      if (pdfWrapper) pdfWrapper.style.display = "none";
+      if (pdfjsContainer) pdfjsContainer.style.display = "block";
+      if (pdfjsToolbar) pdfjsToolbar.style.display = "flex";
+
+      // Update toolbar page indicator
+      const pageInd = document.getElementById("pdfPageIndicator");
+      if (pageInd) pageInd.textContent = `Trang ${currentPdfPage} / ${pdfDocToUse.numPages}`;
+      const zoomInd = document.getElementById("pdfZoomIndicator");
+      if (zoomInd) zoomInd.textContent = `${Math.round(currentPdfScale * 100)}%`;
+
+      isPdfjsRendering = false;
+      return true;
+    } catch (err) {
+      if (err && err.name === "RenderingCancelledException") {
+        return true;
+      }
+      if (myJobId !== pdfRenderJobCounter) {
+        return true;
+      }
+      console.warn("Failed to render page with PDF.js:", err);
+      isPdfjsRendering = false;
+      if (pdfjsContainer) pdfjsContainer.style.display = "none";
+      if (pdfjsToolbar) pdfjsToolbar.style.display = "none";
+      if (pdfWrapper) pdfWrapper.style.display = "block";
+      return false;
+    }
+  }
+
+  function applyBlueHighlightOnTextLayer(textLayerDiv, highlightText) {
+    if (!highlightText || !textLayerDiv) return;
+
+    let cleanTarget = highlightText.replace(/[\r\n\t]+/g, " ").trim();
+    const sentences = cleanTarget.split(/(?<=[.!?])\s+/);
+    if (sentences.length > 1 && cleanTarget.length > 160) {
+      cleanTarget = sentences.slice(0, 2).join(" ");
+    }
+
+    const normFn = typeof removeDiacritics === "function"
+      ? (s) => removeDiacritics(s).toLowerCase()
+      : (s) => s.toLowerCase();
+
+    const normTarget = normFn(cleanTarget).replace(/\s+/g, " ").trim();
+    const stopWords = new Set([
+      "cua", "cho", "cac", "khi", "voi", "mot", "nhu", "nay", "nhung", "trong", "duoc",
+      "theo", "tren", "duoi", "hoac", "nhieu", "hon", "cung", "can", "the", "and", "for", "with", "that", "this", "from"
+    ]);
+    const targetTokens = normTarget
+      .split(/[^a-z0-9_$-]+/)
+      .filter(w => w.length >= 4 && !stopWords.has(w));
+    if (!targetTokens.length) return;
+    const targetTokenSet = new Set(targetTokens);
+
+    const spans = Array.from(textLayerDiv.querySelectorAll("span"));
+    if (!spans.length) return;
+
+    let firstMatchedSpan = null;
+
+    spans.forEach(span => {
+      const spanTxt = (span.textContent || "").trim();
+      if (!spanTxt || spanTxt.length < 4) return;
+      const spanNorm = normFn(spanTxt).replace(/\s+/g, " ").trim();
+      if (!spanNorm) return;
+
+      // Exact phrase containment for longer spans
+      if (spanNorm.length >= 14 && normTarget.includes(spanNorm)) {
+        span.classList.add("pdf-highlight-match");
+        if (!firstMatchedSpan) firstMatchedSpan = span;
+        return;
+      }
+
+      const spanTokens = spanNorm
+        .split(/[^a-z0-9_$-]+/)
+        .filter(w => w.length >= 4 && !stopWords.has(w));
+      if (!spanTokens.length) return;
+
+      const matchedTokens = spanTokens.filter(st => targetTokenSet.has(st));
+      const overlapRatio = matchedTokens.length / spanTokens.length;
+      if ((matchedTokens.length >= 2 && overlapRatio >= 0.6) || (spanTokens.length === 1 && matchedTokens.length === 1 && spanTokens[0].length >= 6)) {
+        span.classList.add("pdf-highlight-match");
+        if (!firstMatchedSpan) firstMatchedSpan = span;
+      }
+    });
+
+    if (firstMatchedSpan) {
+      setTimeout(() => {
+        firstMatchedSpan.scrollIntoView({ behavior: "smooth", block: "center" });
+      }, 90);
+    }
+  }
+
+  // Bind PDF.js Toolbar Controls
+  const prevBtn = document.getElementById("pdfPrevPageBtn");
+  if (prevBtn) {
+    prevBtn.addEventListener("click", () => {
+      if (currentPdfDoc && currentPdfPage > 1) {
+        renderPdfWithHighlight(currentPdfUrl, currentPdfPage - 1, currentHighlightPhrase);
+      }
+    });
+  }
+  const nextBtn = document.getElementById("pdfNextPageBtn");
+  if (nextBtn) {
+    nextBtn.addEventListener("click", () => {
+      if (currentPdfDoc && currentPdfPage < currentPdfDoc.numPages) {
+        renderPdfWithHighlight(currentPdfUrl, currentPdfPage + 1, currentHighlightPhrase);
+      }
+    });
+  }
+  const zoomInBtn = document.getElementById("pdfZoomInBtn");
+  if (zoomInBtn) {
+    zoomInBtn.addEventListener("click", () => {
+      if (currentPdfDoc && currentPdfScale < 2.5) {
+        currentPdfScale = Math.min(2.5, currentPdfScale + 0.2);
+        renderPdfWithHighlight(currentPdfUrl, currentPdfPage, currentHighlightPhrase);
+      }
+    });
+  }
+  const zoomOutBtn = document.getElementById("pdfZoomOutBtn");
+  if (zoomOutBtn) {
+    zoomOutBtn.addEventListener("click", () => {
+      if (currentPdfDoc && currentPdfScale > 0.75) {
+        currentPdfScale = Math.max(0.75, currentPdfScale - 0.2);
+        renderPdfWithHighlight(currentPdfUrl, currentPdfPage, currentHighlightPhrase);
+      }
     });
   }
 
   // ==================== JUMP TO EXACT PDF PAGE ====================
-  function jumpToPdfPage(pageNo = 1, docId = null) {
+  async function jumpToPdfPage(pageNo = 1, docId = null, highlightText = null) {
     openSidecar();
     switchSidecarTab("pdfViewerTab");
 
-    let targetDoc = null;
-    if (docId) {
-      targetDoc = (state.documents && state.documents.find(d => 
-        d.id === docId || 
-        d.doc_id === docId || 
-        d.name === docId || 
-        (d.path && d.path.includes(docId))
-      )) || null;
-    }
-    if (!targetDoc) {
-      targetDoc = (state.documents && state.documents.find(d => d.id === state.selectedDocId)) || (state.documents && state.documents[0]);
-    }
-    if (!targetDoc || !pdfFrame) return;
+    const targetDoc = resolveTargetDocument(docId);
+    if (!targetDoc) return;
 
     state.selectedDocId = targetDoc.id;
     const p = Math.max(1, parseInt(pageNo, 10) || 1);
@@ -2285,14 +2604,28 @@ document.addEventListener("DOMContentLoaded", () => {
       downloadBtn.style.display = "inline-flex";
     }
 
-    const pdfWrapper = document.getElementById("pdfFrameWrapper");
     const mdViewer = document.getElementById("docMdViewer");
-    if (pdfWrapper) pdfWrapper.style.display = "block";
     if (mdViewer) mdViewer.style.display = "none";
 
+    // Attempt interactive PDF.js rendering with Blue Highlight
+    const renderedPdfjs = await renderPdfWithHighlight(docFileUrl, p, highlightText);
+    if (renderedPdfjs) {
+      const pdfWrapper = document.getElementById("pdfFrameWrapper");
+      if (pdfWrapper) pdfWrapper.style.display = "none";
+      if (pdfFrame && pdfFrame.src !== "about:blank") pdfFrame.src = "about:blank";
+      return;
+    }
+
+    // Fallback to Native Chromium iframe ONLY if PDF.js is unavailable
+    const pdfjsContainer = document.getElementById("pdfjsContainer");
+    const pdfjsToolbar = document.getElementById("pdfjsToolbar");
+    if (pdfjsContainer) pdfjsContainer.style.display = "none";
+    if (pdfjsToolbar) pdfjsToolbar.style.display = "none";
+
+    const pdfWrapper = document.getElementById("pdfFrameWrapper");
+    if (pdfWrapper) pdfWrapper.style.display = "block";
     const targetUrl = `${docFileUrl}#page=${p}&zoom=page-fit`;
 
-    // Force iframe reload if already on the same document to ensure Chromium jumps to new page
     try {
       const currentSrc = pdfFrame.src || "";
       if (currentSrc.includes(`/api/documents/${encodeURIComponent(targetDoc.id)}/file`)) {
@@ -2309,11 +2642,11 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   async function viewDocumentInSidecar(docId) {
-    let doc = (state.documents && state.documents.find(d => d.id === docId)) || null;
+    let doc = resolveTargetDocument(docId);
     if (!doc) {
       doc = { id: docId, name: docId };
     }
-    state.selectedDocId = docId;
+    state.selectedDocId = doc.id;
 
     const sidecarDocTitle = document.getElementById("sidecarDocTitle");
     if (sidecarDocTitle) {
@@ -2356,8 +2689,29 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const pdfWrapper = document.getElementById("pdfFrameWrapper");
     const mdViewer = document.getElementById("docMdViewer");
+    const pdfjsContainer = document.getElementById("pdfjsContainer");
+    const pdfjsToolbar = document.getElementById("pdfjsToolbar");
+
+    // Increment render job counter to cancel any in-flight PDF.js highlight render
+    pdfRenderJobCounter++;
+    if (activePdfCanvasTask && typeof activePdfCanvasTask.cancel === "function") {
+      try { activePdfCanvasTask.cancel(); } catch (_) {}
+      activePdfCanvasTask = null;
+    }
 
     if (hasPdf) {
+      if (pdfjsContainer) pdfjsContainer.style.display = "none";
+      if (pdfjsToolbar) pdfjsToolbar.style.display = "none";
+      const canvas = document.getElementById("pdfCanvas");
+      const textLayerDiv = document.getElementById("pdfTextLayer");
+      if (canvas) {
+        const cCtx = canvas.getContext("2d");
+        if (cCtx) cCtx.clearRect(0, 0, canvas.width, canvas.height);
+      }
+      if (textLayerDiv) textLayerDiv.innerHTML = "";
+      currentPdfDoc = null;
+      currentPdfUrl = null;
+
       if (pdfWrapper) pdfWrapper.style.display = "block";
       if (mdViewer) mdViewer.style.display = "none";
       if (pdfFrame) {
@@ -2538,6 +2892,8 @@ document.addEventListener("DOMContentLoaded", () => {
       `;
       uploadPdfBtn.style.opacity = "0.7";
 
+      uploadPdfBtn.disabled = true;
+
       try {
         const formData = new FormData();
         formData.append("file", file);
@@ -2563,6 +2919,7 @@ document.addEventListener("DOMContentLoaded", () => {
       } finally {
         uploadPdfBtn.innerHTML = originalBtnHtml;
         uploadPdfBtn.style.opacity = "1";
+        uploadPdfBtn.disabled = false;
         pdfFileInput.value = "";
       }
     });
@@ -2611,6 +2968,20 @@ document.addEventListener("DOMContentLoaded", () => {
         btn.classList.remove("mode-offline-dimmed");
       }
     });
+
+    // Cập nhật trạng thái GPU Max (Khi Online nhưng chưa tiến hành hoán đổi VRAM sang 32B)
+    const gpuMaxBtn = document.querySelector('.quick-select-btn[data-mode="gpu_max"]');
+    if (gpuMaxBtn) {
+      if (state.isKaggleOnline && !isGpuMaxActive) {
+        gpuMaxBtn.classList.add("gpu-max-unswapped");
+        gpuMaxBtn.title = "⚡ GPU Max (Đại mô hình 32B AWQ - Nhấp để tiến hành hoán đổi VRAM)";
+      } else {
+        gpuMaxBtn.classList.remove("gpu-max-unswapped");
+        if (state.isKaggleOnline && isGpuMaxActive) {
+          gpuMaxBtn.title = "GPU Max (Đang hoạt động trên 32GB VRAM)";
+        }
+      }
+    }
 
     const cpuMaxBtn = document.querySelector('.quick-select-btn[data-mode="cpu_max"]');
     const cpuMaxSplit = document.getElementById("cpuMaxSplit");
@@ -2688,6 +3059,17 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // ==================== GEMINI USAGE QUOTA TRACKER ====================
   let lastGeminiBadge = "0 / 1.500";
+
+  function getCurrentSelectedMode() {
+    const selects = Array.from(document.querySelectorAll(".agent-model-select"));
+    if (selects.length > 0) {
+      const firstVal = selects[0].value;
+      if (firstVal && selects.every(s => s.value === firstVal)) {
+        return firstVal;
+      }
+    }
+    return localStorage.getItem("rag_preferred_mode") || "cpu_min";
+  }
 
   function syncModelLabelsFromDropdowns() {
     const selects = Array.from(document.querySelectorAll(".agent-model-select"));
@@ -2846,8 +3228,11 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
 
-      // Khôi phục mode đã lưu của người dùng (mặc định là gemini hoặc mode trước đó)
-      const savedMode = localStorage.getItem("rag_preferred_mode") || "gemini";
+      // Khôi phục mode đã lưu của người dùng (mặc định là hybrid hoặc mode trước đó, không tự động nhảy vào GPU Max nếu chưa hoán đổi)
+      let savedMode = localStorage.getItem("rag_preferred_mode") || "hybrid";
+      if (savedMode === "gpu_max" && !isGpuMaxActive) {
+        savedMode = state.isKaggleOnline ? "gpu_finetune" : "hybrid";
+      }
       await setAllAgentsMode(savedMode);
       await updateGeminiUsageBadge();
     } catch (e) {
@@ -2861,6 +3246,8 @@ document.addEventListener("DOMContentLoaded", () => {
       const data = await res.json();
       const isOnline = Boolean(data.is_online);
       state.isKaggleOnline = isOnline;
+      const activeMode = (data.active_mode || (data.raw_health && data.raw_health.active_mode) || "").toLowerCase();
+      isGpuMaxActive = Boolean(isOnline && activeMode === "gpu_max");
       if (isOnline && kaggleStatusBadge) {
         kaggleStatusBadge.textContent = "Online";
         kaggleStatusBadge.className = "kaggle-status-badge online";
@@ -2868,10 +3255,13 @@ document.addEventListener("DOMContentLoaded", () => {
         kaggleStatusBadge.textContent = "Offline";
         kaggleStatusBadge.className = "kaggle-status-badge";
       }
+      updateGpuMutualExclusionUI(isGpuMaxActive);
       updateModelOptionsAvailability(isOnline, state.isGeminiOnline, state.isOllamaOnline);
       return isOnline;
     } catch (e) {
       state.isKaggleOnline = false;
+      isGpuMaxActive = false;
+      updateGpuMutualExclusionUI(false);
       updateModelOptionsAvailability(false, state.isGeminiOnline, state.isOllamaOnline);
       return false;
     }
@@ -2911,7 +3301,8 @@ document.addEventListener("DOMContentLoaded", () => {
             kaggleStatusBadge.textContent = "Online";
             kaggleStatusBadge.className = "kaggle-status-badge online";
           }
-          await setAllAgentsMode("gpu_max");
+          const defaultOnlineMode = isGpuMaxActive ? "gpu_max" : "gpu_finetune";
+          await setAllAgentsMode(defaultOnlineMode);
           alert("Kết nối thành công!\n\nCụm Kaggle Dual Tesla T4 đã Online.\nChi tiết: " + (data.details || "2x GPU sẵn sàng."));
         } else {
           if (kaggleStatusBadge) {
@@ -3092,7 +3483,11 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  function showHotSwapModal(targetTitle, estimatedSeconds) {
+  function showHotSwapModalDialog(targetMode) {
+    const isTo32B = (targetMode === "gpu_max");
+    const targetTitle = isTo32B ? "GPU Max (Đại mô hình Qwen-32B AWQ)" : "Cụm 7 Mô Hình SOTA Finetune";
+    const estimatedSeconds = isTo32B ? 85 : 40;
+
     const existing = document.getElementById("hotSwapModalOverlay");
     if (existing) existing.remove();
 
@@ -3101,84 +3496,160 @@ document.addEventListener("DOMContentLoaded", () => {
     overlay.className = "hot-swap-overlay";
     overlay.innerHTML = `
       <div class="hot-swap-card">
-        <div class="hot-swap-title">🔄 Đang Hoán Đổi VRAM Trên Kaggle GPU...</div>
-        <div class="hot-swap-desc">
-          Hệ thống đang thu hồi bộ nhớ và nạp <strong>${targetTitle}</strong> vào cụm Dual Tesla T4.<br>
-          Thời gian ước tính: khoảng <span id="hotSwapCountdown">${estimatedSeconds}</span> giây.
+        <div class="hot-swap-header">
+          <div class="hot-swap-icon-badge">⚡</div>
+          <div class="hot-swap-title">Tiến hành Hoán đổi VRAM</div>
         </div>
-        <div class="hot-swap-progress-bar-bg">
-          <div class="hot-swap-progress-bar-fill" id="hotSwapProgressBar"></div>
+        <div class="hot-swap-desc" id="hotSwapDescText">
+          Để kích hoạt <strong>${targetTitle}</strong>, hệ thống cần tiến hành hoán đổi VRAM trên cụm Dual Tesla T4 (khoảng ${estimatedSeconds}s).
+          <br><br>
+          Bạn có muốn tiến hành hoán đổi VRAM ngay bây giờ không?
         </div>
-        <div style="font-size: 11px; color: #64748b;">Vui lòng giữ nguyên màn hình, không đóng trình duyệt...</div>
+        
+        <div class="hot-swap-actions" id="hotSwapActionBtns">
+          <button class="hot-swap-btn btn-cancel" id="hotSwapCancelBtn">Huỷ</button>
+          <button class="hot-swap-btn btn-ok" id="hotSwapConfirmBtn">OK</button>
+        </div>
+
+        <div class="hot-swap-progress-section" id="hotSwapProgressSection" style="display: none;">
+          <div class="hot-swap-progress-bar-bg">
+            <div class="hot-swap-progress-bar-fill" id="hotSwapProgressBar"></div>
+          </div>
+          <div class="hot-swap-status-text">
+            <span class="hot-swap-pulse-dot" id="hotSwapPulseDot"></span>
+            <span id="hotSwapStatusLabel">Đang tải tài nguyên...</span>
+            <span class="hot-swap-countdown-badge" id="hotSwapCountdown">${estimatedSeconds}s</span>
+          </div>
+          <div style="margin-top: 6px; display: flex; justify-content: center;">
+            <button class="hot-swap-btn btn-cancel" id="hotSwapAbortBtn" style="font-size: 12px; padding: 4px 14px;">Đóng</button>
+          </div>
+        </div>
       </div>
     `;
     document.body.appendChild(overlay);
 
-    let progress = 0;
-    const progressFill = document.getElementById("hotSwapProgressBar");
-    const countdownEl = document.getElementById("hotSwapCountdown");
-    let remaining = estimatedSeconds;
+    const cancelBtn = document.getElementById("hotSwapCancelBtn");
+    const confirmBtn = document.getElementById("hotSwapConfirmBtn");
+    const abortBtn = document.getElementById("hotSwapAbortBtn");
+    const descText = document.getElementById("hotSwapDescText");
+    const actionsGroup = document.getElementById("hotSwapActionBtns");
+    const progressSection = document.getElementById("hotSwapProgressSection");
+    const progressBar = document.getElementById("hotSwapProgressBar");
+    const statusLabel = document.getElementById("hotSwapStatusLabel");
+    const countdownBadge = document.getElementById("hotSwapCountdown");
 
-    const interval = setInterval(() => {
-      progress += (100 / (estimatedSeconds * 10));
-      if (progress > 95) progress = 95;
-      if (progressFill) progressFill.style.width = progress + "%";
-      remaining -= 0.1;
-      if (countdownEl && remaining > 0) {
-        countdownEl.textContent = Math.ceil(remaining);
-      }
-    }, 100);
+    let isClosed = false;
+    let pollTimer = null;
+    let progressTimer = null;
 
-    return {
-      close: () => {
-        clearInterval(interval);
-        if (progressFill) progressFill.style.width = "100%";
-        setTimeout(() => {
-          const el = document.getElementById("hotSwapModalOverlay");
-          if (el) el.remove();
+    function cleanup() {
+      isClosed = true;
+      if (progressTimer) clearInterval(progressTimer);
+      if (pollTimer) clearInterval(pollTimer);
+      overlay.remove();
+    }
+
+    cancelBtn.addEventListener("click", cleanup);
+    if (abortBtn) abortBtn.addEventListener("click", cleanup);
+
+    confirmBtn.addEventListener("click", async () => {
+      // 1. Chuyển đổi giao diện sang thanh tiến trình trắng đen
+      actionsGroup.style.display = "none";
+      progressSection.style.display = "flex";
+      descText.innerHTML = `Hệ thống đang điều phối hoán đổi VRAM trên cụm Dual Tesla T4 để kích hoạt <strong>${targetTitle}</strong>. Quá trình nạp trọng số diễn ra tự động...`;
+
+      let progress = 0;
+      let remaining = estimatedSeconds;
+      progressTimer = setInterval(() => {
+        progress += (100 / (estimatedSeconds * 10));
+        if (progress > 94) progress = 94;
+        if (progressBar) progressBar.style.width = progress + "%";
+        remaining -= 0.1;
+        if (countdownBadge) {
+          if (remaining > 0) {
+            countdownBadge.textContent = Math.ceil(remaining) + "s";
+          } else {
+            countdownBadge.textContent = Math.abs(Math.floor(remaining)) + "s+";
+            if (statusLabel && (statusLabel.textContent === "Đang tải tài nguyên..." || statusLabel.textContent.includes("tải"))) {
+              statusLabel.textContent = "Đang khởi tạo engine inference...";
+            }
+          }
+        }
+      }, 100);
+
+      // 2. Thăm dò real-time trạng thái supervisor
+      pollTimer = setInterval(async () => {
+        if (isClosed) return;
+        try {
+          const res = await fetch("/api/remote/gpu-status");
+          if (!res.ok) return;
+          const statusData = await res.json();
+          if (statusData.switch_message) {
+            statusLabel.textContent = statusData.switch_message;
+          }
+          const isTargetActive = (statusData.active_mode === targetMode);
+          const isNotSwitching = !statusData.is_switching;
+          const isWorkerHealthy = statusData.worker_health && (statusData.worker_health.worker_status === "online" || !statusData.worker_health.error);
+          if (isTargetActive && (isNotSwitching || isWorkerHealthy)) {
+            completeSuccess();
+          }
+        } catch (_) {}
+      }, 2000);
+
+      async function completeSuccess() {
+        if (isClosed) return;
+        clearInterval(progressTimer);
+        clearInterval(pollTimer);
+        if (progressBar) progressBar.style.width = "100%";
+        if (statusLabel) statusLabel.textContent = "Hoàn tất nạp mô hình!";
+        if (countdownBadge) countdownBadge.textContent = "Xong";
+
+        setTimeout(async () => {
+          cleanup();
+          isGpuMaxActive = isTo32B;
+          await setAllAgentsMode(targetMode);
+          updateGpuMutualExclusionUI(isTo32B);
         }, 400);
       }
-    };
-  }
 
-  async function executeRemoteHotSwap(targetMode) {
-    const isTo32B = (targetMode === "gpu_max");
-    const title = isTo32B ? "Đại Mô Hình Qwen 32B AWQ (TP=2)" : "Cụm 7 Mô Hình SOTA Finetune";
-    const estSec = isTo32B ? 55 : 35;
+      // 3. Gửi lệnh hoán đổi
+      try {
+        const res = await fetch("/api/remote/switch-mode", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ target_mode: targetMode })
+        });
+        const data = await res.json();
 
-    const modal = showHotSwapModal(title, estSec);
-    try {
-      const res = await fetch("/api/remote/switch-mode", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ target_mode: targetMode })
-      });
-      const data = await res.json();
-      modal.close();
+        if (isClosed) return;
 
-      if (!res.ok) {
-        alert("Lỗi hoán đổi VRAM: " + (data.detail || res.statusText));
-        return false;
+        if (!res.ok) {
+          clearInterval(progressTimer);
+          clearInterval(pollTimer);
+          if (progressBar) progressBar.style.backgroundColor = "#ef4444";
+          if (statusLabel) statusLabel.textContent = "Lỗi: " + (data.detail || res.statusText);
+          if (countdownBadge) countdownBadge.style.display = "none";
+          descText.innerHTML = `<span style="color:#b91c1c; font-weight:500;">Không thể hoàn tất hoán đổi VRAM: ${data.detail || "Worker gặp lỗi trên Kaggle."}</span>`;
+          return;
+        }
+
+        completeSuccess();
+      } catch (err) {
+        if (isClosed) return;
+        clearInterval(progressTimer);
+        clearInterval(pollTimer);
+        if (progressBar) progressBar.style.backgroundColor = "#ef4444";
+        if (statusLabel) statusLabel.textContent = "Không thể kết nối đến Kaggle: " + err.message;
+        descText.innerHTML = `<span style="color:#b91c1c; font-weight:500;">Mất kết nối tới máy chủ Kaggle: ${err.message}.</span>`;
       }
-
-      await setAllAgentsMode(targetMode);
-      updateGpuMutualExclusionUI(isTo32B);
-      alert("🎉 " + (data.message || "Hoán đổi GPU thành công!"));
-      return true;
-    } catch (err) {
-      modal.close();
-      alert("Không thể kết nối đến máy chủ Kaggle: " + err.message);
-      return false;
-    }
+    });
   }
 
   // Hook revert button
   const revertTo7ModelsBtn = document.getElementById("revertTo7ModelsBtn");
   if (revertTo7ModelsBtn) {
-    revertTo7ModelsBtn.addEventListener("click", async () => {
-      if (confirm("Bạn có chắc muốn giải phóng 32B để nạp lại Cụm 7 Mô Hình SOTA trên Dual T4 không?")) {
-        await executeRemoteHotSwap("gpu_finetune");
-      }
+    revertTo7ModelsBtn.addEventListener("click", () => {
+      showHotSwapModalDialog("gpu_finetune");
     });
   }
 
@@ -3198,9 +3669,7 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
       if (mode === "gpu_max" && !isGpuMaxActive) {
-        if (confirm("⚡ Bạn đang chọn GPU Max (Đại mô hình 32B AWQ).\n\nĐể chạy mô hình này, hệ thống sẽ tự động giải phóng cụm 7 mô hình và nạp Qwen-32B vào 2x GPU T4 (mất khoảng 50s).\n\nBạn có muốn tiến hành hoán đổi VRAM ngay bây giờ không?")) {
-          await executeRemoteHotSwap("gpu_max");
-        }
+        showHotSwapModalDialog("gpu_max");
         return;
       }
       setAllAgentsMode(mode);
@@ -3263,7 +3732,9 @@ document.addEventListener("DOMContentLoaded", () => {
     // 3. Inline code
     html = html.replace(/`([^`]+)`/gim, '<code class="mono-code">$1</code>');
 
-    // 4. Headers
+    // 4. Headers (ensure newline separation even if glued to previous sentence)
+    html = html.replace(/([^\n])\s*(#{1,4}\s+[^\n]+)/g, '$1\n\n$2\n');
+    html = html.replace(/^#### (.*$)/gim, '<h4 class="chat-h4" style="margin-top:16px; margin-bottom:8px; font-weight:600; color:#1e293b;">$1</h4>');
     html = html.replace(/^### (.*$)/gim, '<h3 class="chat-h3">$1</h3>');
     html = html.replace(/^## (.*$)/gim, '<h2 class="chat-h2">$1</h2>');
     html = html.replace(/^# (.*$)/gim, '<h1 class="chat-h1">$1</h1>');
@@ -3273,7 +3744,7 @@ document.addEventListener("DOMContentLoaded", () => {
     html = html.replace(/\*(.*?)\*/gim, '<em>$1</em>');
 
     // 5.5 Markdown Tables
-    html = html.replace(/(?:^|\n)(\|.+?\|\r?\n\|[-:\s|]+\|\r?\n(?:\|.+?\|\r?\n?)+)/g, (match, tableBlock) => {
+    html = html.replace(/(?:^|\n)((?:\|[^\r\n]+\|\r?\n?)+)/g, (match, tableBlock) => {
       const rows = tableBlock.trim().split(/\r?\n/).map(r => r.trim()).filter(Boolean);
       if (rows.length < 2) return match;
       const parseRow = (row, isHeader = false) => {
@@ -3286,8 +3757,15 @@ document.addEventListener("DOMContentLoaded", () => {
       return `\n<div class="chat-table-wrapper"><table class="chat-table">${thead}${tbody}</table></div>\n`;
     });
 
+    // 5.6 Ensure numbered list items (e.g. 1. , 2. ) and bullet points (- , * ) start on fresh lines (never breaking headers like ## 1.)
+    html = html.replace(/([a-z0-9à-ỹ\.\)\]\>])[ \t]*([0-9]+\.\s+(?:\*\*|<strong>|[A-ZÀ-ỸĐ]))/gi, '$1\n\n$2');
+    html = html.replace(/([a-z0-9à-ỹ\.\)\]\>])[ \t]+([-\*•]\s+)/gi, '$1\n$2');
+
     // 6. Citations [1], [2], [doc...]
-    html = html.replace(/\[(\d+)\]/g, (match, num) => {
+    // Normalize [u1] -> [1] and [1, 2] -> [1] [2]
+    html = html.replace(/\[u(\d+)\]/g, "[$1]");
+    html = html.replace(/\[(\d+(?:\s*,\s*\d+)+)\]/g, (m, nums) => nums.split(',').map(n => `[${n.trim()}]`).join(' '));
+    html = html.replace(/\[(\d+)\](?:\s*(?:<em>)?\(\s*Trang\s*\d+\s*\)(?:<\/em>)?)?/gi, (match, num) => {
       const evIdx = parseInt(num, 10) - 1;
       const ev = (evidence && evidence[evIdx]) ? evidence[evIdx] : null;
       const docName = (ev && (ev.filename || ev.document_id || ev.doc_id)) || "Tài liệu";
@@ -3299,7 +3777,11 @@ document.addEventListener("DOMContentLoaded", () => {
       return `<button class="inline-citation-badge" data-ev="${evIdx}"${pageAttr}${docAttr} title="Nhấn để mở và nhảy đến Trang ${pageNum || 1} của tài liệu">[${num}] ${escapeHtml(shortName)}${pageInfo}</button>`;
     });
 
-    // 6b. Direct Page References: disabled by user request
+    // 6b. Clean up trailing periods & smart paragraph spacing after citations without destroying newlines
+    html = html.replace(/[ \t]+([,\.])/g, '$1');
+    html = html.replace(/(<\/button>)[ \t]*\.[ \t]*(?!\n)/g, '$1. ');
+    html = html.replace(/(<\/button>)[ \t]*\.[ \t]*\n/g, '$1.\n');
+    html = html.replace(/(<\/button>[ \t]*\.)[ \t]+(?=[A-ZÀ-ỸĐ])/g, '$1\n\n');
 
     // 7. Structured List Parsing with Lookahead & Tag Symmetry
     const lines = html.split(/\r?\n/);
@@ -3403,7 +3885,12 @@ document.addEventListener("DOMContentLoaded", () => {
         e.stopPropagation();
         const pNum = citeBtn.dataset.page || 1;
         const dId = citeBtn.dataset.doc || state.selectedDocId;
-        jumpToPdfPage(pNum, dId);
+        const evIdx = parseInt(citeBtn.dataset.ev, 10);
+        let quote = citeBtn.title || "";
+        if (!isNaN(evIdx) && state.currentEvidence && state.currentEvidence[evIdx]) {
+          quote = state.currentEvidence[evIdx].quote || quote;
+        }
+        jumpToPdfPage(pNum, dId, quote);
         return;
       }
 
@@ -3581,11 +4068,11 @@ function initSlashCommandsAutosuggest({ textarea, container, onAction }) {
 
   function getBadgeClass(cat) {
     switch (cat) {
-      case "Phân tích": return "slash-badge-phan-tich";
-      case "Kỹ thuật": return "slash-badge-ky-thuat";
-      case "Kiểm chứng": return "slash-badge-kiem-chung";
-      case "Học thuật": return "slash-badge-hoc-thuat";
-      case "Hệ thống": return "slash-badge-he-thong";
+      case "Ph\xc3\xa2n t\xc3\xadch": return "slash-badge-phan-tich";
+      case "K\xe1\xbb\xb9 thu\xe1\xba\xb7t": return "slash-badge-ky-thuat";
+      case "Ki\xe1\xbb\x83m ch\xe1\xbb\xa9ng": return "slash-badge-kiem-chung";
+      case "H\xe1\xbb\x8dc thu\xe1\xba\xadt": return "slash-badge-hoc-thuat";
+      case "H\xe1\xbb\x87 th\xe1\xbb\x91ng": return "slash-badge-he-thong";
       default: return "slash-badge-he-thong";
     }
   }

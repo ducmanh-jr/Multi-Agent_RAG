@@ -128,82 +128,86 @@ def parse_pdf_document(file_path: str) -> tuple[dict[str, Any], list[SourceUnit]
         import fitz  # PyMuPDF
 
         doc = fitz.open(file_path)
-        curr_offset = 0
-        pages_meta = []
+        try:
+            curr_offset = 0
+            pages_meta = []
 
-        for page_idx in range(len(doc)):
-            page_no = page_idx + 1
-            page = doc[page_idx]
-            raw_blocks = page.get_text("blocks")  # (x0, y0, x1, y1, text, block_no, block_type)
-            page_text = page.get_text("text").strip()
-            has_text_layer = len(page_text) > 20
-            images = page.get_images(full=True)
-            page_area = max(page.rect.width * page.rect.height, 1.0)
+            for page_idx in range(len(doc)):
+                page_no = page_idx + 1
+                page = doc[page_idx]
+                raw_blocks = page.get_text("blocks")  # (x0, y0, x1, y1, text, block_no, block_type)
+                page_text = page.get_text("text").strip()
+                has_text_layer = len(page_text) > 20
+                images = page.get_images(full=True)
+                page_area = max(page.rect.width * page.rect.height, 1.0)
 
-            image_area_ratio = 0.0
-            for img in images:
-                try:
-                    img_bbox = page.get_image_bbox(img)
-                    image_area_ratio += (img_bbox.width * img_bbox.height) / page_area
-                except Exception:
-                    continue
-            image_area_ratio = round(min(image_area_ratio, 1.0), 3)
+                image_area_ratio = 0.0
+                for img in images:
+                    try:
+                        img_bbox = page.get_image_bbox(img)
+                        image_area_ratio += (img_bbox.width * img_bbox.height) / page_area
+                    except Exception:
+                        continue
+                image_area_ratio = round(min(image_area_ratio, 1.0), 3)
 
-            is_simple = len(raw_blocks) <= 15 and image_area_ratio < 0.1
-            layout_type = "simple" if is_simple else ("complex" if has_text_layer else "scanned_image")
+                is_simple = len(raw_blocks) <= 15 and image_area_ratio < 0.1
+                layout_type = "simple" if is_simple else ("complex" if has_text_layer else "scanned_image")
 
-            pages_meta.append({
-                "page_no": page_no,
-                "has_text_layer": has_text_layer,
-                "block_count": len(raw_blocks),
-                "image_area_ratio": image_area_ratio,
-                "layout_type": layout_type,
-            })
-
-            if not has_text_layer:
-                logger.warning(f"Page {page_no} has no digital text layer (scanned image detected). Flagging for OCR fallback.")
-
-            # Apply Column-Aware Sorting
-            sorted_blocks = sort_blocks_column_aware(raw_blocks, page.rect.width)
-
-            for b in sorted_blocks:
-                text = b[4].strip()
-                if not text or is_boilerplate(text):
-                    continue
-
-                bbox = [round(b[0], 2), round(b[1], 2), round(b[2], 2), round(b[3], 2)]
-                unit_id = f"{doc_id}_p{page_no}_b{len(source_units)}"
-
-                unit = SourceUnit(
-                    id=unit_id,
-                    text=text,
-                    doc_id=doc_id,
-                    page_no=page_no,
-                    bbox=bbox,
-                    character_offset=curr_offset,
-                )
-                source_units.append(unit)
-                curr_offset += len(text) + 1
-
-                category = "paragraph"
-                if len(text) < 100 and (text.isupper() or text.endswith(":")):
-                    category = "section_header"
-                elif "\t" in text or "|" in text or "  " in text:
-                    category = "table"
-
-                sections.append({
-                    "unit_id": unit_id,
-                    "category": category,
+                pages_meta.append({
                     "page_no": page_no,
-                    "bbox": bbox,
-                    "text_preview": text[:80],
+                    "has_text_layer": has_text_layer,
+                    "block_count": len(raw_blocks),
+                    "image_area_ratio": image_area_ratio,
+                    "layout_type": layout_type,
                 })
 
-        total_pages = len(doc)
-        doc.close()
-        logger.info(f"PyMuPDF parsed {len(source_units)} units across {total_pages} pages with column sorting.")
+                if not has_text_layer:
+                    logger.warning(f"Page {page_no} has no digital text layer (scanned image detected). Flagging for OCR fallback.")
 
-    except ImportError:
+                # Apply Column-Aware Sorting
+                sorted_blocks = sort_blocks_column_aware(raw_blocks, page.rect.width)
+
+                for b in sorted_blocks:
+                    text = b[4].strip()
+                    if not text or is_boilerplate(text):
+                        continue
+
+                    bbox = [round(b[0], 2), round(b[1], 2), round(b[2], 2), round(b[3], 2)]
+                    unit_id = f"{doc_id}_p{page_no}_b{len(source_units)}"
+
+                    unit = SourceUnit(
+                        id=unit_id,
+                        text=text,
+                        doc_id=doc_id,
+                        page_no=page_no,
+                        bbox=bbox,
+                        character_offset=curr_offset,
+                    )
+                    source_units.append(unit)
+                    curr_offset += len(text) + 1
+
+                    category = "paragraph"
+                    if len(text) < 100 and (text.isupper() or text.endswith(":")):
+                        category = "section_header"
+                    elif "\t" in text or "|" in text or "  " in text:
+                        category = "table"
+
+                    sections.append({
+                        "unit_id": unit_id,
+                        "category": category,
+                        "page_no": page_no,
+                        "bbox": bbox,
+                        "text_preview": text[:80],
+                    })
+
+            total_pages = len(doc)
+            logger.info(f"PyMuPDF parsed {len(source_units)} units across {total_pages} pages with column sorting.")
+        finally:
+            doc.close()
+
+    except (ImportError, Exception) as fitz_err:
+        if not isinstance(fitz_err, ImportError):
+            logger.warning(f"PyMuPDF failed to parse {file_path} ({fitz_err}). Falling back to raw text parser.")
         logger.warning("PyMuPDF (fitz) is not installed. Using raw text fallback parser.")
         try:
             with open(file_path, "r", encoding="utf-8", errors="ignore") as f:

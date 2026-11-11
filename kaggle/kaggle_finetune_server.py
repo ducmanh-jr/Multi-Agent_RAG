@@ -367,7 +367,7 @@ def factcheck_endpoint(req: FactCheckRequest):
             evaluations.append({"claim": c, "verdict": "SUPPORT", "confidence": 0.95, "reason": "GPU1 NLI head loading fallback"})
         return {"evaluations": evaluations}
 
-    labels = ["CONTRADICT", "NEUTRAL", "SUPPORT"]
+    labels = ["SUPPORT", "CONTRADICT", "NOT_ENOUGH_INFO"]
     for c in req.claims:
         inputs = tokenizer(req.context[:1800], c, truncation=True, max_length=512, return_tensors="pt").to(model.device)
         with torch.no_grad():

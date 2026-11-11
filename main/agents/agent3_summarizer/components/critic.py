@@ -45,12 +45,18 @@ YÊU CẦU TRẢ VỀ JSON:
 """
     try:
         data = llm_client.generate_json(prompt, agent="summarizer")
-        approved_ids = set(data.get("approved_claim_ids", [c["id"] for c in claims]))
+        all_ids = [c.get("id") or c.get("claim_id", f"c_{i}") for i, c in enumerate(claims)]
+        raw_approved = data.get("approved_claim_ids")
         warnings = data.get("critic_warnings", [])
+        if raw_approved is None or (not raw_approved and not warnings):
+            approved_ids = set(all_ids)
+        else:
+            approved_ids = set(raw_approved)
 
-        filtered = [c for c in claims if c["id"] in approved_ids]
+        filtered = [c for i, c in enumerate(claims) if (c.get("id") or c.get("claim_id", f"c_{i}")) in approved_ids]
         if not filtered:
-            filtered = claims[:3]  # keep at least some for fact checker
+            # Do NOT force ungrounded claims into downstream verification. Keep empty list and trigger self-correction.
+            warnings.append("Toàn bộ các nhận định bị loại bỏ do thiếu căn cứ bằng chứng (Zero Hallucination).")
 
         return answer, filtered, warnings
     except Exception as e:

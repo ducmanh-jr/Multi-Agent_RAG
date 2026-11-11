@@ -82,22 +82,28 @@ BILINGUAL_PHRASE_MAP: dict[str, list[str]] = {
 
 # English -> Vietnamese reverse map
 ENGLISH_TO_VIETNAMESE: dict[str, list[str]] = {
-    "attention": ["chú", "ý"],
-    "transformer": ["kiến", "trúc", "transformer"],
-    "lora": ["tinh", "chỉnh", "thứ", "hạng", "thấp"],
-    "qlora": ["lượng", "tử", "hóa", "tinh", "chỉnh"],
-    "memory": ["bộ", "nhớ", "vram"],
-    "parameters": ["tham", "số"],
-    "weights": ["trọng", "số"],
-    "latency": ["độ", "trễ"],
-    "throughput": ["băng", "thông", "tốc", "độ"],
-    "fine-tuning": ["tinh", "chỉnh"],
-    "accuracy": ["độ", "chính", "xác"],
-    "training": ["huấn", "luyện"],
-    "inference": ["suy", "luận"],
-    "quantization": ["lượng", "tử", "hóa"],
-    "abstract": ["tóm", "tắt", "nội", "dung"],
-    "summary": ["tóm", "tắt"],
+    "attention": ["chú ý", "attention"],
+    "transformer": ["kiến trúc", "mô hình transformer", "transformer"],
+    "lora": ["tinh chỉnh", "thứ hạng thấp", "lora"],
+    "qlora": ["lượng tử hóa", "tinh chỉnh qlora", "qlora"],
+    "memory": ["bộ nhớ", "vram"],
+    "parameters": ["tham số"],
+    "weights": ["trọng số"],
+    "latency": ["độ trễ"],
+    "throughput": ["băng thông", "tốc độ xử lý"],
+    "fine-tuning": ["tinh chỉnh", "fine-tuning"],
+    "accuracy": ["độ chính xác", "accuracy"],
+    "training": ["huấn luyện", "đào tạo"],
+    "inference": ["suy luận"],
+    "quantization": ["lượng tử hóa"],
+    "abstract": ["tóm tắt", "nội dung chính"],
+    "summary": ["tóm tắt", "tổng quan"],
+}
+
+# Pre-compiled regex patterns for high-frequency lookup avoidance
+_COMPILED_EN_PATTERNS: dict[str, re.Pattern] = {
+    en_word: re.compile(r'\b' + re.escape(en_word) + r'\b')
+    for en_word in ENGLISH_TO_VIETNAMESE
 }
 
 
@@ -114,9 +120,9 @@ def expand_bilingual_tokens(query: str, current_tokens: Set[str]) -> Set[str]:
         if vn_phrase in q_low:
             expanded.update(en_tokens)
 
-    # 2. Match English words -> inject Vietnamese tokens
-    for en_word, vn_tokens in ENGLISH_TO_VIETNAMESE.items():
-        if re.search(r'\b' + re.escape(en_word) + r'\b', q_low):
-            expanded.update(vn_tokens)
+    # 2. Match English words via pre-compiled patterns -> inject Vietnamese tokens
+    for en_word, pattern in _COMPILED_EN_PATTERNS.items():
+        if pattern.search(q_low):
+            expanded.update(ENGLISH_TO_VIETNAMESE[en_word])
 
     return expanded

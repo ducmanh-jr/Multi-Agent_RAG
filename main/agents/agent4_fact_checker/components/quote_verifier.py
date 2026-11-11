@@ -93,50 +93,33 @@ def classify_answer_and_status(
     """
     q_norm = normalize_text_for_matching(query)
 
-    # Check 1: Premise Rejection detection
-    if "1968" in query and ("ra số đầu" in q_norm or "số đầu tiên" in q_norm):
-        for unit in source_units:
-            t = normalize_text_for_matching(unit.get("text", ""))
-            if "1957" in t and "số đầu tiên" in t:
+    # Check 1: Generalized Premise Rejection & Anachronism Detection
+    # Detect if query explicitly states a historical year/metric that contradicts source context
+    query_years = set(re.findall(r"\b(?:18\d\d|19\d\d|20\d\d)\b", query))
+    if query_years and source_units:
+        # Exclude bibliography or reference sections if labeled to avoid false citation conflicts
+        filtered_units = [
+            u for u in source_units
+            if not any(k in str(u.get("section", "")).lower() for k in ["reference", "bibliography", "tài liệu tham khảo"])
+        ]
+        active_units = filtered_units if filtered_units else source_units
+        all_context_text = " ".join(u.get("text", "") for u in active_units)
+        # Filter out citation brackets or author year parentheticals e.g. [2018] or (Vaswani et al., 2017)
+        cleaned_ctx = re.sub(r"\[\s*\d{4}\s*\]|\([A-Za-z\s.,]+,?\s*(?:18|19|20)\d{2}\)", "", all_context_text)
+        ctx_years = set(re.findall(r"\b(?:18\d\d|19\d\d|20\d\d)\b", cleaned_ctx))
+        # If query insists on a specific year that does not appear anywhere in source units, but alternative years exist
+        if query_years and ctx_years and not (query_years & ctx_years):
+            # Check if query and context share entity keywords
+            q_entities = [w for w in re.findall(r"\w+", q_norm) if len(w) > 4]
+            overlap_entities = [w for w in q_entities if w in all_context_text.lower()]
+            if len(overlap_entities) >= 2:
+                alt_years = ", ".join(sorted(list(ctx_years))[:2])
                 return (
                     "PREMISE_REJECTED",
-                    "Tiền đề câu hỏi không chính xác. Theo tài liệu, Báo Thủ đô (tiền thân của Báo Hà Nội mới) ra số đầu tiên vào ngày 24.10.1957 (không phải năm 1968). Năm 1968 là thời điểm hợp nhất với Báo Thời mới.",
+                    f"Tiền đề câu hỏi có thể không chính xác về mốc thời gian ({', '.join(query_years)}). Tài liệu nguồn đề cập đến các mốc: {alt_years}.",
                 )
 
-    if "new york" in q_norm and ("hiến chương" in q_norm or "san francisco" in q_norm):
-        return (
-            "PREMISE_REJECTED",
-            "Tiền đề câu hỏi không chính xác. Theo tài liệu, Hiến chương Liên Hợp Quốc được thông qua tại Hội nghị San Francisco (ngày 26.6.1945), không phải tại New York.",
-        )
-
-    if "thứ 150" in q_norm and ("liên hợp quốc" in q_norm or "lhq" in q_norm):
-        return (
-            "PREMISE_REJECTED",
-            "Tiền đề câu hỏi không chính xác. Theo tài liệu, Việt Nam gia nhập Liên Hợp Quốc ngày 20.9.1977 và trở thành thành viên thứ 149 (không phải thứ 150).",
-        )
-
-    # Check 2: Not Found in Document (Abstention)
-    if "hiện vật" in q_norm and ("bao nhiêu" in q_norm or "số lượng" in q_norm):
-        return (
-            "NOT_FOUND_IN_DOCUMENT",
-            "Tài liệu không cung cấp số lượng hiện vật cụ thể. Tài liệu chỉ nêu rằng Bảo tàng có nhiệm vụ sưu tầm, bảo quản, nghiên cứu và trưng bày các hiện vật, tư liệu.",
-        )
-    if "tổng biên tập" in q_norm:
-        return (
-            "NOT_FOUND_IN_DOCUMENT",
-            "Tài liệu không đề cập tên Tổng biên tập. Tài liệu chỉ ghi nhận Báo Thủ đô ra số đầu tiên ngày 24.10.1957.",
-        )
-    if "địa chỉ" in q_norm and "bảo tàng" in q_norm:
-        return (
-            "NOT_FOUND_IN_DOCUMENT",
-            "Tài liệu không cung cấp địa chỉ cụ thể của Bảo tàng Dân tộc học Việt Nam.",
-        )
-    if ("dow jones" in q_norm or "sụt giảm" in q_norm) and ("bao nhiêu" in q_norm or "phần trăm" in q_norm):
-        return (
-            "NOT_FOUND_IN_DOCUMENT",
-            "Tài liệu không nêu con số phần trăm cụ thể. Tài liệu chỉ mô tả chung 'giá nhiều mã giảm sâu' và 'lượng cổ phiếu bán ra tăng đột biến'.",
-        )
-
+    # Check 2: Generalized Abstention / Not Found in Document
     if not verified_claims or len(verified_claims) == 0:
         return (
             "NOT_FOUND_IN_DOCUMENT",

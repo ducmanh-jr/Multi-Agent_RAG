@@ -81,6 +81,13 @@ def terminate_all_workers():
     _worker_process = None
     _vllm_process = None
 
+    # Force kill any lingering worker or vLLM tensor-parallel child processes on Linux
+    try:
+        os.system("pkill -9 -f 'vllm' 2>/dev/null")
+        os.system("pkill -9 -f 'kaggle_finetune_server' 2>/dev/null")
+    except Exception:
+        pass
+
     # Force OS garbage collection and CUDA flush if torch exists
     try:
         import torch, gc
@@ -181,7 +188,12 @@ async def health():
     try:
         r = await _http_client.get(f"{active_url}/health", timeout=2.0)
         if r.status_code == 200:
-            worker_health = r.json()
+            try:
+                worker_health = r.json()
+            except Exception:
+                worker_health = {"worker_status": "online"}
+            if not worker_health.get("worker_status"):
+                worker_health["worker_status"] = "online"
     except Exception as e:
         worker_health = {"worker_status": "starting_or_offline", "error": str(e)}
 
@@ -238,10 +250,10 @@ async def switch_mode(req: SwitchModeRequest):
     try:
         if target == "gpu_max":
             spawn_worker_max()
-            online = await wait_for_worker_health("http://127.0.0.1:8002", max_retries=60)
+            online = await wait_for_worker_health("http://127.0.0.1:8002", max_retries=90)
         else:
             spawn_worker_finetune()
-            online = await wait_for_worker_health("http://127.0.0.1:8001", max_retries=60)
+            online = await wait_for_worker_health("http://127.0.0.1:8001", max_retries=75)
 
         if not online:
             _state["is_switching"] = False

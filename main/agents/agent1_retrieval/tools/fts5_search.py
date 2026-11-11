@@ -24,50 +24,72 @@ class SQLiteFTS5Searcher:
 
     def _init_fts(self):
         cursor = self.conn.cursor()
-        cursor.execute("""
-            CREATE VIRTUAL TABLE IF NOT EXISTS corpus_fts USING fts5(
-                id UNINDEXED,
-                doc_id UNINDEXED,
-                title,
-                text,
-                page_no UNINDEXED,
-                tokenize='unicode61 remove_diacritics 2'
-            );
-        """)
-        self.conn.commit()
+        try:
+            cursor.execute("""
+                CREATE VIRTUAL TABLE IF NOT EXISTS corpus_fts USING fts5(
+                    id UNINDEXED,
+                    doc_id UNINDEXED,
+                    title,
+                    text,
+                    page_no UNINDEXED,
+                    tokenize='unicode61 remove_diacritics 2'
+                );
+            """)
+            self.conn.commit()
+        finally:
+            cursor.close()
 
-    def fit(self, docs: list[dict[str, Any]]):
+    def fit(self, docs: list[dict[str, Any]], overwrite: bool = True):
         """Indexes an array of document dictionaries."""
         cursor = self.conn.cursor()
-        cursor.execute("DELETE FROM corpus_fts;")
+        try:
+            if overwrite:
+                cursor.execute("DELETE FROM corpus_fts;")
 
-        records = []
-        for i, doc in enumerate(docs):
-            d_id = doc.get("id") or f"doc_{i}"
-            doc_id = doc.get("doc_id", d_id)
-            title = doc.get("title", "")
-            text = doc.get("text", "")
-            page_no = str(doc.get("page_no", 1))
-            records.append((d_id, doc_id, title, text, page_no))
+            records = []
+            for i, doc in enumerate(docs):
+                d_id = doc.get("id") or f"doc_{i}"
+                doc_id = doc.get("doc_id", d_id)
+                title = doc.get("title", "")
+                text = doc.get("text", "")
+                page_no = str(doc.get("page_no", 1))
+                records.append((d_id, doc_id, title, text, page_no))
 
-        cursor.executemany("""
-            INSERT INTO corpus_fts(id, doc_id, title, text, page_no)
-            VALUES (?, ?, ?, ?, ?);
-        """, records)
+            cursor.executemany("""
+                INSERT INTO corpus_fts(id, doc_id, title, text, page_no)
+                VALUES (?, ?, ?, ?, ?);
+            """, records)
 
-        self.conn.commit()
-        self._total_docs = len(docs)
-        logger.info(f"SQLite FTS5: Indexed {self._total_docs} documents into C-Engine.")
+            self.conn.commit()
+            if overwrite:
+                self._total_docs = len(docs)
+            else:
+                self._total_docs += len(docs)
+            logger.info(f"SQLite FTS5: Indexed {len(docs)} documents into C-Engine (total={self._total_docs}).")
+        finally:
+            cursor.close()
+
+    def add_documents(self, docs: list[dict[str, Any]]):
+        """Incrementally adds documents without clearing existing corpus."""
+        return self.fit(docs, overwrite=False)
 
     def search(self, query: str, top_k: int = 5) -> list[dict[str, Any]]:
         """Executes BM25 search using SQLite's native C function."""
         if self._total_docs == 0:
             return []
 
-        # Sanitize query tokens for FTS5 (strip special punctuation, support OR / prefix)
-        tokens = re.findall(r"\w+", query)
-        if not tokens:
+        # Sanitize query tokens for FTS5, filtering non-discriminative stop words
+        raw_tokens = re.findall(r"\w+", query)
+        if not raw_tokens:
             return []
+
+        stop_words = {
+            "là", "gì", "và", "của", "cho", "với", "như", "thế", "nào", "được", "khi",
+            "ở", "đâu", "các", "những", "này", "đó", "ra", "vào", "từ", "về", "trong",
+            "để", "có", "hãy", "biết", "ai", "mấy", "bao_nhiêu"
+        }
+        content_tokens = [t for t in raw_tokens if len(t) > 1 and t.lower() not in stop_words]
+        tokens = content_tokens if content_tokens else raw_tokens
 
         # Formulate query: token1 OR token2 OR token3
         fts_query = " OR ".join([f'"{t}"' for t in tokens])
@@ -100,3 +122,12 @@ class SQLiteFTS5Searcher:
         except sqlite3.OperationalError as e:
             logger.warning(f"FTS5 match syntax error ({e}), falling back to prefix token search.")
             return []
+        finally:
+            cursor.close()
+
+    def close(self):
+        """Closes the underlying SQLite connection cleanly."""
+        try:
+            self.conn.close()
+        except Exception:
+            pass

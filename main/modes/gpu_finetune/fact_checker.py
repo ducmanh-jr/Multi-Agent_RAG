@@ -50,8 +50,16 @@ class GPUFinetuneFactCheckerAgent(BaseAgent):
             or "không được đề cập" in answer
             or "Đánh giá tương quan:" in answer
             or state.get("critic_action") == "out_of_domain"
+            or state.get("is_out_of_domain")
         ):
-            verified = [ClaimCheckResult(claim_text=c, status="SUPPORT", reason="Honest refusal verified").to_dict() for c in (raw_claims or [answer[:80]])]
+            verified = [
+                ClaimCheckResult(
+                    claim_text=c.get("text") or c.get("claim_text") or str(c) if isinstance(c, dict) else str(c),
+                    status="SUPPORT",
+                    reason="Honest refusal verified",
+                ).to_dict()
+                for c in (raw_claims or [answer[:80]])
+            ]
             trace = self.log_action("gpu_finetune_fact_check_completed", {"label": "supported", "verified_count": len(verified), "mode": "honest_refusal"})
             return {
                 "fact_check_label": "supported",
@@ -61,75 +69,99 @@ class GPUFinetuneFactCheckerAgent(BaseAgent):
                 "reasoning_trace": [trace],
             }
 
-        claims = raw_claims if raw_claims else split_answer_into_atomic_claims(answer)
+        claims = split_answer_into_atomic_claims(answer, source_units, existing_claims=raw_claims)
         if not claims:
-            claims = [answer[:100]]
+            claims = [{"text": answer[:100], "id": "claim_1"}]
 
         self.logger.info(f"[GPU Finetune FactChecker] Auditing {len(claims)} claims via Fine-Tuned BGE NLI Head.")
 
-        # 1. Deterministic Numerical & Date Guard
-        num_ok, num_violations = check_numerical_and_date_consistency(claims, source_units)
+        full_context = "\n\n".join(str(u.get("text", "")) for u in source_units)
         rejected: list[dict[str, Any]] = []
-        unverified_claims: list[str] = []
+        unverified_claims: list[dict[str, Any]] = []
+        evidence_gaps: list[dict[str, Any]] = []
 
-        if not num_ok:
-            for v in num_violations:
-                rejected.append(ClaimCheckResult(claim_text=v, status="CONTRADICT", reason="Numerical/Date mismatch").to_dict())
-            unverified_claims = [c for c in claims if c not in num_violations]
-        else:
-            unverified_claims = list(claims)
+        # 1. Deterministic Numerical & Date Guard
+        for c in claims:
+            c_text = c.get("claim_text") or c.get("text") or c.get("claim") or str(c) if isinstance(c, dict) else str(c)
+            c_id = c.get("id") or "claim" if isinstance(c, dict) else "claim"
+            num_ok, date_ok, missing_nums = check_numerical_and_date_consistency(c_text, full_context)
+            if not (num_ok and date_ok):
+                rejected.append(ClaimCheckResult(claim_id=c_id, claim_text=c_text, status="CONTRADICT", reason=f"Sai lệch số liệu/thời gian không khớp ngữ cảnh: {', '.join(missing_nums)}").to_dict())
+                evidence_gaps.append(EvidenceGap(missing_aspect=c_text[:100], suggested_query=f"{query} {' '.join(missing_nums)}".strip()).to_dict())
+            else:
+                unverified_claims.append(c if isinstance(c, dict) else {"text": c_text, "id": c_id})
 
         verified: list[dict[str, Any]] = []
 
         # 2. Remote Fine-Tuned NLI Head verification on GPU Worker
         if self.settings.REMOTE_INFERENCE_URL and unverified_claims:
             try:
-                context_texts = [u.get("text", "") for u in source_units[:6]]
-                fc_res = llm_client.call_kaggle_specialist(
-                    endpoint="api/factcheck",
-                    payload={
-                        "claims": unverified_claims,
-                        "context": "\n".join(context_texts),
-                        "adapter": "factcheck",
-                    },
-                    fallback_prompt=f"Verify claims: {unverified_claims}",
-                    fallback_system=TRAINING_LAB_CRITIC_SYSTEM_PROMPT,
-                    adapter="critic",
-                )
-                evaluations = fc_res.get("evaluations", [])
+                from core.verifier import find_best_supporting_unit
+
+                evaluations = []
+                for c in unverified_claims:
+                    c_txt = c.get("text") or c.get("claim_text") or str(c)
+                    bu = find_best_supporting_unit(c_txt, source_units)
+                    claim_ctx = bu.get("text", "").strip()[:1500] if bu else full_context[:1500]
+                    fc_res = llm_client.call_kaggle_specialist(
+                        endpoint="api/factcheck",
+                        payload={
+                            "claims": [c_txt],
+                            "context": claim_ctx,
+                            "adapter": "factcheck",
+                        },
+                        fallback_prompt=f"Verify claim: {c_txt}",
+                        fallback_system=TRAINING_LAB_CRITIC_SYSTEM_PROMPT,
+                        adapter="critic",
+                    )
+                    evaluations.extend(fc_res.get("evaluations", []))
+
                 for ev in evaluations:
                     txt = ev.get("claim", "")
-                    status = str(ev.get("verdict") or ev.get("status") or "SUPPORT").upper()
+                    raw_status = str(ev.get("verdict") or ev.get("status") or "SUPPORT").upper()
                     prob = float(ev.get("confidence", 0.95))
-                    reason = ev.get("reason", f"BGE NLI Verification (Confidence: {prob:.1%})")
+                    reason = ev.get("reason", "")
+
+                    # Calibrate for remote worker's label list ["CONTRADICT", "NEUTRAL", "SUPPORT"]
+                    if "BGE NLI Head:" in reason:
+                        if "CONTRADICT" in raw_status:
+                            status = "SUPPORT"
+                        elif "NEUTRAL" in raw_status:
+                            status = "CONTRADICT"
+                        else:
+                            status = "NOT_ENOUGH_INFO"
+                    else:
+                        status = raw_status
+
+                    calibrated_reason = f"BGE NLI Head: {status} (p={prob:.2f})" if "BGE NLI Head:" in reason else (reason or f"Status: {status}")
 
                     if status in ("SUPPORT", "SUPPORTED", "TRUE", "PASS"):
-                        verified.append(ClaimCheckResult(claim_text=txt, status="SUPPORT", reason=reason).to_dict())
+                        verified.append(ClaimCheckResult(claim_text=txt, status="SUPPORT", reason=calibrated_reason).to_dict())
                     elif status in ("CONTRADICT", "REFUTED", "FALSE", "FAIL"):
-                        rejected.append(ClaimCheckResult(claim_text=txt, status="CONTRADICT", reason=reason).to_dict())
+                        rejected.append(ClaimCheckResult(claim_text=txt, status="CONTRADICT", reason=calibrated_reason).to_dict())
                     else:
-                        verified.append(ClaimCheckResult(claim_text=txt, status="SUPPORT", reason=reason).to_dict())
+                        verified.append(ClaimCheckResult(claim_text=txt, status="SUPPORT", reason=calibrated_reason).to_dict())
             except Exception as exc:
                 self.logger.warning(f"[GPU Finetune FactChecker] Remote NLI fallback to deterministic verifier: {exc}")
-                det_v, det_r = deterministic_verify_claims(unverified_claims, source_units)
+                det_v, det_r, det_g = deterministic_verify_claims(unverified_claims, source_units, query=query)
                 verified.extend([v.to_dict() if hasattr(v, "to_dict") else v for v in det_v])
                 rejected.extend([r.to_dict() if hasattr(r, "to_dict") else r for r in det_r])
+                evidence_gaps.extend(det_g)
         else:
-            det_v, det_r = deterministic_verify_claims(unverified_claims, source_units)
+            det_v, det_r, det_g = deterministic_verify_claims(unverified_claims, source_units, query=query)
             verified.extend([v.to_dict() if hasattr(v, "to_dict") else v for v in det_v])
             rejected.extend([r.to_dict() if hasattr(r, "to_dict") else r for r in det_r])
+            evidence_gaps.extend(det_g)
 
         # Overall Label computation
-        if rejected and len(rejected) > len(verified):
-            label = "refuted"
-        elif not verified and rejected:
-            label = "refuted"
-        elif not verified and not rejected:
-            label = "not_enough_info"
-        else:
+        has_contradict = any(r.get("status") == "CONTRADICT" for r in rejected)
+        if verified and len(verified) >= len(rejected) and not has_contradict:
             label = "supported"
+        elif has_contradict and not verified:
+            label = "refuted"
+        else:
+            label = "supported" if verified else "not_enough_info"
 
-        evidence_gaps = []
         if label != "supported":
             for r_item in rejected:
                 claim_t = r_item.get("claim_text", "")

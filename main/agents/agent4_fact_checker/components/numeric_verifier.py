@@ -11,19 +11,48 @@ import re
 from typing import Optional
 
 
-def extract_numbers(text: str) -> list[str]:
-    """Extract raw numbers, integers, floats, and percentages."""
-    pattern = r"\b\d+(?:[.,]\d+)*(?:%|\b)"
-    return [m.strip().replace(",", "") for m in re.findall(pattern, text)]
-
-
-def _parse_numeric_value(token: str) -> Optional[float]:
-    """Parses a numeric token to float."""
-    clean = token.rstrip("%").strip().replace(",", "")
+def _normalize_number_token(token: str) -> Optional[float]:
+    """Parses a numeric token to float, properly distinguishing Vietnamese decimal commas vs thousand separators."""
+    clean = token.rstrip("%").strip().replace("−", "-")
+    if not clean:
+        return None
+    # If both . and , exist: 1,234.56 or 1.234,56
+    if "." in clean and "," in clean:
+        if clean.rfind(".") > clean.rfind(","):
+            clean = clean.replace(",", "")
+        else:
+            clean = clean.replace(".", "").replace(",", ".")
+    elif "," in clean:
+        # Check if comma is thousand separator (e.g. 1,000 or 1,000,000) vs decimal separator (1,5 or 0,75)
+        parts = clean.split(",")
+        if len(parts) > 1 and all(len(p) == 3 for p in parts[1:]) and len(parts[0]) <= 3 and len(parts[0]) > 0:
+            clean = clean.replace(",", "")
+        else:
+            clean = clean.replace(",", ".")
     try:
         return float(clean)
     except ValueError:
         return None
+
+
+def extract_numbers(text: str) -> list[str]:
+    """Extract raw numbers, integers, negative values, floats, and percentages."""
+    pattern = r"(?<!\w)[−-]??\d+(?:[.,]\d+)*(?:%|\b)"
+    raw_matches = re.findall(pattern, text)
+    result = []
+    for m in raw_matches:
+        clean_m = m.replace("−", "-")
+        # Normalize thousand-separator commas e.g. 18,587 -> 18587
+        parts = clean_m.rstrip("%").split(",")
+        if len(parts) > 1 and all(len(p) == 3 for p in parts[1:]):
+            clean_m = clean_m.replace(",", "")
+        result.append(clean_m)
+    return result
+
+
+def _parse_numeric_value(token: str) -> Optional[float]:
+    """Parses a numeric token to float supporting negative values and decimal commas."""
+    return _normalize_number_token(token)
 
 
 def _extract_quantities_with_units(text: str) -> list[tuple[float, str]]:
@@ -33,17 +62,15 @@ def _extract_quantities_with_units(text: str) -> list[tuple[float, str]]:
     """
     quantities = []
     pattern = re.compile(
-        r"(?P<val>\d+(?:[.,]\d+)*)\s*(?P<unit>%|gb|mb|tb|kb|triệu|tỷ|nghìn|[kmb])?(?=[^\w]|$)",
+        r"(?P<val>[−-]??\d+(?:[.,]\d+)*)\s*(?P<unit>%|gb|mb|tb|kb|triệu|tỷ|nghìn|[kmb])?(?=[^\w]|$)",
         re.IGNORECASE,
     )
     for m in pattern.finditer(text):
-        val_str = m.group("val").replace(",", "")
+        val_str = m.group("val")
         unit = (m.group("unit") or "").lower()
-        try:
-            val = float(val_str)
+        val = _normalize_number_token(val_str)
+        if val is not None:
             quantities.append((val, unit))
-        except ValueError:
-            continue
     return quantities
 
 
@@ -107,7 +134,7 @@ def verify_numbers_in_claim(claim: str, context: str) -> tuple[bool, str]:
             continue
 
         # 2. Advanced semantic & unit normalization match
-        val_claim = _parse_numeric_value(num_str)
+        val_claim = _normalize_number_token(num_str)
         if val_claim is None:
             missing.append(num_str)
             continue

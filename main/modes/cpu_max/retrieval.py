@@ -107,24 +107,43 @@ class CPUMaxRetrievalAgent(BaseAgent):
             active_pool = self.corpus_docs
 
         # 2. Retrieval Strategy:
-        # If this is a general summary/overview query: sample chunks distributed across ALL pages of ALL documents!
+        # If this is a general summary/overview query: sample chunks distributed across representative pages!
         perspectives = []
         if is_summary_query and active_pool:
+            docs_by_id: dict[str, dict[int, list[dict[str, Any]]]] = {}
+            for chunk in active_pool:
+                d_id = str(chunk.get("doc_id", "doc"))
+                p_no = int(chunk.get("page_no", 1))
+                docs_by_id.setdefault(d_id, {}).setdefault(p_no, []).append(chunk)
+
             sampled_summary: list[dict[str, Any]] = []
-            seen_page_keys: set[tuple[str, int]] = set()
-            for doc in active_pool:
-                d_id = str(doc.get("doc_id", "doc"))
-                p_no = int(doc.get("page_no", 1))
-                key = (d_id, p_no)
-                if key not in seen_page_keys:
-                    seen_page_keys.add(key)
-                    sampled_summary.append(doc)
-            fused = sampled_summary if sampled_summary else active_pool[: max(top_k, 10)]
+            for d_id, page_dict in docs_by_id.items():
+                sorted_pages = sorted(page_dict.keys())
+                max_page = sorted_pages[-1] if sorted_pages else 1
+
+                # If large document (e.g. textbook > 20 pages), skip frontmatter (pages 1-15) to avoid cover, copyright & editor lists
+                if max_page > 20:
+                    body_pages = [p for p in sorted_pages if p >= 16]
+                    pages_to_sample = body_pages if len(body_pages) >= 5 else sorted_pages
+                else:
+                    pages_to_sample = sorted_pages
+
+                # Evenly sample 16-20 representative pages across the document body
+                sample_count = min(len(pages_to_sample), 20)
+                if sample_count > 0:
+                    step = len(pages_to_sample) / float(sample_count)
+                    chosen_pages = [pages_to_sample[int(i * step)] for i in range(sample_count)]
+                    for p in chosen_pages:
+                        chunks_on_page = page_dict[p]
+                        best_chunk = max(chunks_on_page, key=lambda c: len(str(c.get("text", "")).strip()))
+                        sampled_summary.append(best_chunk)
+
+            fused = sampled_summary if sampled_summary else active_pool[: max(top_k, 20)]
             combined_queries = [clean_q]
         else:
             # Multi-perspective STORM expansion (bypassed if Ollama local server is offline)
             from utils.llm_client import probe_ollama_models
-            ollama_stat = probe_ollama_models(timeout=0.2)
+            ollama_stat = probe_ollama_models(timeout=1.5)
             if ollama_stat.get("online"):
                 perspectives, storm_subs = generate_research_perspectives(clean_q)
             else:

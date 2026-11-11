@@ -21,6 +21,9 @@ _STOP_WORDS_VI_EN = {
     "và", "của", "cho", "với", "như", "thế", "nào", "được", "khi", "là", "gì",
     "ở", "đâu", "các", "những", "này", "đó", "ra", "vào", "từ", "về", "trong",
     "để", "có", "hãy", "trình", "bày", "cho", "biết", "tài", "liệu", "bài", "báo",
+    "liệu", "theo", "giải", "so", "sánh", "phân", "tích", "tại", "sao", "vì", "làm",
+    "điểm", "nêu", "mục", "tiêu", "nội", "dung", "tổng", "quan", "đánh", "giá",
+    "thông", "tin", "chi", "tiết", "mô", "hình", "phương", "pháp", "kết", "quả",
     "the", "and", "for", "with", "what", "how", "why", "from", "this", "that",
     "are", "was", "were", "have", "has", "had", "into", "about", "paper", "document",
 }
@@ -50,14 +53,11 @@ class AgenticSupervisorPlanner:
                 "how many", "how much", "percentage", "score", "metric",
             ]
         )
-        is_comparative = any(
-            kw in q_lower
-            for kw in [
-                "so sánh", "khác nhau", "giống nhau", "ưu điểm", "nhược điểm",
-                "hơn", "kém", "vs", "versus", "compare", "comparison", "difference",
-                "between", "khác biệt",
-            ]
+        comparative_pattern = re.compile(
+            r"\b(so sánh|khác nhau|giống nhau|ưu điểm|nhược điểm|tốt hơn|cao hơn|nhiều hơn|kém hơn|khác biệt|đối chiếu|so với|vs|versus|compare|comparison|difference|between)\b",
+            re.IGNORECASE,
         )
+        is_comparative = bool(comparative_pattern.search(q_lower))
         is_summary = any(
             kw in q_lower
             for kw in [

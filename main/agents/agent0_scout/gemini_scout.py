@@ -48,6 +48,17 @@ COMMON_CONCEPT_TRANSLATIONS = [
     ("học sâu", "deep learning neural networks"),
     ("thị giác máy tính", "computer vision"),
     ("xử lý ngôn ngữ tự nhiên", "natural language processing"),
+    ("mạng nơ-ron", "neural networks"),
+    ("học tăng cường", "reinforcement learning"),
+    ("hệ chuyên gia", "expert systems"),
+    ("cơ sở dữ liệu", "database management systems"),
+    ("an toàn thông tin", "cybersecurity information security"),
+    ("mã hóa", "cryptography encryption"),
+    ("điện toán đám mây", "cloud computing"),
+    ("vi điều khiển", "microcontroller embedded systems"),
+    ("vật liệu nano", "nanomaterials nanotechnology"),
+    ("y sinh", "biomedical engineering"),
+    ("chuỗi khối", "blockchain distributed ledger"),
 ]
 
 
@@ -118,20 +129,28 @@ def search_openalex_works(query: str, max_results: int = 3, timeout: float = 12.
 
 
 def download_open_access_pdf(pdf_url: str, target_path: str, timeout: int = 8) -> bool:
-    """Attempts to download an open access PDF. Validates %PDF- magic bytes."""
+    """Attempts to download an open access PDF. Validates %PDF- magic bytes atomically."""
     if not pdf_url or not pdf_url.startswith("http"):
         return False
+    tmp_path = f"{target_path}.part_{os.getpid()}"
     try:
-        req = urllib.request.Request(pdf_url, headers={"User-Agent": USER_AGENT})
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = resp.read()
-            if len(data) >= 5000 and b"%PDF-" in data[:1024]:
+        import httpx
+        with httpx.Client(follow_redirects=True, timeout=float(timeout), headers={"User-Agent": USER_AGENT}) as client:
+            resp = client.get(pdf_url)
+            if resp.status_code == 200 and len(resp.content) >= 5000 and b"%PDF-" in resp.content[:1024]:
                 os.makedirs(os.path.dirname(os.path.abspath(target_path)), exist_ok=True)
-                with open(target_path, "wb") as f:
-                    f.write(data)
+                with open(tmp_path, "wb") as f:
+                    f.write(resp.content)
+                os.replace(tmp_path, target_path)
                 return True
     except Exception as e:
         logger.debug(f"[Academic Scout] Could not download OA PDF from {pdf_url}: {e}")
+    finally:
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
     return False
 
 
@@ -231,7 +250,7 @@ Tài liệu này là công trình nghiên cứu khoa học xuất bản chính t
 
             pdf_size = os.path.getsize(md_path)
             doc_type = "ref"
-            reg_name = f"[{year}] {title}"
+            reg_name = f"[{year}] {title}.md"
             local_doc_path = md_path
 
         metadata = {

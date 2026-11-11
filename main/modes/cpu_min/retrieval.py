@@ -31,6 +31,7 @@ class CPUMinRetrievalAgent(BaseAgent):
         self.fts5_searcher = SQLiteFTS5Searcher()
         self.bm25_fallback = SimpleBM25()
         self.corpus_docs: list[dict[str, Any]] = []
+        self._doc_index_cache: dict[str, tuple[SQLiteFTS5Searcher, SimpleBM25, list[dict[str, Any]]]] = {}
         self._load_corpus()
 
     def _load_corpus(self):
@@ -112,11 +113,19 @@ class CPUMinRetrievalAgent(BaseAgent):
                     pdf_chunks.extend(chunks)
 
         if pdf_chunks:
-            active_fts = SQLiteFTS5Searcher()
-            active_bm25 = SimpleBM25()
-            active_fts.fit(pdf_chunks)
-            active_bm25.fit(pdf_chunks)
-            active_pool = pdf_chunks
+            # Cache active index by chunk bounds to avoid rebuilding FTS5/BM25 on every retry loop
+            cache_key = f"{len(pdf_chunks)}::{pdf_chunks[0].get('id')}::{pdf_chunks[-1].get('id')}"
+            if cache_key in self._doc_index_cache:
+                active_fts, active_bm25, active_pool = self._doc_index_cache[cache_key]
+            else:
+                active_fts = SQLiteFTS5Searcher()
+                active_bm25 = SimpleBM25()
+                active_fts.fit(pdf_chunks)
+                active_bm25.fit(pdf_chunks)
+                active_pool = pdf_chunks
+                if len(self._doc_index_cache) >= 8:
+                    self._doc_index_cache.pop(next(iter(self._doc_index_cache)))
+                self._doc_index_cache[cache_key] = (active_fts, active_bm25, active_pool)
         else:
             active_fts = self.fts5_searcher
             active_bm25 = self.bm25_fallback
@@ -125,16 +134,35 @@ class CPUMinRetrievalAgent(BaseAgent):
         # 2. Retrieval Strategy:
         # If this is a general summary/overview query: sample chunks distributed across ALL pages of ALL documents!
         if is_summary_query and active_pool:
+            docs_by_id: dict[str, dict[int, list[dict[str, Any]]]] = {}
+            for chunk in active_pool:
+                d_id = str(chunk.get("doc_id", "doc"))
+                p_no = int(chunk.get("page_no", 1))
+                docs_by_id.setdefault(d_id, {}).setdefault(p_no, []).append(chunk)
+
             sampled_summary: list[dict[str, Any]] = []
-            seen_page_keys: set[tuple[str, int]] = set()
-            for doc in active_pool:
-                d_id = str(doc.get("doc_id", "doc"))
-                p_no = int(doc.get("page_no", 1))
-                key = (d_id, p_no)
-                if key not in seen_page_keys:
-                    seen_page_keys.add(key)
-                    sampled_summary.append(doc)
-            results = sampled_summary if sampled_summary else active_pool[: max(top_k, 10)]
+            for d_id, page_dict in docs_by_id.items():
+                sorted_pages = sorted(page_dict.keys())
+                max_page = sorted_pages[-1] if sorted_pages else 1
+
+                # If large document (e.g. textbook > 20 pages), skip frontmatter (pages 1-15) to avoid TOC & copyright
+                if max_page > 20:
+                    body_pages = [p for p in sorted_pages if p >= 16]
+                    pages_to_sample = body_pages if len(body_pages) >= 5 else sorted_pages
+                else:
+                    pages_to_sample = sorted_pages
+
+                # Evenly sample 16-20 representative pages across the document body
+                sample_count = min(len(pages_to_sample), 20)
+                if sample_count > 0:
+                    step = len(pages_to_sample) / float(sample_count)
+                    chosen_pages = [pages_to_sample[int(i * step)] for i in range(sample_count)]
+                    for p in chosen_pages:
+                        chunks_on_page = page_dict[p]
+                        best_chunk = max(chunks_on_page, key=lambda c: len(str(c.get("text", "")).strip()))
+                        sampled_summary.append(best_chunk)
+
+            results = sampled_summary if sampled_summary else active_pool[: max(top_k, 20)]
         else:
             # First-pass multi-query lexical search
             results = self._search_index(sub_queries, active_fts, active_bm25, top_k=top_k)

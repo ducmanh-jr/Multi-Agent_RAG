@@ -29,8 +29,11 @@ import datetime
 import json
 
 import os
+import re
 
 import shutil
+
+import threading
 
 import uuid
 
@@ -54,7 +57,11 @@ from core.config import settings
 
 from core.graph import build_research_rag_graph
 
+from core.tools import clear_pdf_cache
+
 from core import db
+
+from utils.logger import logger
 
 
 
@@ -72,18 +79,29 @@ app = FastAPI(
 
 # CORS Middleware
 
+ALLOWED_ORIGINS = [
+    "http://localhost",
+    "http://localhost:8000",
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "http://localhost:8080",
+    "http://127.0.0.1",
+    "http://127.0.0.1:8000",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:8080",
+]
+_env_origins = os.getenv("ALLOWED_ORIGINS")
+if _env_origins:
+    ALLOWED_ORIGINS.extend([o.strip() for o in _env_origins.split(",") if o.strip()])
+
 app.add_middleware(
-
     CORSMiddleware,
-
-    allow_origins=["*"],
-
+    allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=True,
-
     allow_methods=["*"],
-
     allow_headers=["*"],
-
 )
 
 @app.get('/health')
@@ -118,9 +136,26 @@ docs_store: dict[str, dict[str, Any]] = {}
 
 
 
-# Compile LangGraph graph
+# Compile LangGraph graph with thread-safe atomic reference management
+_global_graph_lock = threading.Lock()
+_ACTIVE_RUN_TASKS: dict[str, asyncio.Task] = {}
+_global_graph = build_research_rag_graph()
 
-graph = build_research_rag_graph()
+def get_current_graph():
+    """Returns the current active compiled LangGraph instance thread-safely."""
+    global _global_graph
+    with _global_graph_lock:
+        return _global_graph
+
+def set_current_graph(new_graph):
+    """Atomically updates the active compiled graph reference."""
+    global _global_graph, graph
+    with _global_graph_lock:
+        _global_graph = new_graph
+        graph = new_graph
+    return _global_graph
+
+graph = _global_graph
 
 
 
@@ -131,18 +166,13 @@ graph = build_research_rag_graph()
 
 
 class CreateRunRequest(BaseModel):
-
     question: Optional[str] = None
-
     query: Optional[str] = None
-
     document_ids: Optional[list[str]] = None
-
     document_id: Optional[str] = None
-
     profile: Optional[str] = "balanced"
-
     model: Optional[str] = None
+    mode: Optional[str] = None
     max_iterations: Optional[int] = 2
     chat_history: Optional[list[dict[str, str]]] = None
     session_id: Optional[str] = None
@@ -164,22 +194,32 @@ class DirectResearchRequest(BaseModel):
 
 # ==================== AUTH & CONFIG ====================
 
+AUTH_DEV_MODE = os.getenv("APP_DEV_MODE", "true").lower() in ("true", "1", "yes")
+AUTH_SECRET_PASSWORD = os.getenv("APP_AUTH_PASSWORD", "")
+_ACTIVE_AUTH_TOKENS: set[str] = set()
+
+_AUTH_LOCK = threading.Lock()
 
 
 @app.get("/api/auth/status")
+def auth_status(request: Request):
+    auth_header = request.headers.get("Authorization", "")
+    token = None
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:].strip()
 
-def auth_status():
+    is_authenticated = False
+    if token and token in _ACTIVE_AUTH_TOKENS:
+        is_authenticated = True
+    elif AUTH_DEV_MODE and not AUTH_SECRET_PASSWORD:
+        is_authenticated = True
 
     return {
-
-        "authenticated": True,
-
+        "authenticated": is_authenticated,
         "configured": True,
-
-        "write_access": True,
-
+        "write_access": is_authenticated,
         "mode": settings.EXECUTION_MODE,
-
+        "dev_mode": AUTH_DEV_MODE,
     }
 
 
@@ -232,9 +272,10 @@ def update_env_file(key: str, value: str):
 
             new_lines.append(f"{key}={value}\n")
 
-        with open(env_path, "w", encoding="utf-8") as f:
-
+        tmp_env = f"{env_path}.tmp_{os.getpid()}"
+        with open(tmp_env, "w", encoding="utf-8") as f:
             f.writelines(new_lines)
+        os.replace(tmp_env, env_path)
 
 
 
@@ -300,7 +341,7 @@ async def set_remote_url(req: SetRemoteUrlRequest):
 
         import httpx
 
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=2.0) as client:
 
             resp = await client.get(f"{new_url}/health")
 
@@ -394,7 +435,7 @@ async def remote_switch_gpu_mode(req: RemoteSwitchModeRequest):
 
     try:
         import httpx
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async with httpx.AsyncClient(timeout=180.0) as client:
             resp = await client.post(f"{url}/api/admin/switch_mode", json={"target_mode": target})
             if resp.status_code == 200:
                 data = resp.json()
@@ -804,8 +845,7 @@ def set_agent_modes(req: SetAgentModesRequest):
         settings.set_agent_mode(req.agent, canonical)
         update_env_file(f"AGENT_{req.agent.upper()}_MODE", canonical)
         updated[req.agent] = canonical
-    global graph
-    graph = build_research_rag_graph()
+    set_current_graph(build_research_rag_graph())
     return {
 
         "status": "success",
@@ -862,8 +902,7 @@ async def auto_select_best_models():
     for agent_name, mode in modes.items():
         settings.set_agent_mode(agent_name, mode)
         update_env_file(f"AGENT_{agent_name.upper()}_MODE", mode)
-    global graph
-    graph = build_research_rag_graph()
+    set_current_graph(build_research_rag_graph())
 
     return {
         "status": "success",
@@ -925,8 +964,7 @@ async def apply_agent_preset(req: ApplyPresetRequest):
     for agent_name, mode in modes.items():
         settings.set_agent_mode(agent_name, mode)
         update_env_file(f"AGENT_{agent_name.upper()}_MODE", mode)
-    global graph
-    graph = build_research_rag_graph()
+    set_current_graph(build_research_rag_graph())
 
     return {
         "status": "success",
@@ -1241,6 +1279,8 @@ def seed_demo_documents():
 
             f.write(d["text"])
 
+        actual_size = os.path.getsize(file_path)
+
         db.save_document(
 
             doc_id=d["id"],
@@ -1249,11 +1289,11 @@ def seed_demo_documents():
 
             path=os.path.abspath(file_path),
 
-            size=d["size"],
+            size=actual_size,
 
             doc_type="text",
 
-            metadata={"title": d["name"], "chunks_count": 4},
+            metadata={"title": d["name"], "chunks_count": 1},
 
         )
 
@@ -1266,24 +1306,44 @@ def seed_demo_documents():
 
 
 @app.post("/api/documents/reindex")
-
 def reindex_documents():
-
+    import time
+    start_time = time.perf_counter()
     docs = db.list_documents()
+    from core.tools import clear_pdf_cache, load_or_parse_selected_pdf
+    from agents.agent1_retrieval.tools.fts5_search import SQLiteFTS5Searcher
 
-    return {"status": "ok", "chunks_updated": len(docs) * 4}
+    clear_pdf_cache()
+    fts = SQLiteFTS5Searcher()
+    all_chunks = []
 
+    for d in docs:
+        p = d.get("path", "")
+        if p and os.path.exists(p):
+            try:
+                units = load_or_parse_selected_pdf(p)
+                all_chunks.extend(units)
+            except Exception as exc:
+                logger.warning(f"[Reindex] Error parsing doc '{p}': {exc}")
 
+    if all_chunks:
+        try:
+            fts.fit(all_chunks)
+        except Exception as exc:
+            logger.warning(f"[Reindex] FTS5 index update warning: {exc}")
 
+    duration_ms = round((time.perf_counter() - start_time) * 1000, 1)
+    return {
+        "status": "success",
+        "chunks_updated": len(all_chunks),
+        "docs_count": len(docs),
+        "duration_ms": duration_ms,
+    }
 
 
 @app.post("/api/documents/rebuild")
-
 def rebuild_documents():
-
-    docs = db.list_documents()
-
-    return {"status": "ok", "chunks_updated": len(docs) * 4}
+    return reindex_documents()
 
 
 
@@ -1294,40 +1354,54 @@ def rebuild_documents():
 @app.post("/api/documents/upload")
 
 async def upload_document_api(file: UploadFile = File(...)):
-
-    """Upload PDF document through UI."""
-
+    """Upload PDF document through UI with real-time progress tracking."""
     doc_id = f"doc_{uuid.uuid4().hex[:8]}"
+    upload_id = doc_id
+    _UPLOAD_STATUS[upload_id] = {"upload_id": upload_id, "status": "saving", "percent": 25}
 
-    file_path = os.path.join(settings.UPLOAD_DIR, f"{doc_id}_{file.filename}")
+    try:
+        raw_name = os.path.basename(file.filename or "uploaded_document")
+        safe_filename = re.sub(r"[^\w\-_\. ]", "_", raw_name).strip()
+        if not safe_filename:
+            safe_filename = "document.pdf" if (file.filename or "").lower().endswith(".pdf") else "document.txt"
 
+        file_path = os.path.join(settings.UPLOAD_DIR, f"{doc_id}_{safe_filename}")
 
+        max_upload_bytes = 100 * 1024 * 1024  # 100MB limit guard
+        written = 0
+        with open(file_path, "wb") as buffer:
+            while True:
+                chunk = await file.read(64 * 1024)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > max_upload_bytes:
+                    buffer.close()
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+                    raise HTTPException(status_code=413, detail="Tệp tin vượt quá giới hạn cho phép (tối đa 100MB).")
+                buffer.write(chunk)
 
-    with open(file_path, "wb") as buffer:
-
-        shutil.copyfileobj(file.file, buffer)
-
-
-
-    size = os.path.getsize(file_path)
-
-    doc_type = "pdf" if file.filename.lower().endswith(".pdf") else "text"
-
-    doc_info = db.save_document(
-
-        doc_id=doc_id,
-
-        name=file.filename,
-
-        path=os.path.abspath(file_path),
-
-        size=size,
-
-        doc_type=doc_type,
-
-    )
-
-    return {"document": _format_doc(doc_info), "status": "uploaded"}
+        _UPLOAD_STATUS[upload_id] = {"upload_id": upload_id, "status": "indexing", "percent": 75}
+        size = os.path.getsize(file_path)
+        doc_type = "pdf" if safe_filename.lower().endswith(".pdf") else "text"
+        doc_info = db.save_document(
+            doc_id=doc_id,
+            name=safe_filename,
+            path=os.path.abspath(file_path),
+            size=size,
+            doc_type=doc_type,
+        )
+        _UPLOAD_STATUS[upload_id] = {
+            "upload_id": upload_id,
+            "status": "completed",
+            "percent": 100,
+            "doc_id": doc_id,
+        }
+        return {"document": _format_doc(doc_info), "status": "uploaded", "upload_id": upload_id}
+    except Exception as exc:
+        _UPLOAD_STATUS[upload_id] = {"upload_id": upload_id, "status": "failed", "percent": 0, "error": str(exc)}
+        raise HTTPException(status_code=500, detail=f"Upload failed: {exc}")
 
 
 
@@ -1397,37 +1471,58 @@ def clear_cache():
 
     conn.close()
 
-    return {"status": "ok", "deleted": deleted}
+    # Clear in-memory parsed PDF chunks cache to free RAM
+    clear_pdf_cache()
+    logger.info("[CacheClear] Deleted LLM persistent cache entries and cleared in-memory PDF chunk cache.")
+
+    return {"status": "ok", "deleted": deleted, "pdf_cache_cleared": True}
 
 
 
 
 
 @app.post("/api/auth/login")
+def auth_login(req: Optional[dict] = None):
+    req = req or {}
+    password = req.get("password", "")
 
-def auth_login(req: dict = None):
+    if AUTH_SECRET_PASSWORD:
+        if password != AUTH_SECRET_PASSWORD:
+            raise HTTPException(status_code=401, detail="Invalid authentication credentials.")
 
-    return {"authenticated": True, "token": "session_token"}
-
-
-
+    token = f"sess_{uuid.uuid4().hex}"
+    _ACTIVE_AUTH_TOKENS.add(token)
+    return {
+        "authenticated": True,
+        "token": token,
+        "write_access": True,
+        "dev_mode": AUTH_DEV_MODE,
+    }
 
 
 @app.post("/api/auth/logout")
-
-def auth_logout():
-
+def auth_logout(request: Request):
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:].strip()
+        _ACTIVE_AUTH_TOKENS.discard(token)
     return {"authenticated": False}
 
 
 
 
 
+_UPLOAD_STATUS: dict[str, dict[str, Any]] = {}
+
+
 @app.get("/api/uploads/{upload_id}")
-
 def get_upload_status(upload_id: str):
-
-    return {"upload_id": upload_id, "status": "completed", "percent": 100}
+    if upload_id in _UPLOAD_STATUS:
+        return _UPLOAD_STATUS[upload_id]
+    doc = db.get_document(upload_id)
+    if doc:
+        return {"upload_id": upload_id, "status": "completed", "percent": 100, "doc_id": doc.get("id")}
+    raise HTTPException(status_code=404, detail=f"Upload task '{upload_id}' not found.")
 
 
 
@@ -1668,7 +1763,7 @@ def get_run_status(run_id: str):
 
             "llm_calls": len(events) or 3,
 
-            "elapsed_ms": 2040,
+            "elapsed_ms": (max(50, int((datetime.datetime.now() - datetime.datetime.fromisoformat(run_record["created_at"])).total_seconds() * 1000)) if run_record.get("created_at") else 1200),
 
             "rounds": 1,
 
@@ -1783,45 +1878,51 @@ def export_run_report(run_id: str, format: str = "md"):
 
 
     if format == "json":
-
         data = {
-
             "run_id": run_id,
-
             "question": run_record.get("question"),
-
             "status": run_record.get("status"),
-
             "report": report_md,
-
             "verified_claims": run_record.get("verified_claims") or [],
-
             "evidence_spans": run_record.get("evidence_spans") or [],
-
             "reasoning_trace": run_record.get("reasoning_trace") or [],
-
         }
-
         return Response(
-
             content=json.dumps(data, ensure_ascii=False, indent=2),
-
             media_type="application/json; charset=utf-8",
-
             headers={"Content-Disposition": f'attachment; filename="research-{run_id}.json"'},
-
         )
-
+    elif format.lower() == "pdf":
+        try:
+            import fitz
+            doc = fitz.open()
+            try:
+                page = doc.new_page()
+                lines = report_md.split("\n")
+                y = 50
+                for line in lines:
+                    if y > 780:
+                        page = doc.new_page()
+                        y = 50
+                    clean_line = line.strip()[:110]
+                    page.insert_text(fitz.Point(40, y), clean_line, fontsize=9)
+                    y += 14
+                pdf_bytes = doc.tobytes()
+            finally:
+                doc.close()
+            return Response(
+                content=pdf_bytes,
+                media_type="application/pdf",
+                headers={"Content-Disposition": f'attachment; filename="research-{run_id}.pdf"'},
+            )
+        except Exception as exc:
+            logger.warning(f"[Export] PyMuPDF PDF generation failed: {exc}")
+            raise HTTPException(status_code=500, detail=f"Không thể xuất file PDF: {exc}")
     else:
-
         return Response(
-
             content=report_md,
-
             media_type="text/markdown; charset=utf-8",
-
             headers={"Content-Disposition": f'attachment; filename="research-{run_id}.md"'},
-
         )
 
 
@@ -1969,6 +2070,13 @@ async def create_run(req: CreateRunRequest):
             import time
 
             def _run_streaming():
+                from modes.registry import normalize_mode
+                from core.graph import build_research_rag_graph
+
+                raw_mode = req.mode or req.model or settings.EXECUTION_MODE
+                run_mode = normalize_mode(raw_mode)
+                logger.info(f"[RunExecution] Dispatching run {run_id} strictly under mode='{run_mode}'.")
+
                 initial_state = {
                     "query": prompt,
                     "pdf_path": pdf_path,
@@ -1976,12 +2084,14 @@ async def create_run(req: CreateRunRequest):
                     "retry_count": 0,
                     "max_reflection_loops": req.max_iterations or 2,
                     "chat_history": req.chat_history or [],
+                    "execution_mode": run_mode,
                 }
                 accumulated_traces = []
-                final_res = {}
+                final_res = {"execution_mode": run_mode}
                 step_start_time = time.time()
+                active_graph = build_research_rag_graph(mode=run_mode)
 
-                for chunk in graph.stream(initial_state, stream_mode="updates"):
+                for chunk in active_graph.stream(initial_state, stream_mode="updates"):
                     chk = db.get_run(run_id)
                     if chk and chk.get("status") == "cancelled":
                         logger.info(f"[RunCancel] Run {run_id} was cancelled by user. Terminating graph stream.")
@@ -2027,16 +2137,22 @@ async def create_run(req: CreateRunRequest):
                 evidence_spans=final_res.get("evidence_spans", []),
                 reasoning_trace=accumulated_traces or final_res.get("reasoning_trace", []),
             )
+        except asyncio.CancelledError:
+            logger.info(f"[RunCancel] Async task for run {run_id} cancelled.")
+            db.update_run_result(run_id=run_id, status="cancelled")
         except Exception as e:
             db.update_run_result(
                 run_id=run_id,
                 status="failed",
                 error=str(e),
             )
+        finally:
+            _ACTIVE_RUN_TASKS.pop(run_id, None)
 
 
 
-    asyncio.create_task(_async_exec())
+    task = asyncio.create_task(_async_exec())
+    _ACTIVE_RUN_TASKS[run_id] = task
 
     return run_record
 
@@ -2245,12 +2361,13 @@ async def execute_direct_research(req: DirectResearchRequest):
 
 
     loop = asyncio.get_event_loop()
+    active_graph = get_current_graph()
 
     final_state = await loop.run_in_executor(
 
         None,
 
-        graph.invoke,
+        active_graph.invoke,
 
         {"query": req.query, "pdf_path": req.pdf_path, "retry_count": 0},
 
@@ -2285,64 +2402,57 @@ async def execute_direct_research(req: DirectResearchRequest):
 @app.post("/api/research/stream")
 
 async def execute_research_stream(req: DirectResearchRequest):
-
     """
-
     Real-time Server-Sent Events (SSE) streaming endpoint for multi-agent execution.
-
-    Emits events as each agent finishes its step.
-
+    Emits events as each agent finishes its step. Wraps execution in robust try-except
+    to emit an error event instead of dropping the connection.
     """
-
     if not req.query.strip():
-
         raise HTTPException(status_code=400, detail="Query cannot be empty.")
 
-
-
     async def event_generator():
+        try:
+            initial_state = {"query": req.query, "pdf_path": req.pdf_path, "retry_count": 0}
+            yield f"data: {json.dumps({'event': 'started', 'query': req.query}, ensure_ascii=False)}\n\n"
 
-        initial_state = {"query": req.query, "pdf_path": req.pdf_path, "retry_count": 0}
+            active_graph = get_current_graph()
+            async for chunk in active_graph.astream(initial_state, stream_mode="updates"):
+                for node_name, node_output in chunk.items():
+                    trace = node_output.get("reasoning_trace", [{}])[-1] if node_output.get("reasoning_trace") else {}
+                    event_data = {
+                        "event": "node_update",
+                        "node": node_name,
+                        "action": trace.get("action", "completed"),
+                        "data": {
+                            "fact_check_label": node_output.get("fact_check_label"),
+                            "retry_count": node_output.get("retry_count"),
+                            "partial_answer": node_output.get("answer") or node_output.get("final_report"),
+                        },
+                    }
+                    yield f"data: {json.dumps(event_data, ensure_ascii=False)}\n\n"
 
-        yield f"data: {json.dumps({'event': 'started', 'query': req.query}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'event': 'finished'}, ensure_ascii=False)}\n\n"
+        except Exception as exc:
+            logger.error(f"[SSE Research Stream Error]: {exc}")
+            yield f"data: {json.dumps({'event': 'error', 'message': str(exc)}, ensure_ascii=False)}\n\n"
 
+    return StreamingResponse(
 
+        event_generator(),
 
-        async for chunk in graph.astream(initial_state, stream_mode="updates"):
+        media_type="text/event-stream",
 
-            for node_name, node_output in chunk.items():
+        headers={
 
-                trace = node_output.get("reasoning_trace", [{}])[-1] if node_output.get("reasoning_trace") else {}
+            "Cache-Control": "no-cache",
 
-                event_data = {
+            "Connection": "keep-alive",
 
-                    "event": "node_update",
+            "X-Accel-Buffering": "no",
 
-                    "node": node_name,
+        }
 
-                    "action": trace.get("action", "completed"),
-
-                    "data": {
-
-                        "fact_check_label": node_output.get("fact_check_label"),
-
-                        "retry_count": node_output.get("retry_count"),
-
-                        "partial_answer": node_output.get("answer") or node_output.get("final_report"),
-
-                    },
-
-                }
-
-                yield f"data: {json.dumps(event_data, ensure_ascii=False)}\n\n"
-
-
-
-        yield f"data: {json.dumps({'event': 'finished'}, ensure_ascii=False)}\n\n"
-
-
-
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    )
 
 
 

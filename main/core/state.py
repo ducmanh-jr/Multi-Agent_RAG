@@ -193,7 +193,7 @@ class EvidenceGap:
 class AgentState(TypedDict, total=False):
     """
     Unified LangGraph StateGraph state passed across all 5 Agent nodes.
-    Supports incremental list appending via Annotated[..., operator.add].
+    Supports incremental state updates and reducer accumulation via Annotated[..., operator.add] (e.g. reasoning_trace).
     """
     # 1. User & Supervisor Planning Context
     query: str

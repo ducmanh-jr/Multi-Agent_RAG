@@ -81,6 +81,7 @@ YÊU CẦU TRẢ VỀ ĐÚNG ĐỊNH DẠNG JSON:
         raw_claims: list[Any] = []
         raw_spans: list[Any] = []
         critic_out = SummarizerCriticOutput()
+        res_32b: dict[str, Any] = {}
 
         if self.settings.REMOTE_INFERENCE_URL:
             try:
@@ -109,7 +110,8 @@ YÊU CẦU TRẢ VỀ ĐÚNG ĐỊNH DẠNG JSON:
             except Exception as e:
                 self.logger.warning(f"[GPU Max Summarizer] Remote 32B GPU error: {e}")
 
-        if not answer or len(answer.strip()) < 50 or "chế độ dự phòng" in answer:
+        is_remote_failed = bool(res_32b.get("is_fallback") or not answer or len(answer.strip()) < 50)
+        if is_remote_failed:
             self.logger.warning("[GPU Max Summarizer] Remote 32B GPU offline/timeout, falling back to High-Precision CPU Engine.")
             res = self.cpu_engine.run(state)
             res["generator_model_family"] = "gpu_max_cpu_fallback"

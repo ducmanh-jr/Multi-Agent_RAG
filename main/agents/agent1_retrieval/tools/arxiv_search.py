@@ -56,7 +56,7 @@ def search_arxiv(query: str, max_results: int = 3, timeout: int = 8) -> list[dic
     Queries ArXiv API and returns structured scientific paper records.
     """
     clean_kw = clean_query_for_arxiv(query)
-    api_url = f"http://export.arxiv.org/api/query?search_query=all:{urllib.parse.quote_plus(clean_kw)}&start=0&max_results={max_results}"
+    api_url = f"https://export.arxiv.org/api/query?search_query=all:{urllib.parse.quote_plus(clean_kw)}&start=0&max_results={max_results}"
 
     logger.info(f"[ArXiv Live Search] Querying ArXiv on Internet: '{clean_kw}'...")
     req = urllib.request.Request(

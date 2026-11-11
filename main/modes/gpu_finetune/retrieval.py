@@ -74,7 +74,7 @@ class GPUFinetuneRetrievalAgent(BaseAgent):
 
         self.logger.info(f"[GPU Finetune Retrieval] Invoking Fine-Tuned Router for query: '{query[:65]}'")
 
-        if self.settings.REMOTE_INFERENCE_URL and retry_count == 0:
+        if self.settings.REMOTE_INFERENCE_URL and retry_count == 0 and not sub_queries:
             try:
                 router_res = llm_client.call_kaggle_specialist(
                     endpoint="api/router",
@@ -82,6 +82,7 @@ class GPUFinetuneRetrievalAgent(BaseAgent):
                     fallback_prompt=query,
                     fallback_system=ROUTER_TRAINING_SYSTEM_PROMPT,
                     adapter="router",
+                    timeout=20.0,
                 )
                 lora_plan = RouterPlanOutput.from_dict(router_res, default_query=query)
                 if lora_plan.sub_queries:

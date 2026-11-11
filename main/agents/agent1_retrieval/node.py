@@ -14,12 +14,12 @@ import os
 from typing import Any
 
 from core.base_agent import BaseAgent
-from core.state import AgentState, compute_context_hash
+from core.state import AgentState
 from agents.agent1_retrieval.tools.bm25 import SimpleBM25
 from agents.agent1_retrieval.tools.fts5_search import SQLiteFTS5Searcher
 from agents.agent1_retrieval.tools.hybrid import reciprocal_rank_fusion
 from agents.agent1_retrieval.tools.perspective import generate_research_perspectives
-from agents.agent1_retrieval.tools.router import make_decision, select_tool
+from agents.agent1_retrieval.tools.router import make_decision
 
 
 class RetrievalAgent(BaseAgent):
@@ -108,17 +108,23 @@ class RetrievalAgent(BaseAgent):
                 arxiv_docs = search_arxiv(query, max_results=self.settings.TOP_K_RERANK)
                 if arxiv_docs:
                     ranked_runs.append(arxiv_docs)
-                    self.fts5_searcher.fit(arxiv_docs)
+                    self.fts5_searcher.add_documents(arxiv_docs)
             except Exception as e:
                 self.logger.warning(f"ArXiv live search error: {e}")
 
         # 5. Hybrid Reciprocal Rank Fusion
-        fused_docs = reciprocal_rank_fusion(
-            ranked_runs if ranked_runs else [[{"text": query, "id": "fallback"}]],
-            top_n=self.settings.TOP_K_RERANK,
-        )
+        if not ranked_runs:
+            fused_docs = []
+            no_evidence = True
+            self.logger.warning("[Retrieval] Không tìm thấy bằng chứng trong kho tài liệu hoặc arXiv. Báo cáo trung thực no_evidence=True.")
+        else:
+            fused_docs = reciprocal_rank_fusion(
+                ranked_runs,
+                top_n=self.settings.TOP_K_RERANK,
+            )
+            no_evidence = False
 
-        # 5. Update cumulative seen_chunks to prevent losing contradiction sources
+        # 6. Update cumulative seen_chunks to prevent losing contradiction sources
         updated_seen_chunks = list(seen_chunks)
         seen_hashes = {c.get("context_hash") for c in updated_seen_chunks if "context_hash" in c}
         new_chunks_added = 0

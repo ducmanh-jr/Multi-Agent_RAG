@@ -49,7 +49,7 @@ MODE_ALIASES = {
 
 
 def normalize_mode(mode: Optional[str]) -> str:
-    """Normalize user or config mode string to one of the 6 canonical modes."""
+    """Normalize user or config mode string to one of the canonical modes."""
     if not mode:
         return "cpu_min"
     clean = mode.lower().strip()

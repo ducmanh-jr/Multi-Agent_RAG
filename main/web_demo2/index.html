@@ -8,7 +8,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="assets/css/style.css?v=20261107_jump_page_v2">
+  <link rel="stylesheet" href="assets/vendor/pdf_viewer.min.css">
+  <link rel="stylesheet" href="assets/css/style.css?v=20261110_fix3">
 </head>
 <body>
   <!-- Antigravity Interactive Background Canvas -->
@@ -508,7 +509,30 @@
         </button>
       </div>
 
-      <div class="tab-pane active" id="pdfViewerTab">
+      <div class="tab-pane active" id="pdfViewerTab" style="flex-direction: column; height: 100%; overflow: hidden; position: relative;">
+        <!-- Top Toolbar with Zoom & Page Navigation -->
+        <div class="pdfjs-toolbar" id="pdfjsToolbar" style="display: none;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <button id="pdfPrevPageBtn" class="pdf-tool-btn" title="Trang trước (◀)">◀</button>
+            <span id="pdfPageIndicator" style="font-weight: 600; color: #334155;">Trang 1 / 1</span>
+            <button id="pdfNextPageBtn" class="pdf-tool-btn" title="Trang sau (▶)">▶</button>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <button id="pdfZoomOutBtn" class="pdf-tool-btn" title="Thu nhỏ (−)">−</button>
+            <span id="pdfZoomIndicator" style="font-weight: 600; color: #475569;">125%</span>
+            <button id="pdfZoomInBtn" class="pdf-tool-btn" title="Phóng to (+)">+</button>
+          </div>
+        </div>
+
+        <!-- PDF.js Canvas & Interactive TextLayer Container -->
+        <div id="pdfjsContainer" style="display: none;">
+          <div id="pdfPageWrapper">
+            <canvas id="pdfCanvas"></canvas>
+            <div id="pdfTextLayer" class="textLayer"></div>
+          </div>
+        </div>
+
+        <!-- Fallback native iframe -->
         <div class="pdf-viewer-frame" id="pdfFrameWrapper" style="flex:1; height:100%;">
           <iframe id="pdfFrame" src="about:blank" frameborder="0"></iframe>
         </div>
@@ -543,6 +567,7 @@
   </div>
 
   <script src="assets/js/antigravity-bg.js?v=20261107_v1"></script>
-  <script src="assets/js/app.js?v=20261107_jump_page_v2"></script>
+  <script src="assets/vendor/pdf.min.js"></script>
+  <script src="assets/js/app.js?v=20261110_fix3"></script>
 </body>
 </html>
