@@ -42,13 +42,18 @@ def build_cross_paper_matrix(
     # CASE A: MULTI-DOCUMENT (>= 2 distinct papers)
     if len(doc_map) >= 2:
         rows = []
-        for doc_title, chunks in list(doc_map.items())[:5]:
+        for doc_title, chunks in list(doc_map.items())[:12]:
             p_no = chunks[0].get("page_no") or 1
             source_ref = f"Trang {p_no}"
 
+            chunk_doc_ids = {str(chk.get("doc_id") or "").lower() for chk in chunks}
+            chunk_unit_ids = {str(chk.get("id") or "").lower() for chk in chunks}
             matching_claims = [
                 c for c in verified_claims
-                if doc_title.lower() in (c.get("evidence") or "").lower() or doc_title.lower() in (c.get("doc_id") or "").lower()
+                if str(c.get("doc_id") or "").lower() in chunk_doc_ids
+                or any(u.lower() in chunk_unit_ids for u in c.get("unit_ids", []))
+                or doc_title.lower() in (c.get("evidence") or "").lower()
+                or any(d_id in (c.get("evidence") or "").lower() for d_id in chunk_doc_ids if d_id)
             ]
             if matching_claims:
                 claim_sample = matching_claims[0].get("claim") or matching_claims[0].get("text") or ""
@@ -131,12 +136,23 @@ def detect_research_gaps_and_hypotheses(
 
     if extracted_limitations:
         for i, lim in enumerate(extracted_limitations, 1):
+            lim_lower = lim.lower()
+            if any(w in lim_lower for w in ["tính toán", "bộ nhớ", "vram", "ram", "latency", "chậm", "tốc độ", "memory"]):
+                prop_method = "Tối ưu hóa hiệu năng tính toán, lượng tử hóa trọng số hoặc tối ưu cấu trúc dữ liệu."
+                val_proto = "Đo đạc độ trễ (latency), throughput và mức chiếm dụng bộ nhớ trên các kịch bản tải thực tế."
+            elif any(w in lim_lower for w in ["dữ liệu", "dataset", "mẫu", "thiếu", "nhỏ", "ít", "data"]):
+                prop_method = "Mở rộng kích thước mẫu dữ liệu thực nghiệm và kết hợp kỹ thuật tăng cường dữ liệu."
+                val_proto = "Đối chuẩn trên bộ dữ liệu kiểm chứng độc lập với k-fold cross validation."
+            else:
+                prop_method = f"Xây dựng giải pháp kỹ thuật giải quyết trực tiếp hạn chế: {lim[:70].strip()}..."
+                val_proto = "Thiết kế thử nghiệm đối chứng trực tiếp với kiến trúc đường cơ sở (baseline)."
+
             gaps.append({
                 "hypothesis_id": f"LIMITATION-{i:02d}",
                 "title": f"Phát hiện Hạn chế trong Tài liệu #{i}",
                 "gap": lim,
-                "proposed_method": "Thu thập thêm dữ liệu thực nghiệm và mở rộng phạm vi khảo sát.",
-                "validation_protocol": "Đối chuẩn trên bộ dữ liệu kiểm chứng độc lập."
+                "proposed_method": prop_method,
+                "validation_protocol": val_proto
             })
     else:
         doc_label = "Tài liệu nghiên cứu"

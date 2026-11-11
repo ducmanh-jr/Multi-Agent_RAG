@@ -130,7 +130,7 @@ class SummarizerGeneratorOutput:
     model_family: str = "unknown"
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "SummarizerGeneratorOutput":
+    def from_dict(cls, data: dict[str, Any], **kwargs: Any) -> "SummarizerGeneratorOutput":
         if not isinstance(data, dict):
             return cls(answer=str(data))
         ans = str(data.get("answer") or data.get("summary") or data.get("raw_text") or "").strip()
@@ -169,6 +169,11 @@ class SummarizerCriticOutput:
     action: CriticActionType = "approve"
     confidence: float = 0.9
     critique_rationale: str = ""
+    issues_found: list[str] = field(default_factory=list)
+
+    @property
+    def critique(self) -> str:
+        return self.critique_rationale
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "SummarizerCriticOutput":

@@ -6,6 +6,7 @@ Provides rapid lexical retrieval with zero heavy external dependencies.
 from __future__ import annotations
 
 import math
+import unicodedata
 import re
 from collections import Counter
 from typing import Any
@@ -24,8 +25,11 @@ class SimpleBM25:
         self.idf: dict[str, float] = {}
 
     def tokenize(self, text: str) -> list[str]:
-        """Case-insensitive word tokenizer supporting alphanumeric & unicode."""
-        return re.findall(r"\w+", text.lower())
+        """Case-insensitive word tokenizer supporting alphanumeric & unicode with NFC normalization."""
+        if not text:
+            return []
+        norm_text = unicodedata.normalize("NFC", str(text).lower())
+        return re.findall(r"\w+", norm_text)
 
     def fit(self, docs: list[dict[str, Any]]):
         """Index a list of documents where each doc has at least 'text' and 'id'."""
@@ -37,10 +41,13 @@ class SimpleBM25:
         total_length = 0
         df: Counter = Counter()
         self.doc_freqs = []
+        self.doc_lens = []
 
         for doc in docs:
             tokens = self.tokenize(doc.get("text", ""))
-            total_length += len(tokens)
+            doc_len = len(tokens)
+            self.doc_lens.append(doc_len)
+            total_length += doc_len
             freqs = Counter(tokens)
             self.doc_freqs.append(freqs)
             for token in freqs.keys():
@@ -61,15 +68,23 @@ class SimpleBM25:
             return []
 
         q_tokens = self.tokenize(query)
+        stop_words = {
+            "là", "gì", "và", "của", "cho", "với", "như", "thế", "nào", "được", "khi",
+            "ở", "đâu", "các", "những", "này", "đó", "ra", "vào", "từ", "về", "trong",
+            "để", "có", "hãy", "biết", "ai", "mấy"
+        }
+        content_q_tokens = [t for t in q_tokens if len(t) > 1 and t.lower() not in stop_words]
+        if content_q_tokens:
+            q_tokens = content_q_tokens
         try:
             from utils.bilingual import expand_bilingual_tokens
             q_tokens = list(expand_bilingual_tokens(query, set(q_tokens)))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[BM25] Bilingual token expansion bypassed: {e}")
         scores: list[float] = [0.0] * self.corpus_size
 
         for i, freqs in enumerate(self.doc_freqs):
-            doc_len = sum(freqs.values())
+            doc_len = self.doc_lens[i] if i < len(self.doc_lens) else sum(freqs.values())
             for q in q_tokens:
                 if q not in freqs:
                     continue

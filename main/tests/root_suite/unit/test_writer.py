@@ -39,3 +39,17 @@ def test_writer_agent_run():
     assert "final_report" in output
     assert "written_report_data" in output
     assert output["confidence"] == "high"
+
+
+def test_writer_clarification_status():
+    report, report_data = build_academic_report(
+        query="kết quả thực nghiệm",
+        verified_claims=[],
+        rejected_claims=[],
+        retrieved_docs=[{"doc_id": "doc1", "title": "Paper 1", "page_no": 1}],
+        answer="Dựa trên tài liệu, có nhiều kết quả khác nhau. Vui lòng cung cấp thêm chi tiết để tôi hỗ trợ chính xác hơn dựa trên tài liệu.",
+        answer_status="CLARIFICATION_NEEDED",
+    )
+    assert report_data["status"] == "CLARIFICATION_NEEDED"
+    assert "CLARIFICATION_NEEDED" in report
+

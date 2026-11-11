@@ -22,8 +22,11 @@ import os
 
 import sqlite3
 
+import threading
+
 import uuid
 
+from contextlib import contextmanager
 from typing import Any, Optional
 
 
@@ -155,6 +158,9 @@ def _create_tables(conn: sqlite3.Connection):
         );
     """)
 
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_runs_session ON research_runs(session_id);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_runs_doc ON research_runs(document_id);")
+
     _migrate_orphan_runs(cursor)
 
 
@@ -195,32 +201,57 @@ def _create_tables(conn: sqlite3.Connection):
 
 
 
+_db_initialized = False
+_db_init_lock = threading.Lock()
+
+
 def get_db_connection() -> sqlite3.Connection:
-
-    """Creates a thread-safe connection with dictionary-like row factory and ensures tables exist."""
-
+    """Creates a thread-safe connection with dictionary-like row factory and WAL concurrency mode."""
+    global _db_initialized
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-
+    conn = sqlite3.connect(DB_PATH, timeout=30.0, check_same_thread=False)
     conn.row_factory = sqlite3.Row
-
-    _create_tables(conn)
-
+    try:
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA busy_timeout=30000;")
+    except Exception:
+        pass
+    if not _db_initialized:
+        with _db_init_lock:
+            if not _db_initialized:
+                _create_tables(conn)
+                _db_initialized = True
     return conn
 
 
-
+@contextmanager
+def db_session():
+    """Context manager guaranteeing SQLite connection closing and statement finalization."""
+    conn = get_db_connection()
+    try:
+        yield conn
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def init_db():
-
-    """Initializes tables for documents, research runs, and system settings."""
-
-    conn = get_db_connection()
-
+    """Initializes tables for documents, research runs, and system settings once at startup."""
+    global _db_initialized
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    conn = sqlite3.connect(DB_PATH, timeout=30.0, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA busy_timeout=30000;")
+    except Exception:
+        pass
+    with _db_init_lock:
+        _create_tables(conn)
+        _db_initialized = True
     conn.close()
-
     logger.info("Initialized persistent SQLite workspace database at: " + DB_PATH)
 
 
@@ -587,6 +618,25 @@ def clear_all_runs() -> int:
     return deleted
 
 
+def cleanup_old_runs(retention_days: int = 30, keep_minimum: int = 200) -> int:
+    """
+    Cleans up old research runs older than retention_days while preserving at least keep_minimum recent runs.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        DELETE FROM research_runs 
+        WHERE id NOT IN (
+            SELECT id FROM research_runs ORDER BY created_at DESC LIMIT ?
+        )
+        AND datetime(created_at) < datetime('now', '-' || ? || ' days')
+    """, (keep_minimum, retention_days))
+    deleted = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return deleted
+
+
 
 
 
@@ -651,11 +701,11 @@ def delete_session(session_id: str) -> bool:
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("DELETE FROM chat_sessions WHERE id = ?", (session_id,))
+    sess_deleted = cursor.rowcount > 0
     cursor.execute("DELETE FROM research_runs WHERE session_id = ?", (session_id,))
-    deleted = cursor.rowcount > 0
     conn.commit()
     conn.close()
-    return deleted
+    return sess_deleted
 
 
 def clear_all_sessions() -> int:

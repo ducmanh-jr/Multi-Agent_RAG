@@ -21,17 +21,28 @@ def get_citation_count_for_title(title: str, timeout: int = 8) -> int:
     Returns the number of times the work is referenced, or 0 if not found.
     """
     clean_title = title.replace("\n", " ").strip()
-    query_encoded = urllib.parse.quote(clean_title[:100])
-    url = f"{CROSSREF_API_BASE}?query.bibliographic={query_encoded}&rows=1&mailto=academic-rag@antigravity.ai"
-    
+    # Word-boundary truncation to avoid cutting off mid-word
+    trunc_title = clean_title[:120].rsplit(" ", 1)[0] if len(clean_title) > 120 else clean_title
+    query_encoded = urllib.parse.quote(trunc_title)
+    url = f"{CROSSREF_API_BASE}?query.bibliographic={query_encoded}&rows=3&mailto=academic-rag@antigravity.ai"
+
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     try:
+        import re
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             items = data.get("message", {}).get("items", [])
-            if items:
-                count = items[0].get("is-referenced-by-count", 0)
-                return int(count) if count else 0
+            t_words = set(re.findall(r"\w+", clean_title.lower()))
+            for it in items:
+                titles = it.get("title", [])
+                item_title = titles[0] if titles else ""
+                it_words = set(re.findall(r"\w+", item_title.lower()))
+                # Require significant title token overlap (>= 40%) before trusting citation count
+                if t_words and it_words:
+                    overlap = len(t_words & it_words) / max(len(t_words | it_words), 1)
+                    if overlap >= 0.4:
+                        count = it.get("is-referenced-by-count", 0)
+                        return int(count) if count else 0
     except Exception as e:
         logger.debug(f"[CrossRef Scout] Could not fetch citations for '{clean_title[:30]}...': {e}")
         

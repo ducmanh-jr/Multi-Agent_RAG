@@ -32,11 +32,11 @@ def clean_source_text(text: str) -> str:
     s = re.sub(r"([à-ỹ])([A-ZĐ])", r"\1 \2", s)
     s = re.sub(r"([a-z])([Đ])", r"\1 \2", s)
 
-    # 4. Fix glued words around punctuation (preserve file extensions like .conf, domains like .org, and floats)
+    # 4. Fix glued words around punctuation (preserve file extensions like .conf, domains like .org, URLs, ports, and floats)
     s = re.sub(r"([A-Za-zÀ-ỹ0-9])\.([A-ZĐ])", r"\1. \2", s)
-    s = re.sub(r"([A-Za-zÀ-ỹ0-9]),([A-Za-zÀ-ỹ0-9])", r"\1, \2", s)
-    s = re.sub(r"([A-Za-zÀ-ỹ0-9]);([A-Za-zÀ-ỹ0-9])", r"\1; \2", s)
-    s = re.sub(r"([A-Za-zÀ-ỹ0-9]):([A-Za-zÀ-ỹ0-9])", r"\1: \2", s)
+    s = re.sub(r"([A-Za-zÀ-ỹ0-9]),([A-Za-zÀ-ỹ])", r"\1, \2", s)
+    s = re.sub(r"([A-Za-zÀ-ỹ0-9]);([A-Za-zÀ-ỹ])", r"\1; \2", s)
+    s = re.sub(r"(?<!http)(?<!https)([A-Za-zÀ-ỹ]):([A-Za-zÀ-ỹ])", r"\1: \2", s, flags=re.I)
 
     # 5. Clean whitespace
     s = re.sub(r"[ \t]+", " ", s)

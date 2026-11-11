@@ -19,11 +19,19 @@ from utils.logger import logger
 
 FORBIDDEN_MODULES = {
     "os", "subprocess", "socket", "shutil", "requests", "urllib", "http",
-    "ftplib", "builtins", "importlib", "pty", "commands", "posix"
+    "ftplib", "builtins", "importlib", "pty", "commands", "posix", "sys",
+    "ctypes", "multiprocessing", "threading", "signal", "inspect", "linecache"
 }
 
 FORBIDDEN_CALLS = {
-    "eval", "exec", "compile", "__import__", "open", "input", "exit", "quit"
+    "eval", "exec", "compile", "__import__", "open", "input", "exit", "quit",
+    "setattr", "delattr", "globals", "locals", "vars", "breakpoint", "help",
+}
+
+FORBIDDEN_ATTRS = {
+    "__class__", "__bases__", "__subclasses__", "__builtins__", "__globals__",
+    "__code__", "__closure__", "__getattribute__", "__setattr__", "__delattr__",
+    "__init__", "__new__", "__dict__", "__module__", "format_map", "mro",
 }
 
 
@@ -50,11 +58,23 @@ def is_code_safe(code_str: str) -> tuple[bool, str]:
                 if root_module in FORBIDDEN_MODULES:
                     return False, f"Import from module '{node.module}' is strictly forbidden in sandbox."
 
-        # 2. Block forbidden function calls
+        # 2. Block forbidden function calls
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "getattr":
+            if len(node.args) >= 2 and isinstance(node.args[1], ast.Constant) and isinstance(node.args[1].value, str):
+                if node.args[1].value in FORBIDDEN_ATTRS or node.args[1].value.startswith("__"):
+                    return False, f"getattr with dangerous attribute '{node.args[1].value}' is strictly forbidden." 
         if isinstance(node, ast.Call):
             if isinstance(node.func, ast.Name):
                 if node.func.id in FORBIDDEN_CALLS:
                     return False, f"Calling built-in '{node.func.id}()' is prohibited in sandbox."
+            elif isinstance(node.func, ast.Attribute):
+                if node.func.attr in FORBIDDEN_CALLS or node.func.attr.startswith("__"):
+                    return False, f"Calling method '{node.func.attr}()' is prohibited in sandbox."
+
+        # 3. Block dangerous attribute access (dunder / meta-programming escape)
+        if isinstance(node, ast.Attribute):
+            if node.attr in FORBIDDEN_ATTRS or node.attr.startswith("__"):
+                return False, f"Access to dunder or meta-programming attribute '{node.attr}' is strictly prohibited in sandbox."
 
     return True, "Code passed security AST audit."
 

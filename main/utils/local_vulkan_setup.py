@@ -30,13 +30,37 @@ _PROBE_CACHE: dict[str, Any] = {
 
 
 def get_local_hardware_profile() -> dict[str, Any]:
-    """Returns the optimized hardware profile for ThinkBook 14 G8+ AHP."""
+    """Dynamically detects host hardware capabilities with platform & psutil."""
+    import platform
+    import psutil
+
+    cpu_name = platform.processor() or platform.machine() or "Host Processor"
+    cores_physical = psutil.cpu_count(logical=False) or 4
+    cores_logical = psutil.cpu_count(logical=True) or 8
+
+    try:
+        mem = psutil.virtual_memory()
+        ram_gb = round(mem.total / (1024 ** 3))
+    except Exception:
+        ram_gb = 16
+
+    node_name = platform.node() or "Local Host"
+    system_os = f"{platform.system()} {platform.release()}"
+
+    igpu_desc = "Auto-detected Accelerator"
+    if "AMD" in cpu_name.upper():
+        igpu_desc = "AMD Radeon Graphics (Vulkan / ROCm compatible)"
+    elif "INTEL" in cpu_name.upper():
+        igpu_desc = "Intel Iris / Arc Graphics (OpenVINO compatible)"
+    elif "APPLE" in cpu_name.upper() or platform.system() == "Darwin":
+        igpu_desc = "Apple Silicon Metal Acceleration"
+
     return {
-        "device": "Lenovo ThinkBook 14 G8+ AHP",
-        "cpu": "AMD Ryzen 7 H 255 (8C/16T, AVX-512)",
-        "igpu": "AMD Radeon 780M Graphics (12 CUs RDNA 3, Vulkan 1.3)",
-        "ram_gb": 32,
-        "ram_type": "LPDDR5X-7500 MHz",
+        "device": node_name,
+        "os": system_os,
+        "cpu": f"{cpu_name} ({cores_physical}C/{cores_logical}T)",
+        "igpu": igpu_desc,
+        "ram_gb": ram_gb,
         "ollama_vulkan_enabled": os.environ.get("OLLAMA_VULKAN") == "1",
         "recommended_cpu_min_model": "qwen2.5:1.5b",
         "recommended_cpu_max_model": "qwen2.5:7b-instruct",
@@ -78,7 +102,7 @@ def probe_ollama_models(base_url: Optional[str] = None, timeout: float = 1.8) ->
     }
 
 
-def probe_kaggle_worker(remote_url: Optional[str] = None, timeout: float = 3.0) -> dict[str, Any]:
+def probe_kaggle_worker(remote_url: Optional[str] = None, timeout: float = 1.2) -> dict[str, Any]:
     """Checks if the remote Kaggle GPU Worker (Multi-LoRA or vLLM 32B) is online."""
     url = (remote_url or settings.REMOTE_INFERENCE_URL or "").rstrip("/")
     if not url:

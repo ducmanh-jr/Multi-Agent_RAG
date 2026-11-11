@@ -182,7 +182,8 @@ def make_decision(
 
     is_relevant = True
     if retrieved_context is not None:
-        query_terms = {t for t in _tokens(sub_query) if len(t) >= 4}
+        common_acronyms = {"ai", "ml", "rag", "cnn", "gan", "wsl", "ssl", "sql", "dbt", "k8s", "llm", "nli"}
+        query_terms = {t for t in _tokens(sub_query) if len(t) >= 4 or t.lower() in common_acronyms}
         context_terms = set(_tokens(retrieved_context))
         if query_terms:
             is_relevant = len(query_terms & context_terms) / max(len(query_terms), 1) >= 0.20

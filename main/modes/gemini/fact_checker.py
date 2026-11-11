@@ -43,12 +43,21 @@ class GeminiFactCheckerAgent(BaseAgent):
             }
 
         # Zero Hallucination: honest refusal and thematic comparison verification
-        if (
-            "hoàn toàn không được đề cập" in answer
-            or "không được đề cập" in answer
-            or "Đánh giá tương quan:" in answer
-            or "không cùng một hệ quy chiếu" in answer
-        ):
+        ans_clean = answer.strip().lower()
+        is_honest_refusal = (
+            "đánh giá tương quan:" in ans_clean
+            or "không cùng một hệ quy chiếu" in ans_clean
+            or (
+                (
+                    "hoàn toàn không được đề cập" in ans_clean
+                    or "hoàn toàn không đề cập" in ans_clean
+                    or "không tìm thấy thông tin" in ans_clean
+                    or "tài liệu hiện tại không cung cấp đủ thông tin" in ans_clean
+                )
+                and len(ans_clean.split()) < 60
+            )
+        )
+        if is_honest_refusal:
             return {
                 "fact_check_label": "support",
                 "verified_claims": [
@@ -141,7 +150,8 @@ YÊU CẦU TRẢ VỀ ĐÚNG ĐỊNH DẠNG JSON HỢP LỆ:
                 )
                 if res_text:
                     clean = re.sub(r"^```(?:json)?|```$", "", res_text.strip(), flags=re.MULTILINE)
-                    batch_parsed = json.loads(clean)
+                    sanitized = re.sub(r'\\(?![/"\\bfnrtu])', r"\\\\", clean)
+                    batch_parsed = json.loads(sanitized)
             except Exception as exc:
                 self.logger.warning(f"[Gemini FactChecker] Batch NLI call fallback to deterministic verifier ({exc})")
 

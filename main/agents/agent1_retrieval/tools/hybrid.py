@@ -26,9 +26,11 @@ def reciprocal_rank_fusion(
     for list_idx, r_list in enumerate(ranked_lists):
         w = weights[list_idx] if (weights and list_idx < len(weights)) else 1.0
         for rank, doc in enumerate(r_list):
-            doc_id = doc.get("id") or compute_context_hash(
-                doc.get("text", ""), doc.get("doc_id", ""), doc.get("page_no", 1)
-            )
+            raw_id = doc.get("id")
+            parent_doc = doc.get("doc_id", "")
+            doc_id = f"{parent_doc}:{raw_id}" if (raw_id and parent_doc) else (raw_id or compute_context_hash(
+                doc.get("text", ""), parent_doc, doc.get("page_no", 1)
+            ))
             doc_registry[doc_id] = doc
             score_increment = float(w) / (k + rank + 1)
             doc_scores[doc_id] = doc_scores.get(doc_id, 0.0) + score_increment

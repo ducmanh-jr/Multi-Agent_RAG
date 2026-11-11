@@ -55,22 +55,55 @@ class GeminiSummarizerAgent(BaseAgent):
             if turns:
                 chat_context = "\n[Ngữ cảnh trao đổi đa lượt trước đó]:\n" + "\n".join(turns) + "\n"
 
+        is_summary_request = any(
+            kw in clean_q.lower()
+            for kw in [
+                "/tom-tat",
+                "tom-tat",
+                "/tomtat",
+                "tóm tắt",
+                "tổng quan nội dung",
+                "đóng góp cốt lõi",
+                "kết quả chính",
+            ]
+        )
+
+        summary_instruction = ""
+        if is_summary_request:
+            summary_instruction = """
+ĐẶC BIỆT KHI CÂU HỎI LÀ YÊU CẦU TÓM TẮT (/tom-tat, tóm tắt tổng quan, đóng góp cốt lõi):
+- BẮT BUỘC trả lời ĐẦY ĐỦ, CHI TIẾT và TOÀN DIỆN tất cả các phần cốt lõi của tài liệu (tối thiểu 4 - 6 mục, độ dài khoảng 400 - 800 từ).
+- Tuyệt đối KHÔNG trả lời tóm tắt bằng 1 câu ngắn cụt ngủn!
+- Trình bày thành các mục lớn rõ ràng với tiêu đề in đậm. BẮT BUỘC XUỐNG DÒNG (dùng ký tự \\n\\n) giữa các mục và các gạch đầu dòng, TUYỆT ĐỐI KHÔNG VIẾT DỒN TRÊN CÙNG MỘT DÒNG:
+  1. **Mục tiêu & Phạm vi bài học / nghiên cứu**: Giới thiệu mục đích chính và bài toán tài liệu giải quyết.
+  2. **Kiến trúc cốt lõi & Khái niệm nền tảng**: Phân tích các thành phần kiến trúc, giao thức, định nghĩa trọng tâm (Web Server, Reverse Proxy, Port, Domain...).
+  3. **Cấu hình & Giải pháp Kỹ thuật Thực tế**: Trình bày chi tiết các cơ chế, tham số cấu hình, ví dụ hoặc phương pháp triển khai (định tuyến, proxy_set_header, client_max_body_size...).
+  4. **Cân bằng tải / Bảo mật / Tối ưu hóa**: Đi sâu vào các giải pháp nâng cao (upstream round-robin/least_conn, SSL/TLS, Certbot...).
+  5. **Kế hoạch triển khai & Đánh giá kết quả**: Bảng phân công, khối lượng công việc (points) hoặc kết quả kiểm nghiệm thực tế.
+  6. **Lưu ý & Khuyến nghị Quan trọng**: Các cảnh báo vận hành (kiểm tra cú pháp với nginx -t, log debug, rủi ro).
+"""
+
         prompt = f"""Bạn là Trợ lý AI Nghiên cứu Cấp cao & Thẩm định Bằng chứng (Gemini Intelligence Engine).{chat_context}
-Nhiệm vụ: Dựa hoàn toàn vào Tài liệu nguồn dưới đây, hãy trả lời câu hỏi sau một cách chuẩn xác, trực diện, mạch lạc và tự nhiên như một Chatbot AI hàng đầu (như ChatGPT / NotebookLM):
+Nhiệm vụ: Dựa hoàn toàn vào Tài liệu nguồn dưới đây, hãy trả lời câu hỏi sau một cách chuẩn xác, trực diện, mạch lạc, đầy đủ và tự nhiên như một Chatbot AI hàng đầu (như ChatGPT / NotebookLM):
 "{query}"
 
-QUY TẮC TRẢ LỜI CỐT LÕI (BẮT BUỘC):
-1. Câu trả lời trực tiếp (Direct Answer First): Mở đầu bằng một câu dẫn nhập trực diện vào vấn đề, trả lời thẳng vào câu hỏi ngay ở 1-2 câu đầu tiên.
-2. Trình bày danh sách & in đậm thực thể (Structured Formatting):
-   - Nếu câu hỏi hỏi về các nhóm vấn đề, nội dung, mục tiêu, hoặc danh sách: Hãy dùng các gạch đầu dòng rõ ràng, in đậm tiêu đề từng ý (ví dụ: "1. **Tên ý chính**: Diễn giải cụ thể...").
+QUY TẮC TRẢ LỜI CỐT LÕI (BẮT BUỘC - NGUYÊN TẮC 'ĐÚNG VÀ ĐỦ'):
+1. Chuẩn mực Đúng và Đủ: Trả lời ĐÚNG TRỌNG TÂM, ĐẦY ĐỦ bản chất kỹ thuật, KHÔNG THỪA THÃI và KHÔNG THIẾU SÓT. Tuyệt đối KHÔNG trả lời cụt ngủn 1 dòng, nhưng cũng KHÔNG chèn lan man rác hành chính (Task, slide, người làm), danh mục tham khảo đọc thêm (Bài viết, video), hay các cấu hình không liên quan.
+2. Khái niệm / Kỹ thuật / Mã lệnh: Nếu câu hỏi hỏi về định nghĩa hoặc cấu hình kỹ thuật (ví dụ "upstream là gì"):
+   - Mở đầu bằng đoạn giải thích trực diện bản chất và mục đích của nó.
+   - Cung cấp cú pháp cấu hình mẫu chuẩn xác đặt trong khối mã lệnh (ví dụ ```nginx ... ```).
+   - Nêu 1-2 cơ chế vận hành cốt lõi gắn liền trực tiếp với đối tượng được hỏi (ví dụ: thuật toán cân bằng tải, cách dùng proxy_pass).
+3. Trình bày danh sách & in đậm thực thể (Structured Formatting):
+   - Nếu câu hỏi hỏi về các nhóm vấn đề, nội dung, mục tiêu, hoặc danh sách: Hãy dùng các gạch đầu dòng rõ ràng hoặc số thứ tự, in đậm tiêu đề từng ý (ví dụ: "1. **Tên ý chính**: Diễn giải cụ thể..."). Mỗi mục/gạch đầu dòng BẮT BUỘC nằm trên một dòng riêng biệt (dùng ký tự \\n hoặc \\n\\n), tuyệt đối không viết gộp trên cùng một dòng.
    - Nếu câu hỏi về mốc thời gian, ngày tháng, tên riêng: Nêu chính xác con số, ngày tháng năm và sự kiện đi kèm.
-3. Gắn trích dẫn học thuật: Gắn ký hiệu [1], [2] tương ứng ngay sau mỗi luận điểm có bằng chứng.
-4. KỊCH BẢN KHI TÀI LIỆU KHÔNG CÓ THÔNG TIN (ZERO HALLUCINATION):
+4. Gắn trích dẫn học thuật: Gắn ký hiệu [1], [2] tương ứng ngay sau mỗi luận điểm có bằng chứng.
+{summary_instruction}
+5. KỊCH BẢN KHI TÀI LIỆU KHÔNG CÓ THÔNG TIN (ZERO HALLUCINATION):
    - Nếu câu hỏi hỏi về một sự việc, nhân vật, mốc thời gian hoặc chủ đề mà Tài liệu nguồn KHÔNG hề đề cập đến:
      + Tuyệt đối KHÔNG tự suy đoán, bịa đặt hoặc gán ghép là tài liệu có nói.
      + Trả lời rõ ràng, minh bạch ngay dòng đầu tiên theo mẫu:
        "Dựa trên các bài báo/tài liệu hiện có trong hệ thống, thông tin về \"{query}\" **hoàn toàn không được đề cập**."
-     + Thêm gợi ý: "💡 **Gợi ý**: Bạn có thể tải thêm file PDF hoặc bài báo liên quan đến vấn đề này lên hệ thống để tôi đọc và phân tích cho bạn."
+     + Thêm gợi ý: "**Gợi ý**: Bạn có thể tải thêm file PDF hoặc bài báo liên quan đến vấn đề này lên hệ thống để tôi đọc và phân tích cho bạn."
      + Đặt "is_supported": true, "critic_action": "approve", "evidence_spans": [], "claims": [{{"text": "Tài liệu không đề cập đến thông tin này", "unit_id": None}}].
 5. KỊCH BẢN SO SÁNH / TỔNG HỢP NHIỀU TÀI LIỆU (MULTI-DOCUMENT COMPARISON):
    - Khi ngữ cảnh có nhiều tài liệu và yêu cầu là so sánh, đối chiếu (/so-sanh) hoặc tóm tắt (/tom-tat):
@@ -82,7 +115,7 @@ Tài liệu nguồn:
 
 YÊU CẦU TRẢ VỀ ĐÚNG ĐỊNH DẠNG JSON HỢP LỆ (không kèm markdown ngoài):
 {{
-  "answer": "Câu trả lời trực tiếp đầy đủ, mạch lạc có in đậm các luận điểm và gắn trích dẫn [1], [2]...",
+  "answer": "Câu trả lời trực tiếp đầy đủ, mạch lạc, chi tiết có in đậm các luận điểm, xuống dòng rõ ràng (\\n\\n) giữa các mục và gắn trích dẫn [1], [2]...",
   "evidence_spans": [
     {{"quote": "câu trích dẫn nguyên văn từ tài liệu nguồn", "unit_id": "Unit ID", "doc_id": "Doc ID", "page_no": 1}}
   ],
@@ -99,7 +132,7 @@ YÊU CẦU TRẢ VỀ ĐÚNG ĐỊNH DẠNG JSON HỢP LỆ (không kèm markdow
             response_text = llm_client._call_gemini(
                 prompt=prompt,
                 temperature=0.15,
-                max_tokens=2048,
+                max_tokens=4096,
                 json_mode=True,
             )
         except Exception as e:
@@ -114,7 +147,7 @@ YÊU CẦU TRẢ VỀ ĐÚNG ĐỊNH DẠNG JSON HỢP LỆ (không kèm markdow
             clean_json = re.sub(r"^```(?:json)?|```$", "", response_text.strip(), flags=re.MULTILINE).strip()
             try:
                 # Fix unescaped LaTeX backslashes before json.loads
-                sanitized_json = re.sub(r'\\(?![/\"\\bfnrtu])', r"\\\\", clean_json)
+                sanitized_json = re.sub(r'\\(?![/"\\bfnrtu])', r"\\\\", clean_json)
                 data = json.loads(sanitized_json)
                 answer = str(data.get("answer", "")).strip()
                 raw_spans = data.get("evidence_spans", []) or []
@@ -127,11 +160,36 @@ YÊU CẦU TRẢ VỀ ĐÚNG ĐỊNH DẠNG JSON HỢP LỆ (không kèm markdow
                     }
                 )
             except Exception:
-                m_ans = re.search(r'"answer"\s*:\s*"((?:[^"\\]|\\.)*)', clean_json, flags=re.DOTALL)
+                # Robust fallback for unescaped inline quotes or truncated JSON
+                m_ans = re.search(r'"answer"\s*:\s*"(.*?)(?:"\s*,\s*"(?:evidence_spans|claims|is_supported|missing_key_points|critic_action)"|\s*"\}|\s*$)', clean_json, flags=re.DOTALL)
                 if m_ans:
                     answer = m_ans.group(1).replace('\\"', '"').replace("\\n", "\n").strip()
                 else:
-                    answer = re.sub(r'^\s*\{\s*"answer"\s*:\s*"?', "", clean_json).strip()
+                    m_ans_alt = re.search(r'"answer"\s*:\s*"((?:[^"\\]|\\.)*)', clean_json, flags=re.DOTALL)
+                    if m_ans_alt:
+                        answer = m_ans_alt.group(1).replace('\\"', '"').replace("\\n", "\n").strip()
+                    else:
+                        answer = re.sub(r'^\s*\{\s*"answer"\s*:\s*"?', "", clean_json).strip()
+
+                # Attempt to rescue evidence_spans from clean_json
+                m_spans = re.search(r'"evidence_spans"\s*:\s*(\[.*?\])', clean_json, flags=re.DOTALL)
+                if m_spans:
+                    try:
+                        raw_spans = json.loads(m_spans.group(1))
+                    except Exception:
+                        pass
+
+                # Attempt to rescue claims from clean_json
+                m_claims = re.search(r'"claims"\s*:\s*(\[.*?\])', clean_json, flags=re.DOTALL)
+                if m_claims:
+                    try:
+                        raw_claims = json.loads(m_claims.group(1))
+                    except Exception:
+                        pass
+
+        # Clean trailing unclosed brackets or punctuation cut-offs
+        if answer:
+            answer = re.sub(r"[,;\s]*\[\s*$", "", answer).strip()
 
         if not answer:
             self.logger.warning("[Gemini Summarizer] Primary Gemini unavailable, engaging deterministic engine.")
@@ -161,7 +219,26 @@ YÊU CẦU TRẢ VỀ ĐÚNG ĐỊNH DẠNG JSON HỢP LỆ (không kèm markdow
             for idx, e in enumerate(raw_spans)
         ]
 
+        if not claims and answer and source_units:
+            from core.verifier import split_answer_into_atomic_claims
+            claims = split_answer_into_atomic_claims(answer, source_units)
+
+        if not evidence_spans and source_units:
+            for idx, u in enumerate(source_units[:5]):
+                txt = str(u.get("text") or u.get("content") or "").strip()
+                if txt:
+                    evidence_spans.append(
+                        EvidenceSpan(
+                            id=f"ev_{idx + 1}",
+                            quote=txt[:250],
+                            unit_id=u.get("id", f"u{idx+1}"),
+                            doc_id=u.get("doc_id", "doc"),
+                            page_no=u.get("page_no", 1),
+                        ).to_dict()
+                    )
+
         answer = ensure_inline_citations(answer, source_units, evidence_spans)
+        answer = re.sub(r"[,;\s]*\[\s*$", "", answer).strip()
 
         trace = self.log_action(
             "gemini_summarization_completed",

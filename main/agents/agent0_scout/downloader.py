@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 import re
-import urllib.request
+import httpx
 from typing import Any
 from core.config import settings
 from core.db import save_document
@@ -59,20 +59,33 @@ def download_and_register_paper(paper: dict[str, Any], timeout: int = 25) -> dic
     if is_cached:
         logger.info(f"[Scout Downloader] Valid paper already cached locally: {local_path} ({os.path.getsize(local_path)} bytes)")
     else:
-        logger.info(f"[Scout Downloader] Downloading PDF from {pdf_url} to {local_path}...")
-        req = urllib.request.Request(pdf_url, headers={"User-Agent": USER_AGENT})
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = resp.read()
-            
-            # Guard against HTML captcha / rate limit blocks
-            if len(data) < 5000:
-                raise ValueError(f"Downloaded file too small ({len(data)} bytes) - not a valid academic paper.")
-            if b"%PDF-" not in data[:1024]:
-                raise ValueError("Downloaded file does not contain valid PDF magic bytes (%PDF-). Server may have returned an HTML error/captcha.")
-                
-            with open(local_path, "wb") as f:
-                f.write(data)
-        logger.info(f"[Scout Downloader] Successfully downloaded {len(data)} bytes.")
+        logger.info(f"[Scout Downloader] Streaming PDF from {pdf_url} to {local_path}...")
+        total_bytes = 0
+        header_checked = False
+        tmp_path = f"{local_path}.part_{os.getpid()}"
+        try:
+            with httpx.Client(follow_redirects=True, timeout=float(timeout), headers={"User-Agent": USER_AGENT}) as client:
+                with client.stream("GET", pdf_url) as resp:
+                    resp.raise_for_status()
+                    with open(tmp_path, "wb") as f:
+                        for chunk in resp.iter_bytes(chunk_size=64 * 1024):
+                            if not header_checked and chunk:
+                                if b"%PDF-" not in chunk[:1024]:
+                                    raise ValueError("Downloaded file does not contain valid PDF magic bytes (%PDF-). Server may have returned an HTML captcha/error.")
+                                header_checked = True
+                            f.write(chunk)
+                            total_bytes += len(chunk)
+
+            if total_bytes < 5000:
+                raise ValueError(f"Downloaded file too small ({total_bytes} bytes) - not a valid academic paper.")
+            os.replace(tmp_path, local_path)
+            logger.info(f"[Scout Downloader] Successfully streamed {total_bytes} bytes to {local_path}.")
+        finally:
+            if os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
 
     file_size = os.path.getsize(local_path)
     doc_id = paper.get("id") or f"doc_{arxiv_id}"

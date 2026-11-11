@@ -115,8 +115,15 @@ class FactCheckJudge:
             # Truyền dict để pipeline tự tokenize đúng cặp NLI với [CLS] premise [SEP] hypothesis [SEP]
             truncated_span = span[:384]
             try:
-                scores_list = self.classifier({"text": truncated_span, "text_pair": claim})[0]
-                label_scores = {r["label"].lower(): r["score"] for r in scores_list}
+                raw_out = self.classifier({"text": truncated_span, "text_pair": claim})
+                if isinstance(raw_out, list):
+                    scores_list = raw_out[0] if (raw_out and isinstance(raw_out[0], list)) else raw_out
+                else:
+                    scores_list = [raw_out]
+                label_scores = {
+                    (r["label"].lower() if isinstance(r, dict) else str(r)): (r.get("score", 0.5) if isinstance(r, dict) else 0.5)
+                    for r in scores_list
+                }
                 top_label = max(label_scores, key=label_scores.get)
 
                 if "entailment" in top_label or "support" in top_label:
@@ -168,7 +175,14 @@ class FactCheckJudge:
         sanitized_for_nums = re.sub(r"^\s*\d+[\.\)]\s*", " ", sanitized_for_nums)
         sanitized_for_nums = re.sub(r"\b(?:mục|phần|bước|trang|slide|figure|table|bảng|hình)\s+\d+\b", " ", sanitized_for_nums, flags=re.I)
         raw_numbers = re.findall(r"\b\d+(?:[,\.]\d+)?\b", sanitized_for_nums)
-        normalized_numbers = {n.replace(",", "").replace(".", "") for n in raw_numbers}
+        normalized_numbers = set()
+        for n in raw_numbers:
+            clean_n = n.replace(",", ".") if "," in n and "." not in n else n.replace(",", "")
+            try:
+                val = float(clean_n)
+                normalized_numbers.add(f"{val:.4f}".rstrip("0").rstrip("."))
+            except ValueError:
+                normalized_numbers.add(n)
 
         masked_text = re.sub(r"\b(không\s+(?:khí|gian|hàng|lực|phận|độ|chỉ\s+định|cần)|chân\s+không|chưa\s+cấu\s+hình|nếu\s+không|khi\s+chưa|mà\s+không)\b", " ", clean_text)
         words = set(re.findall(r"\w+", masked_text))
@@ -268,7 +282,7 @@ class FactCheckJudge:
         # - Trùng khớp số liệu định lượng (common_nums), HOẶC
         # - Điểm tương đồng rất cao (best_score >= 0.35 hoặc best_overlap_count >= 5)
         has_common_nums = bool(claim_nums and claim_nums.intersection(best_ev_nums))
-        if (best_score >= 0.18 or best_overlap_count >= 3) and (claim_neg != best_ev_neg) and not has_common_nums and best_score < 0.35 and best_overlap_count < 5:
+        if (best_score >= 0.18 or best_overlap_count >= 3) and (claim_neg != best_ev_neg) and not has_common_nums:
             return {
                 "status": "contradict",
                 "confidence": 0.88,

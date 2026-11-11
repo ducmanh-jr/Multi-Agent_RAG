@@ -1618,14 +1618,16 @@ body {
 }
 
 .tab-pane {
-  display: none;
+  display: none !important;
   flex: 1;
   overflow-y: auto;
+  height: 100%;
 }
 
 .tab-pane.active {
-  display: flex;
+  display: flex !important;
   flex-direction: column;
+  height: 100%;
 }
 
 .evidence-list {
@@ -3468,43 +3470,124 @@ body.dark .slash-command-footer kbd {
   left: 0;
   width: 100vw;
   height: 100vh;
-  background-color: rgba(15, 23, 42, 0.75);
-  backdrop-filter: blur(4px);
+  background-color: rgba(15, 23, 42, 0.6);
+  backdrop-filter: blur(6px);
   z-index: 99999;
   display: flex;
   align-items: center;
   justify-content: center;
+  animation: hotSwapFadeIn 0.2s ease-out;
+}
+
+@keyframes hotSwapFadeIn {
+  from { opacity: 0; transform: scale(0.97); }
+  to { opacity: 1; transform: scale(1); }
 }
 
 .hot-swap-card {
   background-color: #ffffff;
-  border-radius: 14px;
+  border-radius: 16px;
   padding: 24px 28px;
   width: 90%;
   max-width: 440px;
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 20px 45px -10px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(0, 0, 0, 0.05);
   text-align: center;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
+  position: relative;
+}
+
+.hot-swap-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.hot-swap-icon-badge {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #f4f4f5;
+  border: 1px solid #e4e4e7;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
 }
 
 .hot-swap-title {
-  font-size: 16px;
+  font-size: 15.5px;
   font-weight: 700;
-  color: #0f172a;
+  color: #09090b;
+  letter-spacing: -0.01em;
 }
 
 .hot-swap-desc {
-  font-size: 13px;
-  color: #475569;
-  line-height: 1.5;
+  font-size: 13.5px;
+  color: #52525b;
+  line-height: 1.6;
+  text-align: left;
+  background: #fafafa;
+  border: 1px solid #f4f4f5;
+  padding: 12px 14px;
+  border-radius: 10px;
+}
+
+.hot-swap-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.hot-swap-btn {
+  padding: 8px 18px;
+  border-radius: 8px;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-family: inherit;
+}
+
+.hot-swap-btn.btn-cancel {
+  background: #ffffff;
+  border: 1px solid #e4e4e7;
+  color: #52525b;
+}
+
+.hot-swap-btn.btn-cancel:hover {
+  background: #f4f4f5;
+  color: #18181b;
+}
+
+.hot-swap-btn.btn-ok {
+  background: #09090b;
+  border: 1px solid #09090b;
+  color: #ffffff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+.hot-swap-btn.btn-ok:hover {
+  background: #27272a;
+  border-color: #27272a;
+}
+
+.hot-swap-progress-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 6px;
 }
 
 .hot-swap-progress-bar-bg {
   width: 100%;
-  height: 8px;
-  background-color: #e2e8f0;
+  height: 10px;
+  background-color: #f4f4f5;
+  border: 1px solid #e4e4e7;
   border-radius: 999px;
   overflow: hidden;
 }
@@ -3512,9 +3595,42 @@ body.dark .slash-command-footer kbd {
 .hot-swap-progress-bar-fill {
   height: 100%;
   width: 0%;
-  background: linear-gradient(90deg, #6366f1, #8b5cf6);
+  background: #09090b;
   border-radius: 999px;
-  transition: width 0.3s ease;
+  transition: width 0.2s linear;
+}
+
+.hot-swap-status-text {
+  font-size: 13px;
+  font-weight: 500;
+  color: #52525b;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.hot-swap-pulse-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #09090b;
+  animation: hotSwapPulse 1.2s infinite ease-in-out;
+}
+
+@keyframes hotSwapPulse {
+  0%, 100% { opacity: 0.2; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1.15); }
+}
+
+.hot-swap-countdown-badge {
+  background: #f4f4f5;
+  border: 1px solid #e4e4e7;
+  border-radius: 6px;
+  padding: 1px 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #18181b;
 }
 
 /* ==========================================================================
@@ -3546,4 +3662,142 @@ body.dark .slash-command-footer kbd {
 .agent-model-select option[disabled] {
   color: #94a3b8 !important;
   background-color: #f8fafc !important;
+}
+
+/* GPU Max Unswapped State (Online nhưng chưa nạp VRAM) */
+.quick-select-btn[data-mode="gpu_max"].gpu-max-unswapped {
+  opacity: 0.62 !important;
+  border: 1px dashed #71717a !important;
+  color: #71717a !important;
+  background-color: #f8fafc !important;
+}
+
+.quick-select-btn[data-mode="gpu_max"].gpu-max-unswapped:hover {
+  opacity: 0.95 !important;
+  border-color: #09090b !important;
+  color: #09090b !important;
+  background-color: #ffffff !important;
+}
+
+/* Chat Markdown Headings & Highlights */
+.chat-h1 {
+  font-size: 16.5px;
+  font-weight: 700;
+  color: #09090b;
+  margin: 16px 0 8px 0;
+  line-height: 1.4;
+}
+
+.chat-h2 {
+  font-size: 15.5px;
+  font-weight: 700;
+  color: #09090b;
+  margin: 14px 0 8px 0;
+  line-height: 1.4;
+}
+
+.chat-h3 {
+  font-size: 14.5px;
+  font-weight: 700;
+  color: #0f172a;
+  margin: 14px 0 6px 0;
+  line-height: 1.45;
+}
+
+/* ==========================================================================
+   PDF.JS TEXT LAYER & EXACT CITATION HIGHLIGHT OVERLAY (XANH NHẠT CHUẨN)
+   ========================================================================== */
+#pdfjsContainer {
+  flex: 1;
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: auto;
+  background: #525659;
+  text-align: center;
+  padding: 16px 8px;
+  position: relative;
+}
+
+#pdfPageWrapper {
+  position: relative;
+  display: inline-block;
+  background: #ffffff;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+  margin: 0 auto;
+}
+
+#pdfCanvas {
+  display: block;
+}
+
+#pdfTextLayer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  overflow: hidden;
+  opacity: 1;
+  line-height: 1;
+  pointer-events: auto;
+}
+
+#pdfTextLayer span {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+}
+
+/* User's exact soft blue highlight from screenshot */
+.pdf-highlight-match {
+  background-color: rgba(59, 130, 246, 0.28) !important;
+  color: transparent !important;
+  border-radius: 3px;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.22);
+  mix-blend-mode: multiply;
+}
+
+@keyframes highlight-pulse {
+  0% {
+    background-color: #60a5fa !important;
+    box-shadow: 0 0 14px rgba(59, 130, 246, 0.7);
+  }
+  50% {
+    background-color: #93c5fd !important;
+    box-shadow: 0 0 8px rgba(59, 130, 246, 0.45);
+  }
+  100% {
+    background-color: #a0c7eb !important;
+    box-shadow: 0 0 0 2px #a0c7eb, 0 2px 8px rgba(59, 130, 246, 0.35);
+  }
+}
+
+.pdfjs-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 14px;
+  background: #f8fafc;
+  border-bottom: 1px solid #e2e8f0;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.pdf-tool-btn {
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #334155;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 12px;
+  transition: all 0.15s ease;
+}
+
+.pdf-tool-btn:hover {
+  background: #f1f5f9;
+  border-color: #94a3b8;
 }

@@ -66,8 +66,6 @@ BẮT BUỘC trả về kết quả hoàn toàn bằng định dạng JSON hợp
 
 
 def extract_numbers_and_years(text: str) -> list[str]:
-    """Extracts normalized numerical values, percentages, and 4-digit years from text."""
-def extract_numbers_and_years(text: str) -> list[str]:
     """
     Extracts significant numbers, percentages, decimals, and 4-digit years from text.
     Ignores citation brackets [1], [2], page markers (Trang 1, Page 2), and arXiv version tags.
@@ -123,9 +121,18 @@ def check_numerical_and_date_consistency(claim_text: str, full_context_text: str
     numerical_passed = True
 
     for num in claim_nums:
-        # Check exact or comma/dot equivalent presence in context
-        raw_variants = {num, num.replace(".", ","), num.rstrip("%")}
-        found = any(v in ctx_norm or v in (full_context_text or "") for v in raw_variants if v)
+        # Check exact or comma/dot equivalent presence in context with word boundaries
+        clean_num = num.rstrip("%")
+        raw_variants = {num, clean_num, clean_num.replace(".", ","), clean_num.replace(",", ".")}
+        found = False
+        for v in raw_variants:
+            if not v:
+                continue
+            # Regex boundary so '10' does not match '2010' or '100'
+            pat = r"(?<!\d)" + re.escape(v) + r"(?!\d)"
+            if re.search(pat, ctx_norm) or re.search(pat, full_context_text or ""):
+                found = True
+                break
         if not found:
             missing_nums.append(num)
             if re.match(r"^(?:19\d\d|20\d\d)$", num):
@@ -175,12 +182,12 @@ def split_answer_into_atomic_claims(
     raw_sents = re.split(r"(?<=[.!?])\s+|\n+", clean_ans)
     claims_out: list[dict[str, Any]] = []
     for s in raw_sents:
-        s_clean = re.sub(r"^[•\-\*\d.)\s]+", "", s).strip()
-        if len(s_clean) < 25:
+        s_clean = re.sub(r"^[#•\-\*\d.)\s]+", "", s).strip()
+        if len(s_clean) < 25 or s_clean.startswith("```") or s_clean.endswith(":"):
             continue
         if any(
             skip in s_clean.lower()
-            for skip in ["dựa trên tài liệu", "dưới đây là tóm tắt", "tài liệu nguồn không cung cấp"]
+            for skip in ["dựa trên tài liệu", "dưới đây là tóm tắt", "tài liệu nguồn không cung cấp", "các cơ chế & cấu hình", "phân tích chi tiết"]
         ):
             continue
         best_u = find_best_supporting_unit(s_clean, source_units)
@@ -313,7 +320,7 @@ def deterministic_verify_claims(
         elif (
             overlap_ratio >= 0.25
             or ascii_overlap >= 0.40
-            or len(c_tokens & ctx_tokens) >= 2
+            or (len(c_tokens & ctx_tokens) >= 2 and overlap_ratio >= 0.20)
             or is_abstention_claim
             or (best_unit and c_text[:40].lower() in unit_text.lower())
         ):
@@ -429,8 +436,15 @@ def ensure_inline_citations(
     if not answer or not source_units:
         return answer
 
-    has_brackets = bool(re.search(r"\[\d+\]", answer))
-    text_out = answer.strip()
+    # Clean any dangling unclosed trailing bracket like ", [" or "[" from generation cutoff
+    text_out = re.sub(r"[,;\s]*\[\s*$", "", answer.strip()).strip()
+
+    # Normalize [u1], [u2] -> [1], [2]
+    text_out = re.sub(r"\[u(\d+)\]", r"[\1]", text_out)
+    # Normalize comma lists [1, 2] -> [1], [2]
+    text_out = re.sub(r"\[(\d+(?:\s*,\s*\d+)+)\]", lambda m: ", ".join(f"[{n.strip()}]" for n in m.group(1).split(",")), text_out)
+
+    has_brackets = bool(re.search(r"\[\d+\]", text_out))
 
     if not has_brackets and source_units:
         # Attach [1], [2] to bullet points or paragraphs based on best matching unit
@@ -439,7 +453,7 @@ def ensure_inline_citations(
         updated_paras: list[str] = []
         for p in paragraphs:
             p_strip = p.strip()
-            if len(p_strip) > 35 and not p_strip.startswith("#") and not p_strip.startswith("⚠️"):
+            if len(p_strip) > 35 and not p_strip.startswith("#") and not p_strip.startswith(""):
                 best_u = find_best_supporting_unit(p_strip, source_units[:8])
                 if best_u:
                     idx = unit_id_to_idx.get(best_u.get("id", "u1"), 1)
@@ -448,4 +462,8 @@ def ensure_inline_citations(
             updated_paras.append(p)
         text_out = "\n\n".join(updated_paras)
 
-    return text_out
+    # Ensure numbered sections and bullet items start on fresh lines (never splitting headers like ## 1.)
+    text_out = re.sub(r"([a-z0-9à-ỹ\.\)\]\>])[ \t]*([0-9]+\.\s+(?:\*\*|[A-ZÀ-ỸĐ]))", r"\1\n\n\2", text_out, flags=re.IGNORECASE)
+    text_out = re.sub(r"([a-z0-9à-ỹ\.\)\]\>])[ \t]+([-\*•]\s+)", r"\1\n\2", text_out, flags=re.IGNORECASE)
+
+    return re.sub(r"[,;\s]*\[\s*$", "", text_out).strip()

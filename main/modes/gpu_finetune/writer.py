@@ -39,13 +39,34 @@ class GPUFinetuneWriterAgent(BaseAgent):
 
         self.logger.info(f"[GPU Finetune Writer] Formatting academic report via DoRA Model for query: '{query[:65]}'")
 
+        # Ensure claims are normalized dicts
+        norm_v_claims: list[dict[str, Any]] = []
+        for c in verified_claims:
+            if isinstance(c, dict):
+                norm_v_claims.append(c)
+            elif hasattr(c, "to_dict"):
+                norm_v_claims.append(c.to_dict())
+            else:
+                norm_v_claims.append({"claim": str(c), "claim_text": str(c), "text": str(c), "status": "SUPPORT"})
+        verified_claims = norm_v_claims
+
+        norm_r_claims: list[dict[str, Any]] = []
+        for c in rejected_claims:
+            if isinstance(c, dict):
+                norm_r_claims.append(c)
+            elif hasattr(c, "to_dict"):
+                norm_r_claims.append(c.to_dict())
+            else:
+                norm_r_claims.append({"claim": str(c), "claim_text": str(c), "text": str(c), "status": "CONTRADICT"})
+        rejected_claims = norm_r_claims
+
         final_report = ""
         report_data: dict[str, Any] = {}
 
         # 1. Attempt generation via fine-tuned DoRA model on Remote GPU Worker
         if self.settings.REMOTE_INFERENCE_URL:
             try:
-                v_claims_text = "\n".join([f"- {c.get('claim_text', '')}" for c in verified_claims])
+                v_claims_text = "\n".join([f"- {c.get('claim_text') or c.get('text') or str(c)}" for c in verified_claims])
                 prompt = (
                     f"# Research Query: {query}\n\n"
                     f"## Executive Summary:\n{answer}\n\n"
@@ -58,6 +79,7 @@ class GPUFinetuneWriterAgent(BaseAgent):
                     fallback_prompt=prompt,
                     fallback_system=WRITER_TRAINING_SYSTEM_PROMPT,
                     adapter="writer",
+                    timeout=min(15.0, float(self.settings.REMOTE_TIMEOUT_SECONDS or 90.0)),
                 )
                 if isinstance(res, dict) and res.get("report"):
                     final_report = res["report"]

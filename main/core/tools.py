@@ -20,6 +20,8 @@ import math
 import operator
 import os
 import re
+import threading
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -27,8 +29,15 @@ from core.config import settings
 from utils.logger import logger
 
 
-# In-memory cache of parsed PDF chunks keyed by absolute file path + mtime
-_PDF_CHUNK_CACHE: dict[str, list[dict[str, Any]]] = {}
+# In-memory LRU cache of parsed PDF chunks keyed by absolute file path + mtime
+_PDF_CHUNK_CACHE: OrderedDict[str, list[dict[str, Any]]] = OrderedDict()
+_PDF_CACHE_LOCK = threading.Lock()
+_MAX_PDF_CACHE_ENTRIES = 16
+
+def clear_pdf_cache() -> None:
+    """Clears the in-memory parsed PDF chunks cache to free memory and force re-index."""
+    with _PDF_CACHE_LOCK:
+        _PDF_CHUNK_CACHE.clear()
 
 
 def load_or_parse_selected_pdf(
@@ -69,8 +78,10 @@ def load_or_parse_selected_pdf(
     except Exception:
         mtime = 0.0
     cache_key = f"{os.path.abspath(resolved)}::{mtime}"
-    if cache_key in _PDF_CHUNK_CACHE:
-        return _PDF_CHUNK_CACHE[cache_key]
+    with _PDF_CACHE_LOCK:
+        if cache_key in _PDF_CHUNK_CACHE:
+            _PDF_CHUNK_CACHE.move_to_end(cache_key)
+            return _PDF_CHUNK_CACHE[cache_key]
 
     doc_title = Path(resolved).stem
     doc_title = re.sub(r"^[0-9a-f]{8}_", "", doc_title)
@@ -80,29 +91,56 @@ def load_or_parse_selected_pdf(
         import fitz  # PyMuPDF
 
         pdf_doc = fitz.open(resolved)
-        for page_idx, page in enumerate(pdf_doc):
-            page_no = page_idx + 1
-            raw_text = page.get_text("text") or ""
-            clean_text = re.sub(r"[ \t]+", " ", raw_text).strip()
-            if not clean_text:
-                continue
+        try:
+            for page_idx, page in enumerate(pdf_doc):
+                page_no = page_idx + 1
+                raw_text = page.get_text("text") or ""
+                clean_text = re.sub(r"[ \t]+", " ", raw_text).strip()
+                if not clean_text:
+                    continue
 
-            # Split into sentences first so chunks never cut mid-sentence
-            sentences = [
-                s.strip()
-                for s in re.split(r"(?<=[.!?।])\s+|\n{2,}", clean_text)
-                if len(s.strip()) > 12
-            ]
-            if not sentences:
-                sentences = [clean_text]
+                # Split into sentences first so chunks never cut mid-sentence
+                sentences = [
+                    s.strip()
+                    for s in re.split(r"(?<=[.!?।])\s+|\n{2,}", clean_text)
+                    if len(s.strip()) > 12
+                ]
+                if not sentences:
+                    sentences = [clean_text]
 
-            current_sents: list[str] = []
-            current_words = 0
-            sub_idx = 1
+                current_sents: list[str] = []
+                current_words = 0
+                sub_idx = 1
 
-            for sent in sentences:
-                w_count = len(sent.split())
-                if current_words + w_count > chunk_size_words and current_sents:
+                for sent in sentences:
+                    w_count = len(sent.split())
+                    if current_words + w_count > chunk_size_words and current_sents:
+                        chunk_body = " ".join(current_sents).strip()
+                        cid = f"{doc_title}_p{page_no}_c{sub_idx}"
+                        chunks.append(
+                            {
+                                "id": cid,
+                                "chunk_id": cid,
+                                "doc_id": doc_title,
+                                "title": doc_title,
+                                "page_no": page_no,
+                                "page": page_no,
+                                "text": chunk_body,
+                                "content": chunk_body,
+                                "sentences": list(current_sents),
+                                "source_path": resolved,
+                                "is_selected_pdf": True,
+                            }
+                        )
+                        sub_idx += 1
+                        # Keep last 2 sentences for sliding window overlap
+                        current_sents = current_sents[-2:] if len(current_sents) >= 2 else current_sents[-1:]
+                        current_words = sum(len(x.split()) for x in current_sents)
+
+                    current_sents.append(sent)
+                    current_words += w_count
+
+                if current_sents:
                     chunk_body = " ".join(current_sents).strip()
                     cid = f"{doc_title}_p{page_no}_c{sub_idx}"
                     chunks.append(
@@ -120,38 +158,19 @@ def load_or_parse_selected_pdf(
                             "is_selected_pdf": True,
                         }
                     )
-                    sub_idx += 1
-                    # Keep last 2 sentences for sliding window overlap
-                    current_sents = current_sents[-2:] if len(current_sents) >= 2 else current_sents[-1:]
-                    current_words = sum(len(x.split()) for x in current_sents)
-
-                current_sents.append(sent)
-                current_words += w_count
-
-            if current_sents:
-                chunk_body = " ".join(current_sents).strip()
-                cid = f"{doc_title}_p{page_no}_c{sub_idx}"
-                chunks.append(
-                    {
-                        "id": cid,
-                        "chunk_id": cid,
-                        "doc_id": doc_title,
-                        "title": doc_title,
-                        "page_no": page_no,
-                        "page": page_no,
-                        "text": chunk_body,
-                        "content": chunk_body,
-                        "sentences": list(current_sents),
-                        "source_path": resolved,
-                        "is_selected_pdf": True,
-                    }
-                )
-        pdf_doc.close()
+        finally:
+            pdf_doc.close()
     except Exception as exc:
         logger.warning(f"[ToolRegistry] PyMuPDF parse failed on '{resolved}': {exc}")
 
     if chunks:
-        _PDF_CHUNK_CACHE[cache_key] = chunks
+        with _PDF_CACHE_LOCK:
+            if cache_key in _PDF_CHUNK_CACHE:
+                _PDF_CHUNK_CACHE.move_to_end(cache_key)
+            else:
+                if len(_PDF_CHUNK_CACHE) >= _MAX_PDF_CACHE_ENTRIES:
+                    _PDF_CHUNK_CACHE.popitem(last=False)
+            _PDF_CHUNK_CACHE[cache_key] = chunks
     return chunks
 
 
@@ -175,27 +194,42 @@ def extract_table_or_equations_tool(pdf_path: Optional[str], page_number: int = 
         import fitz
 
         doc = fitz.open(str(pdf_path))
-        if page_number < 1 or page_number > len(doc):
+        try:
+            if page_number < 1 or page_number > len(doc):
+                return f"Số trang {page_number} nằm ngoài phạm vi tài liệu (1..{len(doc)})."
+            page = doc[page_number - 1]
+            markdown_tables: list[str] = []
+            if hasattr(page, "find_tables"):
+                tabs = page.find_tables()
+                for idx, tab in enumerate(tabs.tables):
+                    try:
+                        md = tab.to_markdown()
+                        if md and md.strip():
+                            markdown_tables.append(f"### Bảng {idx + 1} (Trang {page_number})\n{md.strip()}")
+                    except Exception:
+                        pass
+            if not markdown_tables:
+                return f"Không phát hiện bảng biểu trên trang {page_number}."
+            return "\n\n".join(markdown_tables)
+        finally:
             doc.close()
-            return f"Số trang {page_number} nằm ngoài phạm vi tài liệu (1..{len(doc)})."
-        page = doc[page_number - 1]
-        markdown_tables: list[str] = []
-        if hasattr(page, "find_tables"):
-            tabs = page.find_tables()
-            for idx, tab in enumerate(tabs.tables):
-                try:
-                    md = tab.to_markdown()
-                    if md and md.strip():
-                        markdown_tables.append(f"### Bảng {idx + 1} (Trang {page_number})\n{md.strip()}")
-                except Exception:
-                    pass
-        if not markdown_tables:
-            doc.close()
-            return f"Không phát hiện bảng biểu trên trang {page_number}."
-        doc.close()
-        return "\n\n".join(markdown_tables)
     except Exception as exc:
         return f"Lỗi trích xuất bảng biểu: {exc}"
+
+
+def _safe_pow(base: float, exp: float) -> float:
+    """Safe power calculation strictly bounded to avoid CPU/RAM exhaustion DoS."""
+    if abs(exp) > 100:
+        raise ValueError(f"Số mũ {exp} vượt quá giới hạn an toàn (tối đa 100).")
+    if abs(base) > 1e6 and exp > 10:
+        raise ValueError("Cơ số và số mũ quá lớn, có nguy cơ gây tràn tài nguyên.")
+    try:
+        res = operator.pow(base, exp)
+        if math.isinf(res) or math.isnan(res):
+            raise OverflowError("Kết quả lũy thừa vượt quá giá trị số thực.")
+        return float(res)
+    except OverflowError:
+        raise OverflowError("Phép tính lũy thừa gây tràn số học.")
 
 
 _SAFE_OPS: dict[type, Callable[..., Any]] = {
@@ -203,7 +237,7 @@ _SAFE_OPS: dict[type, Callable[..., Any]] = {
     ast.Sub: operator.sub,
     ast.Mult: operator.mul,
     ast.Div: operator.truediv,
-    ast.Pow: operator.pow,
+    ast.Pow: _safe_pow,
     ast.Mod: operator.mod,
     ast.USub: operator.neg,
     ast.UAdd: operator.pos,

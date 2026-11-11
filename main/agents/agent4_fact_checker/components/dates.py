@@ -69,6 +69,11 @@ def extract_date_mentions(text: str) -> list[DateMention]:
         for match in pattern.finditer(text):
             if any(match.start() < m.end and m.start < match.end() for m in mentions):
                 continue
+            # Guard against technical parameters: d_model = 2048, port: 2020, 1920x1080
+            prefix = text[max(0, match.start() - 10) : match.start()]
+            suffix = text[match.end() : min(len(text), match.end() + 10)]
+            if re.search(r"[=:xX]\s*$", prefix) or re.search(r"^\s*(?:x\d|px|dim|tokens|steps|bytes|kb|mb|gb)", suffix, re.I):
+                continue
             year = int(match.groupdict().get("year", 0))
             month = 1
             day = 1
@@ -108,8 +113,8 @@ def verify_dates_in_claim(claim: str, context: str) -> tuple[bool, str]:
 
     for cm in c_mentions:
         if cm.year and cm.year not in ctx_years:
-            # Also check literal year string in context
-            if str(cm.year) not in context:
+            # Also check literal year string in context with word boundary
+            if not re.search(rf"\b{cm.year}\b", context):
                 return False, f"Mốc thời gian (năm {cm.year}) không tồn tại trong tài liệu nguồn."
 
     return True, "Toàn bộ mốc thời gian khớp với tài liệu nguồn."

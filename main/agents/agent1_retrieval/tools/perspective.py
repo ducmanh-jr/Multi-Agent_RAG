@@ -16,6 +16,9 @@ def generate_research_perspectives(query: str) -> tuple[list[str], list[str]]:
       - perspectives: list of viewpoints (e.g. ['Theoretical foundation', 'Empirical benchmark'])
       - sub_queries: focused search queries representing each perspective.
     """
+    if not query or not query.strip():
+        return [], []
+
     prompt = f"""Bạn là một chuyên gia nghiên cứu khoa học cấp cao (Stanford STORM Multi-Perspective Decomposer).
 Hãy phân rã câu hỏi nghiên cứu sau đây thành:
 1. 3 góc nhìn khoa học cốt lõi (perspectives): ví dụ như Cơ sở lý thuyết, Phương pháp thực nghiệm, So sánh đối chuẩn/Giới hạn.
@@ -32,8 +35,13 @@ YÊU CẦU TRẢ VỀ ĐÚNG ĐỊNH DẠNG JSON (không kèm markdown):
 """
     try:
         data = llm_client.generate_json(prompt, agent="retrieval")
+        if isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict):
+            data = data[0]
+        elif not isinstance(data, dict):
+            data = {}
         perspectives = data.get("perspectives", ["Tổng quan phương pháp", "Kết quả thực nghiệm"])
-        sub_queries = data.get("sub_queries", [query])
+        raw_sub = data.get("sub_queries", [query])
+        sub_queries = [str(q).strip() for q in raw_sub if str(q).strip()] if isinstance(raw_sub, list) else [query]
         if query not in sub_queries:
             sub_queries.insert(0, query)
         return perspectives, sub_queries

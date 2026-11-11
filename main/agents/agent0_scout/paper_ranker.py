@@ -26,8 +26,11 @@ def get_embed_model():
         if os.path.exists(model_path):
             _EMBED_MODEL = SentenceTransformer(model_path)
             logger.info(f"[Scout Ranker] Loaded local SentenceTransformer from: {model_path}")
-        else:
+        elif os.environ.get("ALLOW_ONLINE_EMBEDDING_DOWNLOAD") == "1":
             _EMBED_MODEL = SentenceTransformer("all-MiniLM-L6-v2")
+        else:
+            logger.info("[Scout Ranker] No local embedding model found; using fast BM25/keyword scoring without blocking download.")
+            _EMBED_MODEL = False
     except Exception as e:
         logger.warning(f"[Scout Ranker] Could not load SentenceTransformer: {e}")
         _EMBED_MODEL = False
@@ -86,25 +89,33 @@ def rank_and_select_papers(
 
     scored_papers = []
     seen_ids = set()
+    deduped_papers = []
 
     for paper in papers:
         pid = paper.get("arxiv_id") or paper.get("id")
         if not pid or pid in seen_ids:
             continue
         seen_ids.add(pid)
+        deduped_papers.append(paper)
 
+    # Batch encode passages for high-throughput vector similarity
+    sim_scores: list[float] = [0.0] * len(deduped_papers)
+    if embed_model and q_emb is not None and deduped_papers:
+        try:
+            from sentence_transformers import util
+            passages = [
+                f"passage: {p.get('title', '')}. {p.get('abstract', '')[:400]}"
+                for p in deduped_papers
+            ]
+            batch_embs = embed_model.encode(passages, batch_size=len(passages))
+            cos_sims = util.cos_sim(q_emb, batch_embs)[0]
+            sim_scores = [float(s) for s in cos_sims]
+        except Exception as e:
+            logger.warning(f"[Scout Ranker] Failed to compute batch semantic similarity: {e}")
+
+    for idx, paper in enumerate(deduped_papers):
         kw_score, matches = calculate_keyword_score(paper, keywords)
-        
-        # Semantic similarity
-        semantic_sim = 0.0
-        if embed_model and q_emb is not None:
-            try:
-                from sentence_transformers import util
-                passage_text = f"passage: {paper.get('title', '')}. {paper.get('abstract', '')[:400]}"
-                p_emb = embed_model.encode(passage_text)
-                semantic_sim = float(util.cos_sim(q_emb, p_emb)[0][0])
-            except Exception as e:
-                logger.warning(f"[Scout Ranker] Failed to compute semantic similarity: {e}")
+        semantic_sim = sim_scores[idx]
 
         # Combined composite score
         composite_score = kw_score + (semantic_sim * 4.0)

@@ -107,7 +107,7 @@ class Settings:
         default_factory=lambda: os.getenv("DEFAULT_LLM_MODEL", "gemini-3.1-flash-lite")
     )
     FALLBACK_LLM_MODEL: str = field(
-        default_factory=lambda: os.getenv("FALLBACK_LLM_MODEL", "gemini-3-flash-preview")
+        default_factory=lambda: os.getenv("FALLBACK_LLM_MODEL", "gemini-flash-lite-latest")
     )
 
     # Embedding & Retrieval Models
@@ -129,7 +129,7 @@ class Settings:
     TOP_K_RERANK: int = int(os.getenv("TOP_K_RERANK", "5"))
 
     # Data & Storage Paths
-    BASE_DIR: str = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    BASE_DIR: str = field(default_factory=lambda: os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
     CORPUS_PATH: str = field(
         default_factory=lambda: os.getenv(
             "CORPUS_PATH", os.path.join(os.path.dirname(__file__), "..", "data", "corpus.jsonl")

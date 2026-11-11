@@ -60,8 +60,10 @@ class WriterAgent(BaseAgent):
             },
         )
 
+        confidence = "high" if verified_claims else ("medium" if not rejected_claims else "low")
         return {
             "final_report": final_report,
             "written_report_data": report_data,
+            "confidence": confidence,
             "reasoning_trace": [trace],
         }

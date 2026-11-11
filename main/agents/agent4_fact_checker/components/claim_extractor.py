@@ -19,7 +19,7 @@ class ClaimExtractor:
         # Tiếng Việt
         r"\s+(?:đồng thời|ngoài ra|hơn nữa|mặt khác|tuy nhiên|ngược lại)\s+",
         r"(?<=[,;])\s+(?:nhưng|song|mà)\s+",
-        r"\s+(?:mặc dù|dẫu rằng)\s+([^,;]+)[,;]\s*(?:nhưng|song)?\s*",
+        r"\s+(?:mặc dù|dẫu rằng)\s+(?:[^,;]+)[,;]\s*(?:nhưng|song)?\s*",
         # Tiếng Anh
         r"\s+(?:furthermore|additionally|moreover|on the other hand|however|nevertheless)\s+",
         r"(?<=[,;])\s+(?:but|yet|while|whereas)\s+",
@@ -101,8 +101,9 @@ class ClaimExtractor:
             if len(cleaned) < self.min_claim_length:
                 continue
 
-            if cleaned.endswith("?") or cleaned.endswith("!"):
+            if cleaned.endswith("?"):
                 continue
+            cleaned = cleaned.rstrip("!").strip()
 
             # 2. Tách câu mức độ 2: Phân rã câu ghép phức
             atomic_clauses = self._decompose_complex_sentence(cleaned)
