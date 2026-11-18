@@ -104,6 +104,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.on_event("startup")
+def _sync_existing_uploads_on_startup():
+    try:
+        db.sync_uploads_to_db(settings.UPLOAD_DIR)
+    except Exception as exc:
+        logger.warning(f"[Startup Sync] Failed to sync uploads: {exc}")
+
+
 @app.get('/health')
 @app.get('/api/health')
 def health_check():
@@ -341,7 +349,7 @@ async def set_remote_url(req: SetRemoteUrlRequest):
 
         import httpx
 
-        async with httpx.AsyncClient(timeout=2.0) as client:
+        async with httpx.AsyncClient(timeout=6.0) as client:
 
             resp = await client.get(f"{new_url}/health")
 
@@ -395,7 +403,7 @@ async def test_remote_url():
 
         import httpx
 
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=8.0) as client:
 
             resp = await client.get(f"{url}/health")
 
@@ -1309,6 +1317,7 @@ def seed_demo_documents():
 def reindex_documents():
     import time
     start_time = time.perf_counter()
+    db.sync_uploads_to_db(settings.UPLOAD_DIR)
     docs = db.list_documents()
     from core.tools import clear_pdf_cache, load_or_parse_selected_pdf
     from agents.agent1_retrieval.tools.fts5_search import SQLiteFTS5Searcher

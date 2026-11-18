@@ -1143,6 +1143,11 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!scoutRes.ok) throw new Error("HTTP " + scoutRes.status);
         const scoutData = await scoutRes.json();
 
+        if (scoutData.session_id) {
+          state.activeSessionId = scoutData.session_id;
+          localStorage.setItem("researchdesk_active_session", scoutData.session_id);
+        }
+
         // Tự động làm mới Kho Tài Liệu ở Sidebar bên trái
         await loadDocuments();
         // Tự động cập nhật ngay Lịch Sử Nghiên Cứu để đoạn tin nhắn tìm kiếm mới nhất xếp ngay đầu danh sách
@@ -3240,27 +3245,52 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  let kaggleFailCount = 0;
+
   async function checkKaggleStatus() {
     try {
       const res = await fetch("/api/config/remote-url/test");
       const data = await res.json();
       const isOnline = Boolean(data.is_online);
-      state.isKaggleOnline = isOnline;
-      const activeMode = (data.active_mode || (data.raw_health && data.raw_health.active_mode) || "").toLowerCase();
-      isGpuMaxActive = Boolean(isOnline && activeMode === "gpu_max");
-      if (isOnline && kaggleStatusBadge) {
-        kaggleStatusBadge.textContent = "Online";
-        kaggleStatusBadge.className = "kaggle-status-badge online";
-      } else if (kaggleStatusBadge) {
+      if (isOnline) {
+        kaggleFailCount = 0;
+        state.isKaggleOnline = true;
+        const activeMode = (data.active_mode || (data.raw_health && data.raw_health.active_mode) || "").toLowerCase();
+        isGpuMaxActive = Boolean(activeMode === "gpu_max");
+        if (kaggleStatusBadge) {
+          kaggleStatusBadge.textContent = "Online";
+          kaggleStatusBadge.className = "kaggle-status-badge online";
+        }
+        updateGpuMutualExclusionUI(isGpuMaxActive);
+        updateModelOptionsAvailability(true, state.isGeminiOnline, state.isOllamaOnline);
+        return true;
+      }
+
+      kaggleFailCount += 1;
+      if (state.isKaggleOnline && kaggleFailCount < 3) {
+        return true;
+      }
+
+      state.isKaggleOnline = false;
+      isGpuMaxActive = false;
+      if (kaggleStatusBadge) {
         kaggleStatusBadge.textContent = "Offline";
         kaggleStatusBadge.className = "kaggle-status-badge";
       }
-      updateGpuMutualExclusionUI(isGpuMaxActive);
-      updateModelOptionsAvailability(isOnline, state.isGeminiOnline, state.isOllamaOnline);
-      return isOnline;
+      updateGpuMutualExclusionUI(false);
+      updateModelOptionsAvailability(false, state.isGeminiOnline, state.isOllamaOnline);
+      return false;
     } catch (e) {
+      kaggleFailCount += 1;
+      if (state.isKaggleOnline && kaggleFailCount < 3) {
+        return true;
+      }
       state.isKaggleOnline = false;
       isGpuMaxActive = false;
+      if (kaggleStatusBadge) {
+        kaggleStatusBadge.textContent = "Offline";
+        kaggleStatusBadge.className = "kaggle-status-badge";
+      }
       updateGpuMutualExclusionUI(false);
       updateModelOptionsAvailability(false, state.isGeminiOnline, state.isOllamaOnline);
       return false;

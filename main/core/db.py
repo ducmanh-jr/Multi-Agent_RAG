@@ -381,6 +381,69 @@ def delete_document(doc_id: str) -> bool:
     return deleted
 
 
+def sync_uploads_to_db(upload_dir: Optional[str] = None) -> int:
+    """Register any PDF/TXT/MD files in upload_dir that are missing from the documents table."""
+    import hashlib
+    import re
+
+    target_dir = upload_dir or settings.UPLOAD_DIR
+    if not target_dir or not os.path.isdir(target_dir):
+        return 0
+
+    existing_paths = {
+        os.path.abspath(d.get("path", "")).lower()
+        for d in list_documents()
+        if d.get("path")
+    }
+    existing_ids = {d.get("id") for d in list_documents() if d.get("id")}
+
+    added = 0
+    allowed_exts = {".pdf", ".txt", ".md"}
+    for fname in sorted(os.listdir(target_dir)):
+        if fname.startswith("."):
+            continue
+        full_path = os.path.join(target_dir, fname)
+        if not os.path.isfile(full_path):
+            continue
+        ext = os.path.splitext(fname)[1].lower()
+        if ext not in allowed_exts:
+            continue
+        norm_path = os.path.abspath(full_path).lower()
+        if norm_path in existing_paths:
+            continue
+
+        m = re.match(r"^(doc_[0-9a-fA-F]{8})_(.+)$", fname)
+        if m:
+            doc_id = m.group(1)
+            display_name = m.group(2)
+        else:
+            doc_id = f"doc_{hashlib.sha1(fname.encode('utf-8')).hexdigest()[:10]}"
+            display_name = fname
+
+        if doc_id in existing_ids:
+            doc_id = f"doc_{hashlib.sha1(norm_path.encode('utf-8')).hexdigest()[:10]}"
+
+        try:
+            size = os.path.getsize(full_path)
+            save_document(
+                doc_id=doc_id,
+                name=display_name,
+                path=full_path,
+                size=size,
+                doc_type=ext.lstrip("."),
+                metadata={"restored_from_uploads": True},
+            )
+            existing_paths.add(norm_path)
+            existing_ids.add(doc_id)
+            added += 1
+        except Exception as exc:
+            logger.warning(f"[DB Sync] Failed to register '{fname}': {exc}")
+
+    if added:
+        logger.info(f"[DB Sync] Restored {added} document(s) from '{target_dir}' into workspace.db.")
+    return added
+
+
 
 
 

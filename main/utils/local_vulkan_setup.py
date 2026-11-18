@@ -102,7 +102,7 @@ def probe_ollama_models(base_url: Optional[str] = None, timeout: float = 1.8) ->
     }
 
 
-def probe_kaggle_worker(remote_url: Optional[str] = None, timeout: float = 1.2) -> dict[str, Any]:
+def probe_kaggle_worker(remote_url: Optional[str] = None, timeout: float = 5.0) -> dict[str, Any]:
     """Checks if the remote Kaggle GPU Worker (Multi-LoRA or vLLM 32B) is online."""
     url = (remote_url or settings.REMOTE_INFERENCE_URL or "").rstrip("/")
     if not url:
@@ -112,11 +112,16 @@ def probe_kaggle_worker(remote_url: Optional[str] = None, timeout: float = 1.2) 
         resp = httpx.get(f"{url}/health", timeout=timeout)
         if resp.status_code == 200:
             data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
-            adapters = data.get("adapters") or ["router", "generator", "critic"]
-            model_name = str(data.get("model") or data.get("base_model") or "")
+            worker_health = data.get("worker_health") if isinstance(data.get("worker_health"), dict) else {}
+            adapters = data.get("adapters") or worker_health.get("loaded_adapters") or ["router", "generator", "critic"]
+            model_name = str(data.get("model") or data.get("base_model") or worker_health.get("model") or "")
             is_32b = "32b" in model_name.lower() or "qwq" in model_name.lower() or "qwen3-32b" in model_name.lower()
-            pipeline = str(data.get("pipeline") or "")
-            is_gpu_finetune = (pipeline == "gpu_finetune_7_models") or ("writer" in adapters) or ("qwen_cluster" in str(data.get("active_models", [])))
+            pipeline = str(data.get("pipeline") or worker_health.get("pipeline") or data.get("active_mode") or "")
+            is_gpu_finetune = (
+                pipeline in ("gpu_finetune_7_models", "gpu_finetune")
+                or ("writer" in adapters)
+                or ("qwen_cluster" in str(data.get("active_models", [])))
+            )
             return {
                 "online": True,
                 "url": url,
