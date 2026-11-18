@@ -86,7 +86,7 @@ class GPUFinetuneSummarizerAgent(BaseAgent):
                     fallback_prompt=gen_prompt,
                     fallback_system=TRAINING_LAB_GENERATOR_SYSTEM_PROMPT,
                     adapter="generator",
-                    timeout=min(15.0, float(self.settings.REMOTE_TIMEOUT_SECONDS or 90.0)),
+                    timeout=float(self.settings.REMOTE_TIMEOUT_SECONDS or 90.0),
                 )
                 gen_out = SummarizerGeneratorOutput.from_dict(gen_dict, default_query=clean_q)
                 current_answer = gen_out.answer
@@ -112,7 +112,7 @@ class GPUFinetuneSummarizerAgent(BaseAgent):
                         fallback_prompt=f"Question: {clean_q}\nContext:\n{context_str}\nAnswer:\n{current_answer}\nClaims: {critic_claims}",
                         fallback_system=TRAINING_LAB_CRITIC_SYSTEM_PROMPT,
                         adapter="critic",
-                        timeout=min(25.0, float(self.settings.REMOTE_TIMEOUT_SECONDS or 90.0)),
+                        timeout=float(self.settings.REMOTE_TIMEOUT_SECONDS or 90.0),
                     )
                     critic_out = SummarizerCriticOutput.from_dict(critic_dict)
                     critic_action = critic_out.action

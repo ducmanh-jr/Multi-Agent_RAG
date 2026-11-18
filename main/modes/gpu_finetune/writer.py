@@ -79,7 +79,7 @@ class GPUFinetuneWriterAgent(BaseAgent):
                     fallback_prompt=prompt,
                     fallback_system=WRITER_TRAINING_SYSTEM_PROMPT,
                     adapter="writer",
-                    timeout=min(15.0, float(self.settings.REMOTE_TIMEOUT_SECONDS or 90.0)),
+                    timeout=float(self.settings.REMOTE_TIMEOUT_SECONDS or 90.0),
                 )
                 if isinstance(res, dict) and res.get("report"):
                     final_report = res["report"]
