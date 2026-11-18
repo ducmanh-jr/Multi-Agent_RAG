@@ -1,0 +1,168 @@
+[
+  {
+    "doc": "Báo Hà Nội mới ra số đầu tiên (1)",
+    "question": "Báo Thủ đô - tiền thân của báo Hà Nội mới ra số hằng ngày đầu tiên vào ngày tháng năm nào?",
+    "ground_truth": "Báo Thủ đô ra số hằng ngày đầu tiên vào ngày 24.10.1957.",
+    "rag_status": "completed",
+    "elapsed_s": 43.6,
+    "evidence_count": 3,
+    "entity_coverage": 1.0,
+    "matched_entities": [
+      "24.10.1957",
+      "Báo Thủ đô",
+      "tiền thân",
+      "Hà Nội mới"
+    ],
+    "missing_entities": [],
+    "answer_snippet": "# Báo cáo Nghiên cứu: Báo Thủ đô - tiền thân của báo Hà Nội mới ra số hằng ngày đầu tiên vào ngày tháng năm nào?  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]   > **Câu trả lời Trực tiếp:** **Dựa trên tài liệu đã chọn (**Báo Hà Nội mới ra số đầu tiên (1)**):**  ---  ## 1..."
+  },
+  {
+    "doc": "Báo Hà Nội mới ra số đầu tiên (1)",
+    "question": "Trong những năm đầu hoạt động, Báo Thủ đô tập trung phản ánh những nội dung gì?",
+    "ground_truth": "Báo tập trung phản ánh đời sống chính trị, kinh tế, văn hóa và xã hội của thành phố; tuyên truyền chủ trương, chính sách của Đảng, Nhà nước; cổ vũ phong trào thi đua lao động sản xuất.",
+    "rag_status": "completed",
+    "elapsed_s": 30.2,
+    "evidence_count": 0,
+    "entity_coverage": 0.75,
+    "matched_entities": [
+      "chính trị",
+      "kinh tế",
+      "văn hóa"
+    ],
+    "missing_entities": [
+      "lao động sản xuất"
+    ],
+    "answer_snippet": "# Báo cáo Nghiên cứu: Trong những năm đầu hoạt động, Báo Thủ đô tập trung phản ánh những nội dung gì?  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]   > **Câu trả lời Trực tiếp:** **Trong những năm đầu hoạt động, Báo Thủ đô tập trung phản ánh toàn diện đời sống chính trị,..."
+  },
+  {
+    "doc": "Báo Hà Nội mới ra số đầu tiên (1)",
+    "question": "Vào ngày 24/10/1945, sự kiện lịch sử quốc tế quan trọng nào đã diễn ra?",
+    "ground_truth": "Ngày 24/10/1945, Hiến chương Liên Hợp Quốc chính thức có hiệu lực, đánh dấu sự ra đời của tổ chức Liên Hợp Quốc (UN).",
+    "rag_status": "completed",
+    "elapsed_s": 9.4,
+    "evidence_count": 4,
+    "entity_coverage": 0.33,
+    "matched_entities": [
+      "24/10/1945"
+    ],
+    "missing_entities": [
+      "Hiến chương Liên Hợp Quốc",
+      "Liên Hợp Quốc"
+    ],
+    "answer_snippet": "# Báo cáo Nghiên cứu: Vào ngày 24/10/1945, sự kiện lịch sử quốc tế quan trọng nào đã diễn ra?  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]   > **Câu trả lời Trực tiếp:** **Dựa trên tài liệu đã chọn (**Báo Hà Nội mới ra số đầu tiên (1)**):**  ---  ## 1. Tóm tắt Tổng quan..."
+  },
+  {
+    "doc": "Báo Hà Nội mới ra số đầu tiên (1)",
+    "question": "Mục tiêu thành lập của Liên Hợp Quốc là gì?",
+    "ground_truth": "Duy trì hòa bình và an ninh quốc tế, thúc đẩy quan hệ hữu nghị giữa các quốc gia, tăng cường hợp tác giải quyết những vấn đề kinh tế, xã hội, văn hóa và nhân đạo.",
+    "rag_status": "completed",
+    "elapsed_s": 16.6,
+    "evidence_count": 0,
+    "entity_coverage": 1.0,
+    "matched_entities": [
+      "hòa bình",
+      "an ninh quốc tế",
+      "hữu nghị",
+      "hợp tác"
+    ],
+    "missing_entities": [],
+    "answer_snippet": "# Báo cáo Nghiên cứu: Mục tiêu thành lập của Liên Hợp Quốc là gì?  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]   > **Câu trả lời Trực tiếp:** **Theo tài liệu nguồn, Liên Hợp Quốc được thành lập với các mục tiêu chính sau đây: 1. Duy trì hòa bình và an ninh quốc tế, đồng..."
+  },
+  {
+    "doc": "Báo Hà Nội mới ra số đầu tiên (1)",
+    "question": "Bài báo Báo Hà Nội mới ra số đầu tiên nói về những chủ đề chính nào?",
+    "ground_truth": "Bài báo nói về kỷ niệm ngày báo Thủ đô (tiền thân của Hà Nội mới) ra số đầu tiên ngày 24.10.1957 và điểm lại các sự kiện lịch sử đáng chú ý diễn ra cùng ngày 24.10 trên thế giới như sự thành lập Liên Hợp Quốc.",
+    "rag_status": "completed",
+    "elapsed_s": 7.3,
+    "evidence_count": 1,
+    "entity_coverage": 0.33,
+    "matched_entities": [
+      "Hà Nội mới"
+    ],
+    "missing_entities": [
+      "24.10.1957",
+      "Liên Hợp Quốc"
+    ],
+    "answer_snippet": "# Báo cáo Nghiên cứu: Bài báo Báo Hà Nội mới ra số đầu tiên nói về những chủ đề chính nào?  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]   > **Câu trả lời Trực tiếp:** **Trong những năm đầu hoạt động, Báo Thủ đô (tiền thân của Báo Hà Nội mới) tập trung vào các chủ đề chí..."
+  },
+  {
+    "doc": "Thường trực Hội đồng nhân dân thành phố Hà Nội tổ chức phiên chất vấn về lĩnh vực môi trường (1)",
+    "question": "Phiên chất vấn về lĩnh vực môi trường của Thường trực HĐND TP Hà Nội diễn ra vào thời gian nào và kết nối tới bao nhiêu điểm cầu?",
+    "ground_truth": "Diễn ra vào sáng ngày 22/10/2026 và được kết nối trực tuyến đến 126 điểm cầu các xã, phường.",
+    "rag_status": "completed",
+    "elapsed_s": 31.0,
+    "evidence_count": 1,
+    "entity_coverage": 0.67,
+    "matched_entities": [
+      "126 điểm cầu",
+      "xã, phường"
+    ],
+    "missing_entities": [
+      "22/10/2026"
+    ],
+    "answer_snippet": "# Báo cáo Nghiên cứu: Phiên chất vấn về lĩnh vực môi trường của Thường trực HĐND TP Hà Nội diễn ra vào thời gian nào và kết nối tới bao nhiêu điểm cầu?  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]   > **Câu trả lời Trực tiếp:** **Phiên chất vấn về lĩnh vực môi trường củ..."
+  },
+  {
+    "doc": "Thường trực Hội đồng nhân dân thành phố Hà Nội tổ chức phiên chất vấn về lĩnh vực môi trường (1)",
+    "question": "Nội dung chất vấn tập trung vào năm nhóm vấn đề bức xúc nào?",
+    "ground_truth": "Năm nhóm vấn đề gồm: Quy hoạch và nguồn lực bảo vệ môi trường; quản lý chất thải rắn sinh hoạt; chất thải rắn xây dựng; chất thải rắn y tế; và chất lượng môi trường không khí.",
+    "rag_status": "completed",
+    "elapsed_s": 5.2,
+    "evidence_count": 1,
+    "entity_coverage": 1.0,
+    "matched_entities": [
+      "chất thải rắn",
+      "không khí",
+      "quy hoạch"
+    ],
+    "missing_entities": [],
+    "answer_snippet": "# Báo cáo Nghiên cứu: Nội dung chất vấn tập trung vào năm nhóm vấn đề bức xúc nào?  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]   > **Câu trả lời Trực tiếp:** **Nội dung phiên chất vấn của Thường trực Hội đồng nhân dân thành phố Hà Nội tập trung vào năm nhóm vấn đề bức ..."
+  },
+  {
+    "doc": "Thường trực Hội đồng nhân dân thành phố Hà Nội tổ chức phiên chất vấn về lĩnh vực môi trường (1)",
+    "question": "Phạm vi thời gian được chất vấn tại phiên họp là từ thời điểm nào?",
+    "ground_truth": "Phạm vi chất vấn từ ngày 1/7/2025 đến nay và các vấn đề phát sinh trước đó chưa được giải quyết dứt điểm.",
+    "rag_status": "completed",
+    "elapsed_s": 53.9,
+    "evidence_count": 2,
+    "entity_coverage": 0.0,
+    "matched_entities": [],
+    "missing_entities": [
+      "1/7/2025",
+      "chưa được giải quyết dứt điểm"
+    ],
+    "answer_snippet": "# Báo cáo Nghiên cứu: Phạm vi thời gian được chất vấn tại phiên họp là từ thời điểm nào?  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]   > **Câu trả lời Trực tiếp:** **Dựa trên tài liệu đã chọn (**Thường trực Hội đồng nhân dân thành phố Hà Nội tổ chức phiên chất vấn về l..."
+  },
+  {
+    "doc": "Thường trực Hội đồng nhân dân thành phố Hà Nội tổ chức phiên chất vấn về lĩnh vực môi trường (1)",
+    "question": "Chủ tịch HĐND thành phố Hà Nội Phùng Thị Hồng Hà đề nghị tập trung làm rõ 3 nội dung trọng tâm nào?",
+    "ground_truth": "Ba nội dung gồm: Đánh giá đúng thực trạng, làm rõ nguyên nhân và trách nhiệm; làm rõ trách nhiệm và điều kiện thực hiện nhiệm vụ của từng cấp, từng ngành; phát huy những kết quả tích cực, xác định giải pháp và trách nhiệm thực hiện.",
+    "rag_status": "completed",
+    "elapsed_s": 7.3,
+    "evidence_count": 1,
+    "entity_coverage": 1.0,
+    "matched_entities": [
+      "thực trạng",
+      "nguyên nhân",
+      "trách nhiệm",
+      "giải pháp"
+    ],
+    "missing_entities": [],
+    "answer_snippet": "# Báo cáo Nghiên cứu: Chủ tịch HĐND thành phố Hà Nội Phùng Thị Hồng Hà đề nghị tập trung làm rõ 3 nội dung trọng tâm nào?  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]   > **Câu trả lời Trực tiếp:** **Để phiên chất vấn đi vào những vấn đề thiết thực, Chủ tịch Hội đồng nh..."
+  },
+  {
+    "doc": "Thường trực Hội đồng nhân dân thành phố Hà Nội tổ chức phiên chất vấn về lĩnh vực môi trường (1)",
+    "question": "Đại biểu Nguyễn Thị Diễm Hằng xuất hiện trong bài báo với vai trò gì?",
+    "ground_truth": "Đại biểu Nguyễn Thị Diễm Hằng tham gia đặt câu hỏi chất vấn tại nghị trường trong phiên chất vấn.",
+    "rag_status": "completed",
+    "elapsed_s": 4.2,
+    "evidence_count": 1,
+    "entity_coverage": 1.0,
+    "matched_entities": [
+      "Đại biểu Nguyễn Thị Diễm Hằng",
+      "chất vấn tại nghị trường"
+    ],
+    "missing_entities": [],
+    "answer_snippet": "# Báo cáo Nghiên cứu: Đại biểu Nguyễn Thị Diễm Hằng xuất hiện trong bài báo với vai trò gì?  > **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]   > **Câu trả lời Trực tiếp:** **Trong bài báo, đại biểu Nguyễn Thị Diễm Hằng xuất hiện với vai trò là người đặt câu hỏi chất vấn tại..."
+  }
+]

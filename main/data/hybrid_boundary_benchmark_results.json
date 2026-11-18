@@ -1,0 +1,270 @@
+{
+  "doc_id": "doc_be459a6c",
+  "total_passed": 25,
+  "total_questions": 28,
+  "pass_rate": 89.28571428571429,
+  "avg_time": 53.241679523672374,
+  "category_stats": {
+    "Cross-Lingual Mismatch": {
+      "total": 5,
+      "passed": 5,
+      "time": 248.07573652267456
+    },
+    "Precision & Formulas": {
+      "total": 5,
+      "passed": 4,
+      "time": 304.6262195110321
+    },
+    "Structural Complexity": {
+      "total": 4,
+      "passed": 4,
+      "time": 205.48884868621826
+    },
+    "OOD Traps": {
+      "total": 4,
+      "passed": 3,
+      "time": 199.4546868801117
+    },
+    "Multi-Hop Reasoning": {
+      "total": 3,
+      "passed": 2,
+      "time": 209.541086435318
+    },
+    "Slash Commands": {
+      "total": 3,
+      "passed": 3,
+      "time": 143.71205019950867
+    },
+    "Noisy Queries": {
+      "total": 4,
+      "passed": 4,
+      "time": 179.86839842796326
+    }
+  },
+  "results": [
+    {
+      "idx": 1,
+      "category": "Cross-Lingual Mismatch",
+      "question": "Tầng con nào trong Decoder sử dụng mặt nạ nhân quả (causal masking) để tránh nhìn trước các vị trí tương lai?",
+      "passed": true,
+      "elapsed": 25.32826852798462,
+      "report_snippet": "# Báo cáo Nghiên cứu: Tầng con nào trong Decoder sử dụng mặt nạ nhân quả (causal masking) để tránh nhìn trước các vị trí tương lai?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Trong kiến trúc Decoder của mô hình Transformer, tầng con sử dụng mặt nạ nhân qu"
+    },
+    {
+      "idx": 2,
+      "category": "Cross-Lingual Mismatch",
+      "question": "Tích vô hướng giữa Query và Key được chuẩn hóa bằng mẫu số nào trong công thức tính trọng số chú ý?",
+      "passed": true,
+      "elapsed": 53.62766647338867,
+      "report_snippet": "# Báo cáo Nghiên cứu: Tích vô hướng giữa Query và Key được chuẩn hóa bằng mẫu số nào trong công thức tính trọng số chú ý?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Trong công thức tính trọng số chú ý của cơ chế Scaled Dot-Product Attention, tích vô hướng"
+    },
+    {
+      "idx": 3,
+      "category": "Cross-Lingual Mismatch",
+      "question": "Lịch trình tốc độ học sử dụng bao nhiêu bước khởi động (warmup steps) và phụ thuộc vào số chiều theo công thức lũy thừa nào?",
+      "passed": true,
+      "elapsed": 47.570773124694824,
+      "report_snippet": "# Báo cáo Nghiên cứu: Lịch trình tốc độ học sử dụng bao nhiêu bước khởi động (warmup steps) và phụ thuộc vào số chiều theo công thức lũy thừa nào?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Lịch trình tốc độ học (learning rate schedule) trong mô hình sử d"
+    },
+    {
+      "idx": 4,
+      "category": "Cross-Lingual Mismatch",
+      "question": "Kỹ thuật làm mịn nhãn (label smoothing) phân bổ xác suất sai lệch với giá trị epsilon_ls bằng bao nhiêu?",
+      "passed": true,
+      "elapsed": 48.61699652671814,
+      "report_snippet": "# Báo cáo Nghiên cứu: Kỹ thuật làm mịn nhãn (label smoothing) phân bổ xác suất sai lệch với giá trị epsilon_ls bằng bao nhiêu?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Trong quá trình huấn luyện mô hình, kỹ thuật làm mịn nhãn (label smoothing) được áp d"
+    },
+    {
+      "idx": 5,
+      "category": "Cross-Lingual Mismatch",
+      "question": "Cơ chế kết nối tàn dư (residual connection) và chuẩn hóa lớp (layer normalization) được áp dụng quanh mỗi tầng con theo công thức nào?",
+      "passed": true,
+      "elapsed": 72.9320318698883,
+      "report_snippet": "# Báo cáo Nghiên cứu: Cơ chế kết nối tàn dư (residual connection) và chuẩn hóa lớp (layer normalization) được áp dụng quanh mỗi tầng con theo công thức nào?\n\n> **Trạng thái Thẩm định:** [`NOT_FOUND_IN_DOCUMENT`]  \n> **Câu trả lời Trực tiếp:** **Cơ chế kết nối tàn dư (residual connection) và chuẩn hó"
+    },
+    {
+      "idx": 6,
+      "category": "Precision & Formulas",
+      "question": "Theo công thức (1) trong bài báo, hãy viết lại chính xác công thức toán học của Scaled Dot-Product Attention?",
+      "passed": true,
+      "elapsed": 44.53968548774719,
+      "report_snippet": "# Báo cáo Nghiên cứu: Theo công thức (1) trong bài báo, hãy viết lại chính xác công thức toán học của Scaled Dot-Product Attention?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Theo công thức (1) trong bài báo, ma trận đầu ra của Scaled Dot-Product Attentio"
+    },
+    {
+      "idx": 7,
+      "category": "Precision & Formulas",
+      "question": "Trong mô hình Base, hãy cho biết chính xác bộ giá trị các siêu tham số: số lớp N, số chiều d_model, số chiều d_ff, số đầu h và tỷ lệ dropout?",
+      "passed": true,
+      "elapsed": 51.58323264122009,
+      "report_snippet": "# Báo cáo Nghiên cứu: Trong mô hình Base, hãy cho biết chính xác bộ giá trị các siêu tham số: số lớp N, số chiều d_model, số chiều d_ff, số đầu h và tỷ lệ dropout?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Trong mô hình Base của kiến trúc Transformer, bộ"
+    },
+    {
+      "idx": 8,
+      "category": "Precision & Formulas",
+      "question": "Trong mô hình Big, số chiều của Query/Key (d_k) và Value (d_v) là bao nhiêu khi d_model = 1024 và h = 16?",
+      "passed": true,
+      "elapsed": 58.689550161361694,
+      "report_snippet": "# Báo cáo Nghiên cứu: Trong mô hình Big, số chiều của Query/Key (d_k) và Value (d_v) là bao nhiêu khi d_model = 1024 và h = 16?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Trong mô hình Transformer bản lớn (big), khi thiết lập số chiều tổng thể $d_{model} "
+    },
+    {
+      "idx": 9,
+      "category": "Precision & Formulas",
+      "question": "Trong Bảng 2, tổng chi phí tính toán huấn luyện (FLOPs) của Transformer (big) ước tính là bao nhiêu?",
+      "passed": true,
+      "elapsed": 73.8911521434784,
+      "report_snippet": "# Báo cáo Nghiên cứu: Trong Bảng 2, tổng chi phí tính toán huấn luyện (FLOPs) của Transformer (big) ước tính là bao nhiêu?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Dựa trên Bảng 2 trong tài liệu, tổng chi phí tính toán huấn luyện (FLOPs) ước tính của mô"
+    },
+    {
+      "idx": 10,
+      "category": "Precision & Formulas",
+      "question": "Giá trị bước sóng (wavelengths) của hàm sin và cos trong Positional Encoding biến thiên trong phạm vi hình học nào?",
+      "passed": false,
+      "elapsed": 75.92259907722473,
+      "report_snippet": ""
+    },
+    {
+      "idx": 11,
+      "category": "Structural Complexity",
+      "question": "Dựa trên Bảng 1 (Table 1), độ phức tạp tính toán trên mỗi lớp (Complexity per Layer) của Self-Attention so với Recurrent là bao nhiêu?",
+      "passed": true,
+      "elapsed": 55.72020888328552,
+      "report_snippet": "# Báo cáo Nghiên cứu: Dựa trên Bảng 1 (Table 1), độ phức tạp tính toán trên mỗi lớp (Complexity per Layer) của Self-Attention so với Recurrent là bao nhiêu?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Dựa trên Bảng 1 (Table 1) của tài liệu, độ phức tạp tín"
+    },
+    {
+      "idx": 12,
+      "category": "Structural Complexity",
+      "question": "Số lượng phép toán tuần tự tối thiểu (Sequential Operations) của Self-Attention so với Recurrent trong Table 1 là bao nhiêu?",
+      "passed": true,
+      "elapsed": 51.628708600997925,
+      "report_snippet": "# Báo cáo Nghiên cứu: Số lượng phép toán tuần tự tối thiểu (Sequential Operations) của Self-Attention so với Recurrent trong Table 1 là bao nhiêu?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Theo Bảng 1 (Table 1) trong tài liệu, số lượng phép toán tuần tự "
+    },
+    {
+      "idx": 13,
+      "category": "Structural Complexity",
+      "question": "Độ dài đường dẫn tối đa (Maximum Path Length) giữa hai vị trí bất kỳ trong Self-Attention là bao nhiêu so với Convolutional layer?",
+      "passed": true,
+      "elapsed": 45.505086183547974,
+      "report_snippet": "# Báo cáo Nghiên cứu: Độ dài đường dẫn tối đa (Maximum Path Length) giữa hai vị trí bất kỳ trong Self-Attention là bao nhiêu so với Convolutional layer?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Trong cơ chế Self-Attention, độ dài đường dẫn tối đa (Maxim"
+    },
+    {
+      "idx": 14,
+      "category": "Structural Complexity",
+      "question": "Khi nào cơ chế Self-Attention (restricted) được đề xuất và kích thước vùng lân cận r giúp giảm độ phức tạp xuống mức nào?",
+      "passed": true,
+      "elapsed": 52.63484501838684,
+      "report_snippet": "# Báo cáo Nghiên cứu: Khi nào cơ chế Self-Attention (restricted) được đề xuất và kích thước vùng lân cận r giúp giảm độ phức tạp xuống mức nào?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Cơ chế Self-Attention giới hạn (restricted) được đề xuất nhằm cải th"
+    },
+    {
+      "idx": 15,
+      "category": "OOD Traps",
+      "question": "Bài báo Attention Is All You Need đề xuất sử dụng Rotary Position Embedding (RoPE) hay ALiBi như thế nào?",
+      "passed": false,
+      "elapsed": 75.87959027290344,
+      "report_snippet": ""
+    },
+    {
+      "idx": 16,
+      "category": "OOD Traps",
+      "question": "Mô hình Transformer được tối ưu bằng thuật toán AdamW và kỹ thuật FlashAttention trong phần thực nghiệm ra sao?",
+      "passed": true,
+      "elapsed": 37.461148738861084,
+      "report_snippet": "# Báo cáo Nghiên cứu: Mô hình Transformer được tối ưu bằng thuật toán AdamW và kỹ thuật FlashAttention trong phần thực nghiệm ra sao?\n\n> **Trạng thái Thẩm định:** [`NOT_FOUND_IN_DOCUMENT`]  \n> **Câu trả lời Trực tiếp:** **Dựa trên các bài báo/tài liệu hiện có trong hệ thống, thông tin về \"Mô hình Tr"
+    },
+    {
+      "idx": 17,
+      "category": "OOD Traps",
+      "question": "Bài báo đề cập đến việc áp dụng mô hình Transformer cho bài toán thị giác máy tính Vision Transformer (ViT) ở trang nào?",
+      "passed": true,
+      "elapsed": 61.816282510757446,
+      "report_snippet": "# Báo cáo Nghiên cứu: Bài báo đề cập đến việc áp dụng mô hình Transformer cho bài toán thị giác máy tính Vision Transformer (ViT) ở trang nào?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Dựa trên các bài báo/tài liệu hiện có trong hệ thống, thông tin về \"B"
+    },
+    {
+      "idx": 18,
+      "category": "OOD Traps",
+      "question": "Tập dữ liệu ImageNet có được sử dụng để tiền huấn luyện hoặc kiểm thử mô hình trong bài báo này không?",
+      "passed": true,
+      "elapsed": 24.29766535758972,
+      "report_snippet": "# Báo cáo Nghiên cứu: Tập dữ liệu ImageNet có được sử dụng để tiền huấn luyện hoặc kiểm thử mô hình trong bài báo này không?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Dựa trên các bài báo/tài liệu hiện có trong hệ thống, thông tin về \"Tập dữ liệu ImageNe"
+    },
+    {
+      "idx": 19,
+      "category": "Multi-Hop Reasoning",
+      "question": "Tại sao tác giả lại giả thuyết rằng với giá trị d_k lớn, phép nhân vô hướng giữa Q và K lại dẫn đến hiện tượng triệt tiêu gradient ở hàm Softmax?",
+      "passed": true,
+      "elapsed": 61.77000331878662,
+      "report_snippet": "# Báo cáo Nghiên cứu: Tại sao tác giả lại giả thuyết rằng với giá trị d_k lớn, phép nhân vô hướng giữa Q và K lại dẫn đến hiện tượng triệt tiêu gradient ở hàm Softmax?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Tác giả giả thuyết rằng với giá trị $d_k$ lớ"
+    },
+    {
+      "idx": 20,
+      "category": "Multi-Hop Reasoning",
+      "question": "Tại sao tác giả lại lựa chọn hàm Positional Encoding dạng Sin và Cosine thay vì sử dụng Positional Embedding được học qua tham số?",
+      "passed": true,
+      "elapsed": 71.89562273025513,
+      "report_snippet": "# Báo cáo Nghiên cứu: Tại sao tác giả lại lựa chọn hàm Positional Encoding dạng Sin và Cosine thay vì sử dụng Positional Embedding được học qua tham số?\n\n> **Trạng thái Thẩm định:** [`NOT_FOUND_IN_DOCUMENT`]  \n> **Câu trả lời Trực tiếp:** **Tác giả lựa chọn hàm positional encoding dạng sin và cosine"
+    },
+    {
+      "idx": 21,
+      "category": "Multi-Hop Reasoning",
+      "question": "Tại sao việc loại bỏ hoàn toàn cơ chế hồi quy (recurrence) lại cho phép mô hình Transformer huấn luyện song song hóa vượt trội?",
+      "passed": false,
+      "elapsed": 75.87546038627625,
+      "report_snippet": ""
+    },
+    {
+      "idx": 22,
+      "category": "Slash Commands",
+      "question": "/deep-dive Hãy phân tích chi tiết cơ chế Multi-Head Attention và làm rõ 3 cách sử dụng khác nhau của nó trong kiến trúc Encoder-Decoder?",
+      "passed": true,
+      "elapsed": 49.62990403175354,
+      "report_snippet": "# Báo cáo Nghiên cứu: /deep-dive Hãy phân tích chi tiết cơ chế Multi-Head Attention và làm rõ 3 cách sử dụng khác nhau của nó trong kiến trúc Encoder-Decoder?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Cơ chế Multi-Head Attention cho phép mô hình cùng lúc"
+    },
+    {
+      "idx": 23,
+      "category": "Slash Commands",
+      "question": "/summarize Tóm tắt ngắn gọn các đóng góp kỹ thuật chính và kết quả điểm BLEU đạt được của bài báo",
+      "passed": true,
+      "elapsed": 48.52582502365112,
+      "report_snippet": "# Báo cáo Nghiên cứu: /summarize Tóm tắt ngắn gọn các đóng góp kỹ thuật chính và kết quả điểm BLEU đạt được của bài báo\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Bài báo đề xuất **mô hình mạng Transformer** hoàn toàn dựa trên cơ chế chú ý (attention mech"
+    },
+    {
+      "idx": 24,
+      "category": "Slash Commands",
+      "question": "/cross-compare Hãy lập bảng so sánh chi tiết giữa cơ chế Self-Attention và Recurrent về độ phức tạp và khả năng song song hóa",
+      "passed": true,
+      "elapsed": 45.556321144104004,
+      "report_snippet": "# Báo cáo Nghiên cứu: /cross-compare Hãy lập bảng so sánh chi tiết giữa cơ chế Self-Attention và Recurrent về độ phức tạp và khả năng song song hóa\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Cơ chế Self-Attention và cơ chế Recurrent có sự khác biệt rõ rệt"
+    },
+    {
+      "idx": 25,
+      "category": "Noisy Queries",
+      "question": "lr schedule transformer dung bn buoc warmup vay?",
+      "passed": true,
+      "elapsed": 39.40987968444824,
+      "report_snippet": "# Báo cáo Nghiên cứu: lr schedule transformer dung bn buoc warmup vay?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Trong mô hình Transformer, lịch trình tốc độ học (learning rate schedule) sử dụng tổng cộng **4.000 bước warmup** (warmup_steps = 4000) [doc_"
+    },
+    {
+      "idx": 26,
+      "category": "Noisy Queries",
+      "question": "d_model va d_ff cua ban base la bao nhiu",
+      "passed": true,
+      "elapsed": 64.64531826972961,
+      "report_snippet": "# Báo cáo Nghiên cứu: d_model va d_ff cua ban base la bao nhiu\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Đối với mô hình Transformer bản cơ sở (base model), kích thước ẩn **d_model** là 512 và kích thước lớp ẩn chuyển tiếp **d_ff** là 2048 [1].**\n\n---\n\n#"
+    },
+    {
+      "idx": 27,
+      "category": "Noisy Queries",
+      "question": "bleu score wmt 2014 tieng anh sang tieng duc cua ban big dat bn?",
+      "passed": true,
+      "elapsed": 39.39224171638489,
+      "report_snippet": "# Báo cáo Nghiên cứu: bleu score wmt 2014 tieng anh sang tieng duc cua ban big dat bn?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Điểm số BLEU cho nhiệm vụ dịch máy WMT 2014 từ tiếng Anh sang tiếng Đức của mô hình lớn (Transformer big) đạt được là **28.4*"
+    },
+    {
+      "idx": 28,
+      "category": "Noisy Queries",
+      "question": "transformer base train tren may con gpu va mat bao nhieu gio?",
+      "passed": true,
+      "elapsed": 36.42095875740051,
+      "report_snippet": "# Báo cáo Nghiên cứu: transformer base train tren may con gpu va mat bao nhieu gio?\n\n> **Trạng thái Thẩm định:** [`ANSWERED_DIRECT_QUOTE`]  \n> **Câu trả lời Trực tiếp:** **Mô hình Transformer (nói chung) có khả năng đạt chất lượng dịch xuất sắc sau khi được huấn luyện trong thời gian ngắn chỉ **12 g"
+    }
+  ]
+}

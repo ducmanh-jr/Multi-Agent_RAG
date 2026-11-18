@@ -1,0 +1,37 @@
+# Python Bytecode & Environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+
+# Testing & OS
+.pytest_cache/
+.DS_Store
+Thumbs.db
+
+# Local SQLite runtime databases
+main/data/*.db
+main/data/*.sqlite*
+main/*.db
+*.zip
+
+# Files strictly exceeding GitHub's 100MB single-file limit (Base Embedding & LayoutLMv3 480MB)
+main/models/multilingual-e5-small/model.safetensors
+**/layoutlmv3_doclaynet_model/model.safetensors
+training_lab/agent2_reader/weights/model.safetensors
+main/modes/kaggle_fn/weights/
+main/weights/
+
+# Training lab checkpoints and large model binaries (>100MB)
+training_lab/finish/
+**/checkpoints/
+*.pt
+training_lab/agent4_fact_checker/weights/model.safetensors
+training_lab/agent3_summarizer/weights/**/*.safetensors
+
+training_lab/agent5_writer/weights/adapter_model.safetensors
+training_lab/agent5_writer/weights/ref/
+training_lab/agent5_writer/weights/sft_checkpoints/
+
+training_lab/final_weights/
