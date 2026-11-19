@@ -76,7 +76,6 @@ document.addEventListener("DOMContentLoaded", () => {
     checkedDocIds: new Set(),
     docSelectMode: false,
     activeRunId: null,
-    currentEvidence: [],
     autoScout: false,
     isKaggleOnline: false,
     isGeminiOnline: true,
@@ -497,7 +496,6 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     state.activeRunId = null;
     state.activeSessionId = null;
-    state.currentEvidence = [];
     state.selectedDocId = null;
     localStorage.removeItem("researchdesk_active_run");
     localStorage.removeItem("researchdesk_active_session");
@@ -1388,6 +1386,8 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!rawAction) return "Đang xử lý...";
     const text = String(rawAction).trim();
     const actionMap = {
+      "agent_handoff": "Đã gửi yêu cầu bổ sung",
+      "agent_handoff_received": "Đã nhận yêu cầu bổ sung",
       "bypass_discovery": "Bỏ qua trinh sát (tài liệu đã có sẵn trong kho)",
       "gpu_ft_retrieval_completed": "Truy hồi tài liệu khoa học hoàn tất",
       "gpu_ft_reading_completed": "Đọc hiểu cấu trúc văn bản & BBox hoàn tất",
@@ -1442,10 +1442,13 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!lastTrace) {
       return { badge: "SUPERVISOR", text: "Đang phân tích mục tiêu & phân rã câu hỏi nghiên cứu..." };
     }
-    const action = (lastTrace.action || "").toLowerCase();
-    const agent = (lastTrace.agent || lastTrace.node || "").toLowerCase();
+    const action = String(lastTrace.action || "").toLowerCase();
+    const agent = String(lastTrace.agent || lastTrace.node || "").toLowerCase();
     const s = `${action} ${agent}`;
 
+    if ((action === "agent_handoff" || action === "agent_handoff_received") && lastTrace.recipient) {
+      return { badge: formatAgentBadge(lastTrace.recipient), text: "Đang xử lý yêu cầu bổ sung..." };
+    }
     if (s.includes("supervisor") || s.includes("phân tích mục tiêu") || s.includes("router")) {
       return { badge: "RETRIEVAL", text: "Đang truy hồi tài liệu khoa học đa tầng (FTS5 + BM25)..." };
     }
@@ -1471,7 +1474,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const traceBox = messageCard.querySelector("#tracesContent");
     if (!traceBox) return;
 
-    const traces = (data && data.reasoning_trace) ? data.reasoning_trace : [];
+    const traces = data?.reasoning_trace ?? data?.data?.handoffs ?? [];
     const runIsDone = isCompleted || (data && (data.status === "completed" || data.status === "failed"));
     const now = performance.now();
     const baseStart = startTime || messageCard._startTime || now;
@@ -1493,8 +1496,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // 1. Render all COMPLETED steps from traces (with checkmark and real duration)
     traces.forEach((t, idx) => {
-      const rawAction = t.action || "Đang xử lý...";
-      const action = formatActionText(rawAction);
+      const rawAction = String(t.action || "Đang xử lý...");
+      const handoffMessage = (rawAction === "agent_handoff" || rawAction === "agent_handoff_received")
+        ? (t.message || data?.events?.[idx]?.message) : null;
+      const action = handoffMessage || formatActionText(rawAction);
       let badge = "SUPERVISOR";
 
       if (rawAction.includes("Phân tích") || rawAction.includes("mục tiêu") || t.stage === "Thought") {
@@ -1532,7 +1537,7 @@ document.addEventListener("DOMContentLoaded", () => {
             <span class="node-badge">${escapeHtml(badge)}</span>
             <span class="node-text">${escapeHtml(action)}</span>
           </div>
-          <div class="node-time">${durationStr}</div>
+          <div class="node-time">${escapeHtml(durationStr)}</div>
         </div>
       `;
     });
@@ -1809,19 +1814,6 @@ document.addEventListener("DOMContentLoaded", () => {
     container.innerHTML = "";
     container.appendChild(card);
 
-    // Sync sidecar evidence when clicking on the message card or its citations
-    card.addEventListener("click", () => {
-      if (evidence && evidence.length) {
-        state.currentEvidence = evidence;
-        updateSidecarEvidence(evidence);
-      }
-    });
-
-    // Inline citation badges are delegated centrally on messageFeed to prevent double-firing race conditions.
-    if (evidence) {
-      state.currentEvidence = evidence;
-    }
-
     // Bind event for view document buttons (open side-by-side in sidecar)
     card.querySelectorAll(".view-scout-doc-btn").forEach(btn => {
       btn.addEventListener("click", async (e) => {
@@ -1866,10 +1858,50 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // ==================== 6. RENDER FINAL ANSWER ====================
+  function appendAnswerFigures(container, figures) {
+    if (!container || !Array.isArray(figures)) return;
+    for (const ref of figures) {
+      if (!ref || typeof ref.document_id !== "string" || !ref.document_id
+          || /[/\\]/.test(ref.document_id) || /^\.{1,2}$/.test(ref.document_id)
+          || !/^[\w-]+$/.test(ref.figure_id || "")
+          || !Number.isSafeInteger(ref.page) || ref.page < 1) continue;
+      const base = "/api/documents/" + encodeURIComponent(ref.document_id);
+      const src = base + "/figures/" + encodeURIComponent(ref.figure_id);
+      const figure = document.createElement("figure");
+      figure.className = "answer-figure";
+      const img = document.createElement("img");
+      img.alt = ref.caption || ref.label || "Hình trích từ tài liệu";
+      img.loading = "lazy";
+      img.addEventListener("error", () => {
+        img.hidden = true;
+        const message = document.createElement("span");
+        message.textContent = "Không tải được hình gốc.";
+        figure.prepend(message);
+      }, { once: true });
+      img.src = src;
+
+      const caption = document.createElement("figcaption");
+      const title = ref.caption || ref.label;
+      if (title) caption.append(document.createTextNode(title + " "));
+      const pageLink = document.createElement("a");
+      pageLink.href = base + "/file#page=" + ref.page;
+      pageLink.target = "_blank";
+      pageLink.rel = "noopener noreferrer";
+      pageLink.textContent = (ref.document_name || "PDF") + " · Trang " + ref.page;
+      caption.append(pageLink);
+      figure.append(img, caption);
+      container.append(figure);
+    }
+  }
+
   function renderFinalAnswer(messageCard, data, query, finalElapsed = null) {
     if (!messageCard) return;
     const container = messageCard.querySelector(".agent-response-container");
     if (!container) return;
+    const rawEvidence = data?.result?.evidence ?? data?.evidence ?? data?.evidence_spans;
+    const evidence = Array.isArray(rawEvidence) ? rawEvidence : [];
+    const citations = readCitationReferences(data, evidence);
+    const figures = data?.result?.figures ?? data?.figures;
 
     try {
       const acc = messageCard.querySelector(".thinking-accordion");
@@ -1891,13 +1923,11 @@ document.addEventListener("DOMContentLoaded", () => {
             <span class="thinking-label-completed">Thought for</span>
             ${timeStr ? `<span class="thinking-timer">${timeStr}</span>` : ""}
             <span class="thinking-task-sep">•</span>
-            <span class="thinking-task-text">5 bước suy luận & đối soát hoàn tất${modeSuffix}</span>
+            <span class="thinking-task-text">Đã hoàn tất xử lý và đối soát${modeSuffix}</span>
           `;
         }
       }
 
-      const evidence = (data && data.evidence && data.evidence.length ? data.evidence : null) || (data && data.result && data.result.evidence) || (data && data.evidence_spans) || [];
-      state.currentEvidence = evidence;
       try { updateSidecarEvidence(evidence); } catch (e) { console.warn("updateSidecarEvidence:", e); }
 
       const report = (data && (data.report || data.final_report || (data.result && data.result.report))) || "";
@@ -1912,21 +1942,10 @@ document.addEventListener("DOMContentLoaded", () => {
               .trim();
             reportPane.innerHTML = `
               <div class="sidecar-report-content report-markdown-view">
-                ${renderMarkdown(cleanReportForSidecar, evidence)}
+                ${renderMarkdown(cleanReportForSidecar, citations)}
               </div>
             `;
-            reportPane.querySelectorAll(".inline-citation-badge").forEach(btn => {
-              btn.addEventListener("click", (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                const evIdx = parseInt(btn.dataset.ev, 10);
-                const ev = (!isNaN(evIdx) && evidence && evidence[evIdx]) ? evidence[evIdx] : null;
-                const pageNo = (ev && (ev.page || ev.page_no)) || btn.dataset.page || 1;
-                const targetDocId = btn.dataset.doc || (ev && (ev.doc_id || ev.document_id)) || state.selectedDocId;
-                const quote = (ev && (ev.quote || ev.text)) || btn.title || "";
-                jumpToPdfPage(pageNo, targetDocId, quote);
-              });
-            });
+            appendAnswerFigures(reportPane.firstElementChild, figures);
           } catch (e) { console.warn("sidecarReportPane render:", e); }
         }
       }
@@ -1959,31 +1978,8 @@ document.addEventListener("DOMContentLoaded", () => {
         }
       }
 
-      // Helper to sanitize document names
-      function cleanTitle(str) {
-        if (!str) return "Tài liệu";
-        return str.replace(/^(?:gemini|doc)_[a-f0-9]+_/i, "")
-                  .replace(/^(?:gemini|doc)_/i, "")
-                  .replace(/\.(?:pdf|md|txt)$/i, "")
-                  .replace(/_/g, " ").trim();
-      }
-
-      const docObj = (state.documents && state.documents.find(d => d.id === state.selectedDocId)) || (state.documents && state.documents[0]);
-      const rawDocName = docObj ? (docObj.name || docObj.id) : "Tài liệu";
-      const cleanDoc = cleanTitle(rawDocName);
-      const shortDocName = cleanDoc.length > 22 ? cleanDoc.slice(0, 20) + "..." : cleanDoc;
-
-      // Build bottom inline citation list if evidence spans exist
-      let citationBadgesHtml = "";
-      if (evidence && evidence.length > 0) {
-        citationBadgesHtml = evidence.slice(0, 4).map((ev, i) => {
-          const pNum = ev.page || ev.page_no || 1;
-          const rawEvDocId = ev.doc_id || ev.document_id || (docObj ? docObj.id : "");
-          const evDocClean = rawEvDocId ? cleanTitle(rawEvDocId) : shortDocName;
-          const badgeLabel = evDocClean.length > 18 ? evDocClean.slice(0, 16) + "..." : evDocClean;
-          return `<button class="inline-citation-badge" data-ev="${i}" data-page="${pNum}" data-doc="${escapeHtml(rawEvDocId)}" title="${escapeHtml(ev.quote || '')}">${escapeHtml(badgeLabel)} • Trang ${pNum}</button>`;
-        }).join(" ");
-      }
+      const citationBadgesHtml = Array.from(citations.values()).filter(Boolean).slice(0, 4)
+        .map(citation => renderCitationButton(citation)).join(" ");
 
       // Split dual reports (Academic Report & Audit Ledger)
       let academicReportMd = report;
@@ -2009,7 +2005,7 @@ document.addEventListener("DOMContentLoaded", () => {
         <!-- Chatbot AI Primary Answer -->
         <div class="chatbot-answer-container" style="display:flex; flex-direction:column; width:100%;">
           <div class="chatbot-answer-body" style="font-size:14.5px; line-height:1.7; color:#18181b;">
-            ${renderMarkdown(mainAnswer, evidence)}
+            ${renderMarkdown(mainAnswer, citations)}
           </div>
 
           ${citationBadgesHtml ? `
@@ -2034,9 +2030,6 @@ document.addEventListener("DOMContentLoaded", () => {
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
               </button>
             </div>
-            <div class="chat-action-right">
-              <span class="model-footprint-badge" style="font-size:11px; color:#a1a1aa; background:#f4f4f5; padding:3px 8px; border-radius:12px;">5 Agents Verified</span>
-            </div>
           </div>
 
           <!-- Collapsible Dual Academic Report & Audit Ledger -->
@@ -2045,7 +2038,6 @@ document.addEventListener("DOMContentLoaded", () => {
               <button class="academic-collapse-toggle" id="academicToggleBtn" title="Bấm để mở hoặc đóng báo cáo">
                 <svg class="toggle-arrow" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>
                 <span class="toggle-main-title">Báo cáo Học thuật &amp; Sổ cái Đối soát</span>
-                <span class="toggle-status-badge">100% Verified</span>
               </button>
 
               <div class="academic-actions-toolbar">
@@ -2074,14 +2066,14 @@ document.addEventListener("DOMContentLoaded", () => {
               <!-- Tab Pane 1: Full Academic Report -->
               <div class="report-pane-container" id="paneAcademicReport" style="display:block;">
                 <div class="academic-content-inner report-markdown-view">
-                  ${renderMarkdown(academicReportMd, evidence)}
+                  ${renderMarkdown(academicReportMd, citations)}
                 </div>
               </div>
 
               <!-- Tab Pane 2: Audit Ledger -->
               <div class="report-pane-container" id="paneAuditLedger" style="display:none;">
                 <div class="academic-content-inner report-markdown-view">
-                  ${renderMarkdown(auditLedgerMd, evidence)}
+                  ${renderMarkdown(auditLedgerMd, citations)}
                 </div>
               </div>
             </div>
@@ -2090,6 +2082,7 @@ document.addEventListener("DOMContentLoaded", () => {
       `;
 
       // Collapsible toggle handler
+      appendAnswerFigures(card.querySelector(".chatbot-answer-body"), figures);
       const toggleBtn = card.querySelector("#academicToggleBtn");
       const contentDiv = card.querySelector("#academicContent");
       const arrowSvg = card.querySelector(".toggle-arrow");
@@ -2221,12 +2214,6 @@ document.addEventListener("DOMContentLoaded", () => {
         });
       }
 
-      // State & sidecar evidence update (clicks are delegated globally on messageFeed)
-      if (evidence) {
-        state.currentEvidence = evidence;
-        try { updateSidecarEvidence(evidence); } catch (_) {}
-      }
-
       container.appendChild(card);
       card.scrollIntoView({ behavior: "smooth", block: "nearest" });
     } catch (err) {
@@ -2237,11 +2224,12 @@ document.addEventListener("DOMContentLoaded", () => {
       fallbackCard.innerHTML = `
         <div class="chatbot-answer-container" style="padding:14px; background:#ffffff; border-radius:8px; line-height:1.6;">
           <div class="chatbot-answer-body">
-            ${renderMarkdown(fallbackText, [])}
+            ${renderMarkdown(fallbackText, citations)}
           </div>
         </div>
       `;
       container.appendChild(fallbackCard);
+      appendAnswerFigures(fallbackCard.querySelector(".chatbot-answer-body"), figures);
       fallbackCard.scrollIntoView({ behavior: "smooth", block: "nearest" });
     }
   }
@@ -2259,7 +2247,8 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     sidecarEvidenceList.innerHTML = evidence.map((ev, idx) => {
-      const pageNum = ev.page || ev.page_no || 1;
+      const rawPage = Number(ev.page ?? ev.page_no);
+      const pageNum = Number.isSafeInteger(rawPage) && rawPage > 0 ? rawPage : null;
       const quoteStr = ev.quote || ev.text || '';
       let matchScore = 100;
       if (typeof ev.score === 'number' && !isNaN(ev.score)) {
@@ -2271,7 +2260,7 @@ document.addEventListener("DOMContentLoaded", () => {
         <div class="evidence-card-mono" data-idx="${idx}">
           <div class="ev-header">
             <span class="ev-badge-mono">${matchScore}% Khớp</span>
-            <span class="ev-page">Trang ${pageNum}</span>
+            <span class="ev-page">${pageNum ? `Trang ${pageNum}` : "Chưa xác định trang"}</span>
           </div>
           <div class="ev-quote">“${escapeHtml(quoteStr)}”</div>
         </div>
@@ -2282,10 +2271,11 @@ document.addEventListener("DOMContentLoaded", () => {
       card.addEventListener("click", () => {
         const idx = card.dataset.idx;
         const ev = evidence[idx];
-        const pageNum = ev ? (ev.page || ev.page_no || 1) : 1;
-        const docId = ev ? (ev.doc_id || ev.document_id || state.selectedDocId) : state.selectedDocId;
-        const quote = ev ? (ev.quote || ev.text || "") : "";
-        jumpToPdfPage(pageNum, docId, quote);
+        const pageNum = Number(ev?.page ?? ev?.page_no);
+        const docId = ev?.document_id || ev?.doc_id;
+        if (docId && Number.isSafeInteger(pageNum) && pageNum > 0) {
+          jumpToPdfPage(pageNum, docId, ev.quote || ev.text || "", { exactDocument: true });
+        }
       });
     });
   }
@@ -2576,12 +2566,16 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // ==================== JUMP TO EXACT PDF PAGE ====================
-  async function jumpToPdfPage(pageNo = 1, docId = null, highlightText = null) {
+  async function jumpToPdfPage(pageNo = 1, docId = null, highlightText = null, { exactDocument = false } = {}) {
+    let targetDoc = exactDocument ? state.documents.find(doc => doc.id === docId) : resolveTargetDocument(docId);
+    if (exactDocument && !targetDoc) {
+      await loadDocuments();
+      targetDoc = state.documents.find(doc => doc.id === docId);
+    }
+    if (!targetDoc) return;
+
     openSidecar();
     switchSidecarTab("pdfViewerTab");
-
-    const targetDoc = resolveTargetDocument(docId);
-    if (!targetDoc) return;
 
     state.selectedDocId = targetDoc.id;
     const p = Math.max(1, parseInt(pageNo, 10) || 1);
@@ -2597,7 +2591,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const docFileUrl = `/api/documents/${encodeURIComponent(targetDoc.id)}/file`;
     const openExtBtn = document.getElementById("openExternalPdfBtn");
     if (openExtBtn) {
-      openExtBtn.href = `${targetDoc.source_url || docFileUrl}#page=${p}`;
+      const externalUrl = exactDocument ? docFileUrl : (targetDoc.source_url || docFileUrl);
+      openExtBtn.href = `${externalUrl}#page=${p}`;
       openExtBtn.title = `Mở tài liệu tại Trang ${p} trong tab mới`;
       openExtBtn.style.display = "inline-flex";
     }
@@ -3738,8 +3733,46 @@ document.addEventListener("DOMContentLoaded", () => {
       .replace(/'/g, "&#039;");
   }
 
+  function readCitationReferences(data, evidence) {
+    const source = data?.result?.citation_references ?? data?.citation_references;
+    const citations = new Map();
+    if (!source || typeof source !== "object") return citations;
+
+    const evidenceById = new Map(evidence.filter(span => span?.id).map(span => [span.id, span]));
+    const documentsById = new Map(state.documents.map(doc => [doc.id, doc]));
+    const listFormat = Array.isArray(source);
+    for (const [key, ref] of Object.entries(source)) {
+      const refId = Number(ref?.ref_id ?? (listFormat ? undefined : key));
+      const documentId = ref?.document_id;
+      const page = Number(ref?.page);
+      if (!Number.isSafeInteger(refId) || refId < 1 || !Number.isSafeInteger(page) || page < 1 ||
+          typeof documentId !== "string" || !documentId.trim()) continue;
+      if (citations.has(refId)) {
+        citations.set(refId, null);
+        continue;
+      }
+
+      const span = evidenceById.get(ref.evidence_id);
+      const match = (span?.document_id === documentId || span?.doc_id === documentId) &&
+        Number(span.page ?? span.page_no) === page;
+      const doc = documentsById.get(documentId);
+      const name = doc?.name || doc?.title || ref.filename || documentId;
+      citations.set(refId, { documentId, page, name, quote: match ? (span.quote || span.text || "") : "" });
+    }
+    return citations;
+  }
+
+  function renderCitationButton({ documentId, page, name, quote }, marker = "") {
+    const shortName = name.length > 20 ? name.slice(0, 18) + "..." : name;
+    return `<button type="button" class="inline-citation-badge" data-doc="${escapeHtml(documentId)}" data-page="${page}" data-quote="${escapeHtml(quote)}" title="Mở ${escapeHtml(name)} tại trang ${page}">${marker}${escapeHtml(shortName)} • Trang ${page}</button>`;
+  }
+
+  function renderUnverifiedCitation(marker) {
+    return `<span title="Trích dẫn chưa xác minh">${marker}</span>`;
+  }
+
   // Enhanced Markdown Renderer with Code Blocks, Lists & Blockquotes
-  function renderMarkdown(md, evidence = []) {
+  function renderMarkdown(md, citations) {
     if (!md) return "";
     let text = md.trim();
 
@@ -3791,27 +3824,8 @@ document.addEventListener("DOMContentLoaded", () => {
     html = html.replace(/([a-z0-9à-ỹ\.\)\]\>])[ \t]*([0-9]+\.\s+(?:\*\*|<strong>|[A-ZÀ-ỸĐ]))/gi, '$1\n\n$2');
     html = html.replace(/([a-z0-9à-ỹ\.\)\]\>])[ \t]+([-\*•]\s+)/gi, '$1\n$2');
 
-    // 6. Citations [1], [2], [doc...]
-    // Normalize [u1] -> [1] and [1, 2] -> [1] [2]
-    html = html.replace(/\[u(\d+)\]/g, "[$1]");
-    html = html.replace(/\[(\d+(?:\s*,\s*\d+)+)\]/g, (m, nums) => nums.split(',').map(n => `[${n.trim()}]`).join(' '));
-    html = html.replace(/\[(\d+)\](?:\s*(?:<em>)?\(\s*Trang\s*\d+\s*\)(?:<\/em>)?)?/gi, (match, num) => {
-      const evIdx = parseInt(num, 10) - 1;
-      const ev = (evidence && evidence[evIdx]) ? evidence[evIdx] : null;
-      const docName = (ev && (ev.filename || ev.document_id || ev.doc_id)) || "Tài liệu";
-      const shortName = docName.length > 20 ? docName.slice(0, 18) + "..." : docName;
-      const pageNum = (ev && (ev.page || ev.page_no)) ? (ev.page || ev.page_no) : "";
-      const pageInfo = pageNum ? ` • Trang ${pageNum}` : "";
-      const docAttr = (ev && (ev.document_id || ev.doc_id)) ? ` data-doc="${escapeHtml(ev.document_id || ev.doc_id)}"` : "";
-      const pageAttr = pageNum ? ` data-page="${pageNum}"` : "";
-      return `<button class="inline-citation-badge" data-ev="${evIdx}"${pageAttr}${docAttr} title="Nhấn để mở và nhảy đến Trang ${pageNum || 1} của tài liệu">[${num}] ${escapeHtml(shortName)}${pageInfo}</button>`;
-    });
-
-    // 6b. Clean up trailing periods & smart paragraph spacing after citations without destroying newlines
+    // 6. Clean up extra whitespace before punctuation without destroying newlines
     html = html.replace(/[ \t]+([,\.])/g, '$1');
-    html = html.replace(/(<\/button>)[ \t]*\.[ \t]*(?!\n)/g, '$1. ');
-    html = html.replace(/(<\/button>)[ \t]*\.[ \t]*\n/g, '$1.\n');
-    html = html.replace(/(<\/button>[ \t]*\.)[ \t]+(?=[A-ZÀ-ỸĐ])/g, '$1\n\n');
 
     // 7. Structured List Parsing with Lookahead & Tag Symmetry
     const lines = html.split(/\r?\n/);
@@ -3886,7 +3900,23 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     closeCurrentList();
 
-    return processedLines.join("\n");
+    // Replace markers after Markdown rendering so citation metadata stays intact.
+    return processedLines.join("\n").replace(
+      /<code\b[^>]*>[\s\S]*?<\/code>|(\\?)\[(u?\d+(?:[ \t]*,[ \t]*u?\d+)*)\](?:[ \t]*(?:<em>)?\([ \t]*Trang[ \t]*(\d+)[ \t]*\)(?:<\/em>)?)?/gi,
+      (match, escaped, markers, statedPage) => {
+        if (!markers) return match;
+        if (escaped) return renderUnverifiedCitation(match.slice(1));
+        const ids = markers.split(",").map(marker => marker.trim());
+        if (statedPage && (ids.length !== 1 || citations.get(Number(ids[0]))?.page !== Number(statedPage))) {
+          return renderUnverifiedCitation(match);
+        }
+        if (!ids.some(id => citations.get(Number(id)))) return renderUnverifiedCitation(match);
+        return ids.map(id => {
+          const citation = citations.get(Number(id));
+          return citation ? renderCitationButton(citation, `[${id}] `) : renderUnverifiedCitation(`[${id}]`);
+        }).join(" ");
+      }
+    );
   }
 
   document.addEventListener("keydown", (e) => {
@@ -3906,23 +3936,19 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // ==================== 11. INITIALIZATION & SESSION RESTORE ====================
   
-  // Global Click Delegation on messageFeed for all citation & page badges
+  function handleCitationClick(event) {
+    const button = event.target.closest(".inline-citation-badge");
+    if (!button) return false;
+    event.preventDefault();
+    event.stopPropagation();
+    jumpToPdfPage(button.dataset.page, button.dataset.doc, button.dataset.quote, { exactDocument: true });
+    return true;
+  }
+
+  document.getElementById("sidecarReportPane")?.addEventListener("click", handleCitationClick);
   if (messageFeed) {
     messageFeed.addEventListener("click", (e) => {
-      const citeBtn = e.target.closest(".inline-citation-badge");
-      if (citeBtn) {
-        e.preventDefault();
-        e.stopPropagation();
-        const pNum = citeBtn.dataset.page || 1;
-        const dId = citeBtn.dataset.doc || state.selectedDocId;
-        const evIdx = parseInt(citeBtn.dataset.ev, 10);
-        let quote = citeBtn.title || "";
-        if (!isNaN(evIdx) && state.currentEvidence && state.currentEvidence[evIdx]) {
-          quote = state.currentEvidence[evIdx].quote || quote;
-        }
-        jumpToPdfPage(pNum, dId, quote);
-        return;
-      }
+      if (handleCitationClick(e)) return;
 
       const pageBtn = e.target.closest(".inline-page-badge");
       if (pageBtn) {

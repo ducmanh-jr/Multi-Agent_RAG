@@ -49,10 +49,13 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 
 from fastapi.staticfiles import StaticFiles
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 
+from api.citations import citation_references, format_run_evidence, pin_citation_documents
+from api.figures import answer_figures, pin_answer_figures
+from core.citation_audit import claim_text, get_citation_audit, published_claim_id
 from core.config import settings
 
 from core.graph import build_research_rag_graph
@@ -181,7 +184,7 @@ class CreateRunRequest(BaseModel):
     profile: Optional[str] = "balanced"
     model: Optional[str] = None
     mode: Optional[str] = None
-    max_iterations: Optional[int] = 2
+    max_iterations: Optional[int] = Field(default=2, ge=0)
     chat_history: Optional[list[dict[str, str]]] = None
     session_id: Optional[str] = None
 
@@ -316,6 +319,7 @@ def set_execution_mode(req: SetModeRequest):
     if norm_mode not in valid_modes and req.mode not in valid_modes:
         raise HTTPException(status_code=400, detail="Chế độ không hợp lệ")
     settings.EXECUTION_MODE = norm_mode
+    set_current_graph(build_research_rag_graph(mode=norm_mode))
     update_env_file("EXECUTION_MODE", norm_mode)
     return get_config()
 
@@ -448,6 +452,7 @@ async def remote_switch_gpu_mode(req: RemoteSwitchModeRequest):
             if resp.status_code == 200:
                 data = resp.json()
                 settings.EXECUTION_MODE = target
+                set_current_graph(build_research_rag_graph(mode=target))
                 update_env_file("EXECUTION_MODE", target)
                 return {
                     "status": "success",
@@ -1216,6 +1221,21 @@ def get_document_file(doc_id: str):
     return FileResponse(file_path, filename=name or "document", media_type=media_type, content_disposition_type="inline")
 
 
+@app.get("/api/documents/{doc_id}/figures/{figure_id}")
+def get_document_figure(doc_id: str, figure_id: str):
+    from core.pdf_figures import render_pdf_figure
+
+    doc = db.get_document(doc_id)
+    path = (doc or {}).get("path") or ""
+    if not doc or doc["id"] != doc_id or not path.lower().endswith(".pdf") or not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="Source PDF not found")
+    try:
+        png = render_pdf_figure(path, figure_id)
+    except (KeyError, OSError, ValueError, RuntimeError):
+        raise HTTPException(status_code=404, detail="Figure not found in the current PDF")
+    return Response(png, media_type="image/png", headers={"Cache-Control": "private, max-age=3600"})
+
+
 
 
 
@@ -1538,6 +1558,34 @@ def get_upload_status(upload_id: str):
 
 
 
+_HANDOFF_ACTIONS = {"agent_handoff", "agent_handoff_received"}
+_HANDOFF_ROLES = {
+    "retrieval": "Retrieval",
+    "reader": "Reader",
+    "summarizer": "Summarizer",
+    "fact_checker": "Fact Checker",
+}
+_HANDOFF_REASONS = {
+    "unread_chunks": "Cần đọc thêm đoạn đã truy hồi",
+    "missing_evidence": "Cần tìm thêm bằng chứng",
+    "revise_draft": "Cần sửa bản nháp",
+    "revise_rejected_claims": "Cần sửa nhận định bị bác bỏ",
+}
+
+
+def _trace_message(trace: dict[str, Any]) -> str:
+    action = str(trace.get("action") or "Xử lý thành công")
+    if action not in _HANDOFF_ACTIONS:
+        return action
+    sender = _HANDOFF_ROLES.get(str(trace.get("sender")), "Tác tử gửi")
+    recipient = _HANDOFF_ROLES.get(str(trace.get("recipient")), "tác tử nhận")
+    if action == "agent_handoff_received":
+        return f"{recipient} đã nhận yêu cầu từ {sender}"
+    reason = _HANDOFF_REASONS.get(str(trace.get("reason")))
+    message = f"{sender} gửi yêu cầu đến {recipient}"
+    return f"{message}. {reason}." if reason else message
+
+
 # ==================== CHAT SESSIONS (ĐOẠN CHAT) ====================
 
 @app.get("/api/sessions")
@@ -1551,6 +1599,19 @@ def get_chat_session(session_id: str):
     if not sess:
         raise HTTPException(status_code=404, detail="Session not found.")
     runs = db.get_session_runs(session_id)
+    documents = db.list_documents() if runs else []
+    for run in runs:
+        spans = run.get("evidence_spans") or []
+        traces = run.get("reasoning_trace") or []
+        references = citation_references(traces, spans, documents)
+        run["citation_references"] = references
+        run["figures"] = answer_figures(traces)
+        run["evidence"] = format_run_evidence(spans, references)
+        run["reasoning_trace"] = [
+            {**entry, "message": _trace_message(entry)}
+            if isinstance(entry, dict) and entry.get("action") in _HANDOFF_ACTIONS else entry
+            for entry in traces
+        ]
     return {"session": sess, "runs": runs}
 
 
@@ -1609,8 +1670,10 @@ def get_run_status(run_id: str):
     events = []
 
     traces = run_record.get("reasoning_trace") or []
+    review_round = 1
 
     for seq, t in enumerate(traces, start=1):
+        review_round = max(review_round, (t.get("retry_count") or 0) + 1)
 
         raw_agent = str(t.get("agent") or t.get("node") or "orchestrator").lower()
 
@@ -1644,13 +1707,13 @@ def get_run_status(run_id: str):
 
             "sequence": seq,
 
-            "round": t.get("retry_count", 0) + 1,
+            "round": review_round,
 
             "agent": ag,
 
             "status": "completed",
 
-            "message": t.get("action", "Xử lý thành công"),
+            "message": _trace_message(t),
 
             "details": t,
 
@@ -1676,72 +1739,31 @@ def get_run_status(run_id: str):
 
 
 
+        audit = get_citation_audit(traces)
+        references = citation_references(traces, spans, db.list_documents()) if audit.get("references") else []
         checks_list = []
-
         claims_list = []
-
-        for i, c in enumerate(v_claims, start=1):
-
-            claim_text = c.get("claim", "") if isinstance(c, dict) else str(c)
-
-            verdict = "supported" if (isinstance(c, dict) and c.get("status") == "support") else "insufficient"
-
+        for i, claim in enumerate(v_claims, start=1):
+            fields = claim if isinstance(claim, dict) else {"text": str(claim)}
+            claim_id = published_claim_id(fields, i)
+            supported = str(fields.get("status", "")).lower() in {"support", "supported"}
+            citation_check = audit.get("claims", {}).get(claim_id, {})
             checks_list.append({
-
-                "claim_id": f"claim_{i}",
-
-                "verdict": verdict,
-
-                "explanation": c.get("evidence", "") if isinstance(c, dict) else "Bằng chứng hợp lệ",
-
-                "evidence_ids": [f"ev_{i}"],
-
+                "claim_id": claim_id,
+                "verdict": "supported" if supported else "insufficient",
+                "explanation": fields.get("reason") or fields.get("evidence", ""),
+                "evidence_ids": citation_check.get("evidence_ids", []),
+                "citation_status": citation_check.get("status", "unverified"),
             })
+            claims_list.append({"id": claim_id, "text": claim_text(fields)})
 
-            claims_list.append({"id": f"claim_{i}", "text": claim_text})
+        evidence_list = format_run_evidence(spans, references)
+        retrieved_list = [{"id": item["chunk_id"], "text": item["quote"]} for item in evidence_list]
 
-
-
-        evidence_list = []
-
-        retrieved_list = []
-
-        for i, s in enumerate(spans, start=1):
-
-            quote = s.get("quote", "") if isinstance(s, dict) else str(s)
-
-            doc_id = s.get("doc_id", f"doc_{i}") if isinstance(s, dict) else f"doc_{i}"
-
-            page_no = s.get("page_no", 1) if isinstance(s, dict) else 1
-
-            evidence_list.append({
-
-                "id": f"ev_{i}",
-
-                "document_id": doc_id,
-
-                "filename": doc_id,
-
-                "quote": quote,
-
-                "page": page_no,
-
-                "start": 0,
-
-                "end": len(quote),
-
-                "relevance": "Trích dẫn được xác thực qua NLI và kiểm chứng số",
-
-                "chunk_id": f"ch_{i}",
-
-                "regions": [],
-
-            })
-
-            retrieved_list.append({"id": f"ch_{i}", "text": quote})
-
-
-
+        unresolved = any(t.get("action") == "unresolved_review" for t in traces)
+        stop_reason = "failed" if run_record.get("status") == "failed" else "completed"
+        if unresolved:
+            stop_reason = "unresolved_review"
         result = {
 
             "title": run_record.get("question") or "Báo cáo Nghiên cứu Khoa học",
@@ -1765,6 +1787,9 @@ def get_run_status(run_id: str):
             "rejected_claims": r_claims,
 
             "evidence_spans": spans,
+            "citation_references": references,
+            "figures": answer_figures(traces),
+            "citation_audit": audit,
 
             "reported_claim_count": len(v_claims),
 
@@ -1774,15 +1799,15 @@ def get_run_status(run_id: str):
 
             "elapsed_ms": (max(50, int((datetime.datetime.now() - datetime.datetime.fromisoformat(run_record["created_at"])).total_seconds() * 1000)) if run_record.get("created_at") else 1200),
 
-            "rounds": 1,
+            "rounds": review_round,
 
-            "warnings": [],
+            "warnings": ["Còn nhận định chưa được xác nhận."] if unresolved else [],
 
             "events": events,
 
             "coverage": [],
 
-            "stop_reason": "completed" if run_record.get("status") == "completed" else "budget_exhausted",
+            "stop_reason": stop_reason,
 
         }
 
@@ -1797,6 +1822,8 @@ def get_run_status(run_id: str):
         "report": run_record.get("final_report"),
 
         "evidence": (result or {}).get("evidence", []),
+        "citation_references": (result or {}).get("citation_references", []),
+        "figures": (result or {}).get("figures", []),
 
         "request": {"question": run_record.get("question")},
 
@@ -1887,14 +1914,18 @@ def export_run_report(run_id: str, format: str = "md"):
 
 
     if format == "json":
+        trace = run_record.get("reasoning_trace") or []
+        spans = run_record.get("evidence_spans") or []
         data = {
             "run_id": run_id,
             "question": run_record.get("question"),
             "status": run_record.get("status"),
             "report": report_md,
             "verified_claims": run_record.get("verified_claims") or [],
-            "evidence_spans": run_record.get("evidence_spans") or [],
-            "reasoning_trace": run_record.get("reasoning_trace") or [],
+            "evidence_spans": spans,
+            "citation_references": citation_references(trace, spans, db.list_documents()),
+            "figures": answer_figures(trace),
+            "reasoning_trace": trace,
         }
         return Response(
             content=json.dumps(data, ensure_ascii=False, indent=2),
@@ -2025,14 +2056,15 @@ async def create_run(req: CreateRunRequest):
     elif req.document_id:
         target_doc_ids = [req.document_id]
 
-    pdf_paths: list[str] = []
-    for d_id in target_doc_ids:
+    selected_documents = []
+    for d_id in dict.fromkeys(target_doc_ids):
         doc = db.get_document(d_id)
         if doc and doc.get("path") and os.path.exists(doc.get("path")):
-            pdf_paths.append(doc.get("path"))
+            selected_documents.append(doc)
 
-    if target_doc_ids and pdf_paths:
-        doc_id = target_doc_ids[0]
+    pdf_paths = [doc["path"] for doc in selected_documents]
+    if pdf_paths:
+        doc_id = selected_documents[0]["id"]
         pdf_path = pdf_paths[0]
     else:
         # Nếu người dùng không chọn tài liệu và không có doc_id -> Thông báo rõ ràng
@@ -2073,6 +2105,9 @@ async def create_run(req: CreateRunRequest):
         session_id=req.session_id,
     )
 
+    citation_documents = db.list_documents()
+    requested_mode = req.mode or req.model or settings.EXECUTION_MODE
+
     # Asynchronously execute graph with live per-node streaming and SQLite updates
     async def _async_exec():
         try:
@@ -2082,8 +2117,7 @@ async def create_run(req: CreateRunRequest):
                 from modes.registry import normalize_mode
                 from core.graph import build_research_rag_graph
 
-                raw_mode = req.mode or req.model or settings.EXECUTION_MODE
-                run_mode = normalize_mode(raw_mode)
+                run_mode = normalize_mode(requested_mode)
                 logger.info(f"[RunExecution] Dispatching run {run_id} strictly under mode='{run_mode}'.")
 
                 initial_state = {
@@ -2091,7 +2125,7 @@ async def create_run(req: CreateRunRequest):
                     "pdf_path": pdf_path,
                     "pdf_paths": pdf_paths,
                     "retry_count": 0,
-                    "max_reflection_loops": req.max_iterations or 2,
+                    "max_reflection_loops": 2 if req.max_iterations is None else req.max_iterations,
                     "chat_history": req.chat_history or [],
                     "execution_mode": run_mode,
                 }
@@ -2115,6 +2149,7 @@ async def create_run(req: CreateRunRequest):
                             final_res.update(node_output)
                             new_traces = node_output.get("reasoning_trace")
                             if new_traces:
+                                pin_answer_figures(new_traces, selected_documents, pdf_paths)
                                 for tr in new_traces:
                                     if isinstance(tr, dict):
                                         tr["duration"] = f"{step_duration}s"
@@ -2137,14 +2172,17 @@ async def create_run(req: CreateRunRequest):
             if current_run and current_run.get("status") == "cancelled":
                 return
 
+            evidence_spans = final_res.get("evidence_spans") or []
+            trace = accumulated_traces or final_res.get("reasoning_trace", [])
+            pin_citation_documents(trace, evidence_spans, citation_documents)
             db.update_run_result(
                 run_id=run_id,
                 status="completed",
                 final_report=final_res.get("final_report", ""),
                 verified_claims=final_res.get("verified_claims", []),
                 rejected_claims=final_res.get("rejected_claims", []),
-                evidence_spans=final_res.get("evidence_spans", []),
-                reasoning_trace=accumulated_traces or final_res.get("reasoning_trace", []),
+                evidence_spans=evidence_spans,
+                reasoning_trace=trace,
             )
         except asyncio.CancelledError:
             logger.info(f"[RunCancel] Async task for run {run_id} cancelled.")
@@ -2185,11 +2223,7 @@ async def execute_standalone_scout(req: ScoutRequest):
     if not req.query.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty.")
 
-    from agents.agent0_scout.query_expander import (
-        analyze_intent,
-        generate_search_perspectives,
-        translate_to_academic_english
-    )
+    from agents.agent0_scout.query_expander import analyze_intent
     from agents.agent0_scout.arxiv_client import search_arxiv_papers
     from agents.agent0_scout.paper_ranker import rank_and_select_papers
     from agents.agent0_scout.downloader import download_and_register_paper
@@ -2215,7 +2249,7 @@ async def execute_standalone_scout(req: ScoutRequest):
             "papers": [],
         }
 
-    if decision == "REJECT" and intent.get("reason") in ("empty_query", "empty_or_meaningless"):
+    if decision == "REJECT":
         return {
             "query": user_query,
             "decision": "reject",
@@ -2227,7 +2261,7 @@ async def execute_standalone_scout(req: ScoutRequest):
         }
 
     # 2. NON-STEM / SOCIAL SCIENCES / HISTORY ROUTE: Route to Gemini Academic Explorer
-    if domain == "NON_STEM" or decision == "REJECT":
+    if domain == "NON_STEM":
         logger.info(f"[Standalone Scout] Non-STEM topic detected: '{user_query}'. Routing to Gemini Academic Explorer...")
         gemini_papers = search_gemini_academic_papers(user_query, max_results=req.max_results)
         if gemini_papers:
@@ -2269,14 +2303,14 @@ async def execute_standalone_scout(req: ScoutRequest):
             }
 
     # 3. STEM ROUTE: ArXiv Official SDK with Fast Academic Search
-    academic_query = translate_to_academic_english(user_query)
+    academic_query = intent["academic_query"]
     all_candidates = search_arxiv_papers(academic_query, max_results=req.max_results + 2)
     seen_ids = {p.get("arxiv_id") or p.get("id") for p in all_candidates}
 
     if len(all_candidates) < req.max_results:
-        perspectives = generate_search_perspectives(user_query)
+        perspectives = intent["perspectives"]
         for p in perspectives:
-            p_papers = search_arxiv_papers(p["query"], max_results=2)
+            p_papers = search_arxiv_papers(p["query"], max_results=2, recent=p["angle"] == "Recent")
             for pap in p_papers:
                 pid = pap.get("arxiv_id") or pap.get("id")
                 if pid not in seen_ids:
@@ -2382,6 +2416,11 @@ async def execute_direct_research(req: DirectResearchRequest):
 
     )
 
+    trace = final_state.get("reasoning_trace") or []
+    spans = final_state.get("evidence_spans") or []
+    documents = db.list_documents()
+    selected_paths = [req.pdf_path] if req.pdf_path else final_state.get("pdf_paths") or [final_state.get("pdf_path")]
+    pin_answer_figures(trace, documents, selected_paths)
     return {
 
         "query": req.query,
@@ -2396,11 +2435,13 @@ async def execute_direct_research(req: DirectResearchRequest):
 
         "rejected_claims": final_state.get("rejected_claims", []),
 
-        "evidence_spans": final_state.get("evidence_spans", []),
+        "evidence_spans": spans,
+        "citation_references": citation_references(trace, spans, documents),
+        "figures": answer_figures(trace),
 
         "retrieved_docs": final_state.get("retrieved_docs", []),
 
-        "reasoning_trace": final_state.get("reasoning_trace", []),
+        "reasoning_trace": trace,
 
     }
 
@@ -2425,9 +2466,15 @@ async def execute_research_stream(req: DirectResearchRequest):
             yield f"data: {json.dumps({'event': 'started', 'query': req.query}, ensure_ascii=False)}\n\n"
 
             active_graph = get_current_graph()
+            selected_paths = [req.pdf_path] if req.pdf_path else []
             async for chunk in active_graph.astream(initial_state, stream_mode="updates"):
                 for node_name, node_output in chunk.items():
-                    trace = node_output.get("reasoning_trace", [{}])[-1] if node_output.get("reasoning_trace") else {}
+                    traces = node_output.get("reasoning_trace") or []
+                    if node_name == "scout_node" and not req.pdf_path:
+                        selected_paths = node_output.get("pdf_paths") or [node_output.get("pdf_path")]
+                    if any(entry.get("action") == "answer_figures" for entry in traces):
+                        pin_answer_figures(traces, db.list_documents(), selected_paths)
+                    trace = next((entry for entry in reversed(traces) if entry.get("action") != "citation_audit"), {})
                     event_data = {
                         "event": "node_update",
                         "node": node_name,
@@ -2436,6 +2483,12 @@ async def execute_research_stream(req: DirectResearchRequest):
                             "fact_check_label": node_output.get("fact_check_label"),
                             "retry_count": node_output.get("retry_count"),
                             "partial_answer": node_output.get("answer") or node_output.get("final_report"),
+                            "citation_audit": get_citation_audit(traces),
+                            "figures": answer_figures(traces),
+                            "handoffs": [
+                                {**entry, "message": _trace_message(entry)} for entry in traces
+                                if entry.get("action") in _HANDOFF_ACTIONS
+                            ],
                         },
                     }
                     yield f"data: {json.dumps(event_data, ensure_ascii=False)}\n\n"

@@ -19,6 +19,7 @@ if sys.platform == "win32":
 
 from core.graph import build_research_rag_graph
 from core.config import settings
+from modes.registry import normalize_mode
 
 
 def run_cli(query: str, pdf: str = None, test_retry: bool = False, mode: str = None):
@@ -27,7 +28,7 @@ def run_cli(query: str, pdf: str = None, test_retry: bool = False, mode: str = N
 
     print("\n" + "=" * 60)
     print("KHỞI ĐỘNG HỆ THỐNG MULTI-AGENT RESEARCH RAG")
-    print(f"Chế độ thực thi: {settings.EXECUTION_MODE.upper()}")
+    print(f"Chế độ thực thi: {normalize_mode(mode or settings.EXECUTION_MODE).upper()}")
     print(f"Câu truy vấn: {query}")
     print(f"File PDF kèm theo: {pdf}")
     print("=" * 60 + "\n")
