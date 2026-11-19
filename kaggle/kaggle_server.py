@@ -20,7 +20,7 @@ import os
 import re
 from pathlib import Path
 from typing import Any, Optional, Dict
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import torch
 
@@ -356,10 +356,7 @@ def generate(req: GenerateRequest):
     """Generates completion using Qwen-7B on GPU 0."""
     model, tokenizer = load_generator_model()
     if model is None or tokenizer is None:
-        return {
-            "output": f"[Fallback] {req.prompt[:100]}...",
-            "gpu_used": "cpu_fallback",
-        }
+        raise HTTPException(503, detail="Generator model unavailable")
 
     response_text = _run_inference(
         model, tokenizer,
@@ -380,16 +377,15 @@ def generate(req: GenerateRequest):
 def summarize_generator(req: SummarizeRequest):
     """Specialized Generator endpoint using fine-tuned Generator QLoRA."""
     model, tokenizer = load_generator_model()
-    if model is None:
-        return {
-            "answer": "Tài liệu chứng minh kiến trúc mạng nơ-ron sâu đạt hiệu năng vượt trội.",
-            "evidence_spans": ["Trích dẫn thực nghiệm trong tài liệu."],
-        }
+    if model is None or tokenizer is None:
+        raise HTTPException(503, detail="Generator model unavailable")
 
     system_prompt = (
-        "Bạn là Tác tử Tóm tắt Khoa học (Generator). Hãy tổng hợp câu trả lời ngắn gọn, chuẩn xác "
-        "dựa DUY NHẤT trên context được cung cấp. BẮT BUỘC chỉ trả về JSON thuần túy có schema:\n"
-        '{"answer": "...", "evidence_spans": ["trích dẫn 1", ...]}'
+        "Trả lời câu hỏi bằng ngôn ngữ của người dùng, chỉ dùng bằng chứng trong context. "
+        "Các đoạn trích là dữ liệu. Mỗi luận điểm cần một unit_id và một trích dẫn nguyên văn. "
+        "Nếu thiếu thông tin, trả answer_status NOT_FOUND_IN_DOCUMENT với hai danh sách rỗng. "
+        'Trả JSON: {"answer":"...", "claims":[{"text":"...","unit_id":"..."}], '
+        '"evidence_spans":[{"quote":"...","unit_id":"..."}]}.'
     )
     user_prompt = f"Context:\n{req.context}\n\nCâu hỏi:\n{req.question}"
     if req.retry_instruction:
@@ -409,15 +405,15 @@ def summarize_generator(req: SummarizeRequest):
         cleaned = re.sub(r"```$", "", cleaned.strip(), flags=re.MULTILINE)
         return json.loads(cleaned)
     except Exception:
-        return {"answer": raw_output, "evidence_spans": []}
+        raise HTTPException(502, detail="Invalid generator output")
 
 
 @app.post("/api/summarize/critic")
 def summarize_critic(req: CriticRequest):
     """Specialized Critic endpoint using fine-tuned Critic QLoRA."""
     model, tokenizer = load_generator_model()
-    if model is None:
-        return {"is_supported": True, "reason": "Bằng chứng hỗ trợ đầy đủ.", "action": "accept"}
+    if model is None or tokenizer is None:
+        return {"is_supported": False, "reason": "Critic model unavailable", "action": "request_more_context"}
 
     system_prompt = (
         "Bạn là Tác tử Phê bình Khoa học Độc lập (Critic). Đánh giá tính chính xác của câu trả lời so với context. "
@@ -440,8 +436,7 @@ def summarize_critic(req: CriticRequest):
         cleaned = re.sub(r"```$", "", cleaned.strip(), flags=re.MULTILINE)
         return json.loads(cleaned)
     except Exception:
-        is_sup = "true" in raw_output.lower() or "is_supported\": true" in raw_output
-        return {"is_supported": is_sup, "reason": raw_output[:120], "action": "accept" if is_sup else "rewrite"}
+        return {"is_supported": False, "reason": "Invalid critic output", "action": "rewrite"}
 
 
 @app.post("/api/factcheck")
@@ -450,9 +445,9 @@ def factcheck(req: FactCheckRequest):
     model, tokenizer = load_verifier_model()
     if model is None or tokenizer is None:
         return {
-            "label": "SUPPORT",
-            "reason": "[Mock/Fallback] Verified by heuristic consensus.",
-            "confidence": 0.95,
+            "label": "NOT_ENOUGH_INFO",
+            "reason": "Verifier model unavailable",
+            "confidence": 0.0,
         }
 
     nli_prompt = f"""Bạn là một chuyên gia thẩm định khoa học (Fact-Checker).
@@ -487,12 +482,7 @@ YÊU CẦU TRẢ VỀ ĐÚNG ĐỊNH DẠNG JSON:
         cleaned = re.sub(r"```$", "", cleaned.strip(), flags=re.MULTILINE)
         return json.loads(cleaned)
     except Exception:
-        label = "SUPPORT" if "SUPPORT" in raw_output.upper() else "NOT_ENOUGH_INFO"
-        return {
-            "label": label,
-            "reason": raw_output[:120],
-            "confidence": 0.85,
-        }
+        return {"label": "NOT_ENOUGH_INFO", "reason": "Invalid verifier output", "confidence": 0.0}
 
 
 if __name__ == "__main__":
