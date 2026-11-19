@@ -20,8 +20,9 @@ main/*.db
 main/models/multilingual-e5-small/model.safetensors
 
 
-training_lab/
-training_lab/
+# Ignore large weights & bundle in training_lab
+training_lab/final_weights/
+training_lab/final_weights_bundle.zip
 
 RESPONSE_PRINCIPLES.md
 start.cmd
