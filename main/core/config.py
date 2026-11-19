@@ -7,6 +7,8 @@ Supports:
 """
 
 import os
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from dotenv import load_dotenv
 
@@ -20,6 +22,19 @@ for _candidate in [os.path.join(_root_dir, ".env"), os.path.join(_main_dir, ".en
         break
 else:
     load_dotenv()
+
+
+_inference_mode: ContextVar[str | None] = ContextVar("agent_inference_mode", default=None)
+
+
+@contextmanager
+def agent_inference_mode(mode: str):
+    """Pin shared LLM calls to the mode of the graph node currently executing."""
+    token = _inference_mode.set(mode)
+    try:
+        yield
+    finally:
+        _inference_mode.reset(token)
 
 
 @dataclass
@@ -72,6 +87,12 @@ class Settings:
         }
         attr = name_map.get(clean_name, f"AGENT_{clean_name.upper()}_MODE")
         return getattr(self, attr, "api")
+
+    def get_inference_mode(self, agent_name: str | None = None) -> str:
+        mode = _inference_mode.get()
+        if mode is not None:
+            return mode
+        return self.get_agent_mode(agent_name) if agent_name else self.EXECUTION_MODE
 
     def set_agent_mode(self, agent_name: str, mode: str):
         """Sets 'api' or 'model' for the specified agent."""

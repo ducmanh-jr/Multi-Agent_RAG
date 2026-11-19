@@ -1,11 +1,19 @@
-from typing import Any, Literal, Optional
+from functools import partial
+from typing import Any, Callable, Optional
 from langgraph.graph import END, START, StateGraph
 
 from agents.agent0_scout.node import ScoutAgent
+from core.citation_audit import write_with_citation_audit
 from core.config import settings
+from core.coordination import decide_handoff, fact_check_accepted
+from core.figure_qa import (
+    add_figure_evidence, attach_answer_figures, check_visual_answer,
+    draft_visual_answer, figure_context, write_visual_answer,
+)
+from core.handoff_inputs import prepare_handoff_input
 from core.state import AgentState
 from core.supervisor import supervisor_planner
-from modes.registry import get_active_agents, get_mode_agents, normalize_mode
+from modes.registry import get_active_agents, get_agent_runners, normalize_mode
 from utils.logger import logger
 
 
@@ -73,7 +81,7 @@ def orchestrator_router_node(state: AgentState) -> dict[str, Any]:
 def _get_fallback_agents():
     global _agents
     if not _agents:
-        _agents.update(get_active_agents())
+        _agents.update({"scout": ScoutAgent(), **get_active_agents()})
     return _agents
 
 
@@ -102,80 +110,46 @@ def fact_checker_node(state: AgentState) -> dict[str, Any]:
     return _get_fallback_agents()["fact_checker"].run(state)
 
 
-def retry_loop_node(state: AgentState) -> dict[str, Any]:
-    """
-    Node trung gian xử lý vòng lặp tự sửa lỗi (Two-Tier Self-Correction):
-    Tăng retry_count += 1 và sinh bộ sub_queries bù lỗ hổng thông tin (Gap-Driven Re-Query).
-    """
-    current_retry = state.get("retry_count", 0) + 1
-    query = state.get("query", "")
-    gaps = state.get("evidence_gaps") or []
-    raw_critic = state.get("critic_feedback")
-    critic_fb = raw_critic if isinstance(raw_critic, dict) else {}
-
-    missing_points = [
-        str(g.get("missing_aspect") or g.get("suggested_query") or "")
-        for g in gaps
-        if isinstance(g, dict)
-    ] + list(critic_fb.get("missing_key_points") or [])
-    unsupported = list(critic_fb.get("unsupported_claims") or [])
-
-    new_sub_queries = supervisor_planner.build_gap_requeries(
-        original_query=query,
-        missing_points=missing_points,
-        unsupported_claims=unsupported,
-    )
-
-    logger.warning(
-        f"[Orchestrator Self-Correction] Kích hoạt vòng tìm kiếm bổ sung {current_retry}/{settings.MAX_ORCHESTRATOR_RETRY} "
-        f"với sub_queries={new_sub_queries}"
-    )
-
-    max_loops = state.get("max_reflection_loops") or state.get("max_iterations") or settings.MAX_ORCHESTRATOR_RETRY
-    trace = {
-        "node": "Orchestrator_SelfCorrection",
-        "stage": "Reflection",
-        "action": f"Kích hoạt vòng tự sửa sai ({current_retry}/{max_loops}): Tự động phát hiện lỗ hổng & truy hồi bù khuyết cho {len(missing_points)} điểm thiếu",
-        "new_retry_count": current_retry,
-        "new_sub_queries": new_sub_queries,
-    }
-    return {
-        "retry_count": current_retry,
-        "sub_queries": new_sub_queries,
-        "critic_action": "approve",  # Reset flag before re-entering retrieval
-        "reasoning_trace": [trace],
-    }
-
-
 def escalation_node(state: AgentState) -> dict[str, Any]:
     """
     Escalation Node (Lối thoát an toàn):
     Khi vượt quá số vòng retry nhưng vẫn còn mệnh đề chưa kiểm chứng,
     chuyển sang Writer với cờ confidence='low' hoặc xuất báo cáo có cảnh báo rõ ràng.
     """
-    logger.warning("[Escalation] Đã chạm giới hạn retry. Chuyển sang Writer với cảnh báo độ tin cậy.")
-    state_copy = dict(state)
+    return _write_escalated_report(state, _get_fallback_agents()["writer"].run)
+
+
+def _write_escalated_report(
+    state: AgentState, write: Callable[[AgentState], dict[str, Any]]
+) -> dict[str, Any]:
+    logger.warning("[Escalation] Bằng chứng chưa đủ sau khi thẩm định. Chuyển sang Writer với độ tin cậy thấp.")
+    state_copy = state.copy()
     state_copy["confidence"] = "low"
-    try:
-        writer_out = _get_fallback_agents()["writer"].run(state_copy)  # type: ignore[arg-type]
-        writer_out["confidence"] = "low"
-        return writer_out
-    except Exception:
-        answer = state.get("answer", "Không tìm thấy đủ bằng chứng trong tài liệu.")
-        warning_report = (
-            f"# BÁO CÁO NGHIÊN CỨU (ĐỘ TIN CẬY THẤP)\n\n"
-            f"> **Lưu ý:** Một số mệnh đề chưa tìm thấy bằng chứng nguyên văn sau {state.get('retry_count', 1)} vòng truy xuất.\n\n"
-            f"{answer}"
-        )
-        return {
-            "confidence": "low",
-            "final_report": warning_report,
-            "reasoning_trace": [{"node": "EscalationNode", "action": "escalate_with_warning"}],
-        }
+
+    def write_or_warn(writer_state: AgentState) -> dict[str, Any]:
+        try:
+            return write(writer_state)
+        except Exception:
+            answer = "Chưa thể xuất báo cáo đã đối chiếu với nguồn."
+            return {
+                "final_report": answer,
+                "reasoning_trace": [{"node": "EscalationNode", "action": "escalate_with_warning"}],
+            }
+
+    result = write_with_citation_audit(state_copy, write_or_warn)
+    result["confidence"] = "low"
+    result["final_report"] = (
+        "> **Độ tin cậy thấp.** Bằng chứng hiện có chưa đủ để xác nhận toàn bộ câu trả lời.\n\n"
+        + (result.get("final_report") or "")
+    )
+    result["reasoning_trace"].append({
+        "node": "EscalationNode", "action": "unresolved_review", "retry_count": state.get("retry_count", 0),
+    })
+    return result
 
 
 def writer_node(state: AgentState) -> dict[str, Any]:
-    res = _get_fallback_agents()["writer"].run(state)
+    res = write_with_citation_audit(state, _get_fallback_agents()["writer"].run)
     if "confidence" not in res:
         res["confidence"] = "high" if state.get("verified_claims") else "low"
     return res
@@ -183,161 +157,134 @@ def writer_node(state: AgentState) -> dict[str, Any]:
 
 # ===================== CONDITIONAL EDGES =====================
 
-def route_after_summarizer(state: AgentState) -> Literal["fact_checker_node", "retry_loop_node"]:
-    """
-    Inner Critic Gate:
-    Nếu Summarizer Critic phát hiện ngữ cảnh hiện tại hoàn toàn thiếu thông tin ('request_more_context')
-    và còn ngân sách retry -> Quay thẳng về retry_loop_node -> retrieval_node để lấy thêm chunks!
-    """
-    critic_action = state.get("critic_action", "approve")
-    retry_count = state.get("retry_count", 0)
-    no_new_evidence = state.get("no_new_evidence", False)
-    max_loops = state.get("max_reflection_loops") or state.get("max_iterations") or settings.MAX_ORCHESTRATOR_RETRY
-
-    if (
-        critic_action == "request_more_context"
-        and retry_count < max_loops
-        and not no_new_evidence
-    ):
-        logger.info(f"[Routing] Inner Critic yêu cầu 'request_more_context' (vòng {retry_count+1}/{max_loops}) -> Quay về Retrieval lấy thêm tài liệu.")
-        return "retry_loop_node"
-
-    return "fact_checker_node"
+def _handoff_for(state: AgentState, role: str, key: str) -> dict[str, Any] | None:
+    trace = state.get("reasoning_trace") or []
+    if trace:
+        last = trace[-1]
+        if last.get("action") == "agent_handoff" and last.get(key) == role:
+            return last
+    return None
 
 
-def route_after_fact_check(state: AgentState) -> Literal["writer_node", "retry_loop_node", "escalation_node"]:
-    """
-    Outer Fact-Checker Gate:
-    - Nếu support -> Sang Writer Agent
-    - Nếu contradict / not_enough_info:
-        + Nếu retry_count >= max_loops hoặc no_new_evidence -> Sang Escalation Node
-        + Ngược lại -> Sang retry_loop_node -> Retrieval Agent
-    """
-    label = state.get("fact_check_label", "not_enough_info")
-    retry_count = state.get("retry_count", 0)
-    no_new_evidence = state.get("no_new_evidence", False)
-    max_loops = state.get("max_reflection_loops") or state.get("max_iterations") or settings.MAX_ORCHESTRATOR_RETRY
+def route_after_scout(state: AgentState) -> str:
+    trace = state.get("reasoning_trace") or []
+    if trace and trace[-1].get("action") in {"discovery_clarify", "discovery_rejected"}:
+        return END
+    return "retrieval_node"
 
-    if label in ["support", "supported"]:
-        logger.info("[Routing] Fact-check: SUPPORT -> Tiến hành viết báo cáo cuối cùng.")
+
+def route_after_summarizer(state: AgentState) -> str:
+    request = _handoff_for(state, "summarizer", "sender")
+    return f"{request['recipient']}_node" if request else "fact_checker_node"
+
+
+def route_after_fact_check(state: AgentState) -> str:
+    request = _handoff_for(state, "fact_checker", "sender")
+    if request:
+        return f"{request['recipient']}_node"
+    if figure_context(state).get("explicit") and not state.get("rejected_claims"):
         return "writer_node"
+    return "writer_node" if fact_check_accepted(state) else "escalation_node"
 
-    if retry_count >= max_loops or no_new_evidence:
-        logger.warning(
-            f"[Routing] Dừng lặp (retry={retry_count}/{max_loops}, no_new_evidence={no_new_evidence}) -> Chuyển sang Escalation/Writer."
-        )
-        return "escalation_node"
-
-    logger.info(f"[Routing] Fact-check: {label} (retry {retry_count}/{max_loops}) -> Quay lại Retrieval.")
-    return "retry_loop_node"
-
-
-# ===================== BUILD GRAPH =====================
 
 _agents: dict[str, Any] = {}
 
 
 def build_research_rag_graph(mode: Optional[str] = None):
-    """
-    Xây dựng và biên dịch đồ thị LangGraph Two-Tier Self-Correction (L3-L4).
-    Sử dụng factory closures để liên kết trực tiếp agent instance vào các node của đồ thị,
-    tránh xung đột race condition trên biến toàn cục _agents khi chạy đa luồng/đa chế độ.
-    """
-    local_agents: dict[str, Any] = {"scout": ScoutAgent()}
-    if mode:
-        norm_mode = normalize_mode(mode)
-        settings.EXECUTION_MODE = norm_mode
-        for a in ["retrieval", "reader", "summarizer", "factchecker", "writer"]:
-            settings.set_agent_mode(a, norm_mode)
-        local_agents.update(get_mode_agents(norm_mode))
-    else:
-        local_agents.update(get_active_agents())
+    """Build a run-local team. Only the two reviewing roles can initiate corrective work."""
+    run_agents = get_agent_runners(mode)
+    reader_mode = normalize_mode(mode or settings.get_agent_mode("reader") or settings.EXECUTION_MODE)
+    scout = ScoutAgent()
 
-    # Đồng bộ với _agents toàn cục để tương thích ngược nếu có module khác đọc
-    _agents.update(local_agents)
+    def run_specialist(role: str, state: AgentState) -> dict[str, Any]:
+        request = _handoff_for(state, role, "recipient")
+        inputs = prepare_handoff_input(state, request) if request else state
+        visual = figure_context(inputs).get("explicit", False)
+        if visual and role == "summarizer":
+            update = draft_visual_answer(inputs)
+        elif visual and role == "fact_checker":
+            update = check_visual_answer(inputs)
+        else:
+            update = run_agents[role](inputs)
+        if role == "reader":
+            update = add_figure_evidence(inputs, update, reader_mode)
+        if role == "reader" and state.get("retry_count") and state.get("source_units"):
+            # A corrective read supplements the evidence already gathered for this question.
+            units = []
+            seen = set()
+            for unit in [*(update.get("source_units") or []), *state["source_units"]]:
+                key = (unit.get("doc_id"), unit.get("page_no"), unit.get("id") or unit.get("text"))
+                if key not in seen:
+                    seen.add(key)
+                    units.append(unit)
+            update = {**update, "source_units": units}
+        trace = [
+            entry for entry in update.get("reasoning_trace") or []
+            if entry.get("action") not in {"agent_handoff", "agent_handoff_received"}
+        ]
+        if request:
+            trace.insert(0, {
+                "action": "agent_handoff_received",
+                "agent": role,
+                "sender": request["sender"],
+                "recipient": role,
+                "reason": request["reason"],
+                "signature": request["signature"],
+                "retry_count": request["retry_count"],
+            })
 
-    def _scout_node(state: AgentState) -> dict[str, Any]:
-        return local_agents["scout"].run(state)
+        if role == "summarizer" and state.get("retry_count", 0) > 0:
+            # Judgements and citations from the previous draft cannot certify its replacement.
+            update = {
+                "answer": "", "claims": [], "evidence_spans": [],
+                "critic_action": "approve", "critic_feedback": {},
+                "verified_claims": [], "rejected_claims": [], "evidence_gaps": [],
+                "short_answer": None, "answer_status": None, "fact_check_label": "not_enough_info",
+                "statistical_audit": None, "code_verification": None,
+                **update,
+            }
 
-    def _retrieval_node(state: AgentState) -> dict[str, Any]:
-        return local_agents["retrieval"].run(state)
-
-    def _reader_node(state: AgentState) -> dict[str, Any]:
-        return local_agents["reader"].run(state)
-
-    def _summarizer_node(state: AgentState) -> dict[str, Any]:
-        return local_agents["summarizer"].run(state)
-
-    def _fact_checker_node(state: AgentState) -> dict[str, Any]:
-        return local_agents["fact_checker"].run(state)
+        if not visual and role in {"summarizer", "fact_checker"}:
+            reviewed = {**state, **update, "reasoning_trace": [*(state.get("reasoning_trace") or []), *trace]}
+            decision = decide_handoff(role, reviewed)
+            if decision is not None:
+                attempt = state.get("retry_count", 0) + 1
+                trace.append({**decision.as_trace(), "agent": role, "retry_count": attempt})
+                update["retry_count"] = attempt
+        update["reasoning_trace"] = trace
+        return update
 
     def _writer_node(state: AgentState) -> dict[str, Any]:
-        res = local_agents["writer"].run(state)
-        if "confidence" not in res:
-            res["confidence"] = "high" if state.get("verified_claims") else "low"
-        return res
-
-    def _escalation_node(state: AgentState) -> dict[str, Any]:
-        logger.warning("[Escalation] Đã chạm giới hạn retry. Chuyển sang Writer với cảnh báo độ tin cậy.")
-        state_copy = dict(state)
-        state_copy["confidence"] = "low"
-        try:
-            writer_out = local_agents["writer"].run(state_copy)
-            writer_out["confidence"] = "low"
-            return writer_out
-        except Exception:
-            answer = state.get("answer", "Không tìm thấy đủ bằng chứng trong tài liệu.")
-            warning_report = (
-                f"# BÁO CÁO NGHIÊN CỨU (ĐỘ TIN CẬY THẤP)\n\n"
-                f"> **Lưu ý:** Một số mệnh đề chưa tìm thấy bằng chứng nguyên văn sau {state.get('retry_count', 1)} vòng truy xuất.\n\n"
-                f"{answer}"
-            )
-            return {
-                "confidence": "low",
-                "final_report": warning_report,
-                "reasoning_trace": [{"node": "EscalationNode", "action": "escalate_with_warning"}],
-            }
+        writer = write_visual_answer if figure_context(state).get("explicit") else run_agents["writer"]
+        result = write_with_citation_audit(state, writer)
+        if state.get("critic_action") == "lower_confidence":
+            result["confidence"] = "low"
+        else:
+            result.setdefault("confidence", "high" if state.get("verified_claims") else "low")
+        return attach_answer_figures(state, result)
 
     workflow = StateGraph(AgentState)
 
     workflow.add_node("orchestrator_router", orchestrator_router_node)
-    workflow.add_node("scout_node", _scout_node)
-    workflow.add_node("retrieval_node", _retrieval_node)
-    workflow.add_node("reader_node", _reader_node)
-    workflow.add_node("summarizer_node", _summarizer_node)
-    workflow.add_node("fact_checker_node", _fact_checker_node)
-    workflow.add_node("retry_loop_node", retry_loop_node)
-    workflow.add_node("escalation_node", _escalation_node)
+    workflow.add_node("scout_node", scout.run)
+    for role in ("retrieval", "reader", "summarizer", "fact_checker"):
+        workflow.add_node(f"{role}_node", partial(run_specialist, role))
+    workflow.add_node("escalation_node", lambda state: attach_answer_figures(state, _write_escalated_report(state, run_agents["writer"])))
     workflow.add_node("writer_node", _writer_node)
 
     workflow.add_edge(START, "orchestrator_router")
     workflow.add_edge("orchestrator_router", "scout_node")
-    workflow.add_edge("scout_node", "retrieval_node")
+    workflow.add_conditional_edges("scout_node", route_after_scout, ["retrieval_node", END])
     workflow.add_edge("retrieval_node", "reader_node")
     workflow.add_edge("reader_node", "summarizer_node")
 
-    # Tier 1 Gate: Summarizer Inner Critic -> (Fact-Checker or Direct Re-Query)
+    correction_targets = ["retrieval_node", "reader_node", "summarizer_node"]
     workflow.add_conditional_edges(
-        "summarizer_node",
-        route_after_summarizer,
-        {
-            "fact_checker_node": "fact_checker_node",
-            "retry_loop_node": "retry_loop_node",
-        },
+        "summarizer_node", route_after_summarizer, [*correction_targets, "fact_checker_node"]
     )
-
-    # Tier 2 Gate: Fact-Checker -> (Writer, Retry Loop, or Escalation)
     workflow.add_conditional_edges(
-        "fact_checker_node",
-        route_after_fact_check,
-        {
-            "writer_node": "writer_node",
-            "retry_loop_node": "retry_loop_node",
-            "escalation_node": "escalation_node",
-        },
+        "fact_checker_node", route_after_fact_check, [*correction_targets, "writer_node", "escalation_node"]
     )
-
-    workflow.add_edge("retry_loop_node", "retrieval_node")
     workflow.add_edge("writer_node", END)
     workflow.add_edge("escalation_node", END)
 

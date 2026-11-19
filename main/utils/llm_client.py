@@ -42,10 +42,14 @@ class UnifiedLLMClient:
         agent: Optional[str] = None,
     ) -> str:
         """Main generation entry point with Semantic SQLite Cache and multi-tier fallback."""
-        target_mode = self.settings.get_agent_mode(agent) if agent else self.settings.EXECUTION_MODE
+        target_mode = self.settings.get_inference_mode(agent)
         target_mode = (target_mode or "cpu_max").lower()
 
-        cache_key_str = f"{prompt}___{system_instruction or ''}___{json_mode}" if not agent else f"{prompt}___{system_instruction or ''}___{json_mode}___{agent}"
+        cache_key_str = json.dumps([
+            target_mode, agent, prompt, system_instruction, json_mode, temperature, max_tokens,
+            self.settings.LOCAL_CPU_URL, self.settings.LOCAL_CPU_MODEL, self.settings.REMOTE_INFERENCE_URL,
+            self.settings.DEFAULT_LLM_MODEL, self.settings.FALLBACK_LLM_MODEL,
+        ], ensure_ascii=False)
         cache_key = hashlib.sha256(cache_key_str.encode("utf-8")).hexdigest()
         cached = get_cached_llm(cache_key)
         if cached:
@@ -80,13 +84,13 @@ class UnifiedLLMClient:
             return response_text
 
         # 1. Remote Kaggle Worker (Explicit Kaggle FN, Kaggle Max, or GPU Finetune mode)
-        elif target_mode in ["model", "kaggle", "kaggle_fn", "kaggle_max", "kaggle_gpu", "gpu_finetune", "gpu_ft"]:
+        elif target_mode in ["model", "kaggle", "kaggle_fn", "kaggle_max", "kaggle_gpu", "gpu_max", "gpu_finetune", "gpu_ft"]:
             if not self.settings.REMOTE_INFERENCE_URL:
                 raise RuntimeError(
                     f"Kaggle mode '{target_mode}' requires REMOTE_INFERENCE_URL to be set in environment or settings."
                 )
             try:
-                canon_adapter = canonical_adapter_name(agent)
+                canon_adapter = "none" if target_mode == "gpu_max" else canonical_adapter_name(agent)
                 response_text = self._call_remote_kaggle(
                     task="generate",
                     payload={

@@ -7,12 +7,54 @@ Ensures 0% hallucination by enforcing that all statements originate strictly fro
 from __future__ import annotations
 
 import re
+from collections import Counter
 from typing import Any, Optional
 from agents.agent5_writer.components.gap_analyzer import (
     build_cross_paper_matrix,
     detect_research_gaps_and_hypotheses,
     format_gap_radar_markdown,
 )
+from core.citation_audit import citation_location, evidence_quote
+from core.citation_audit import claim_text as get_claim_text
+
+
+_RAW_CITATION_MARKERS = re.compile(
+    r"```[\s\S]*?(?:```|\Z)|~~~[\s\S]*?(?:~~~|\Z)|`[^`\n]+`"
+    r"|(?<!\\)(?P<marker>\[(?:[uU]?\d+)(?:[ \t]*,[ \t]*\d+)*\])(?!\()"
+)
+
+
+def _escape_raw_citations(text: str) -> str:
+    """Display upstream citation numbers literally until a source link is known."""
+    return _RAW_CITATION_MARKERS.sub(
+        lambda match: "\\" + match[0] if match.group("marker") else match[0],
+        text,
+    )
+
+
+def _claim_evidence_ids(claim: dict[str, Any]) -> list[str]:
+    ids = claim.get("evidence_ids")
+    if not isinstance(ids, list):
+        return []
+    return [evidence_id for evidence_id in ids if isinstance(evidence_id, str) and evidence_id.strip()]
+
+
+def build_citation_references(evidence_spans: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Number source pages in the order of the supplied linked evidence."""
+    references = {}
+    for span in evidence_spans:
+        location = citation_location(span)
+        evidence_id = span.get("id")
+        if location is None or location in references or not evidence_id:
+            continue
+        document_id, page = location
+        references[location] = {
+            "ref_id": len(references) + 1,
+            "document_id": document_id,
+            "page": page,
+            "evidence_id": evidence_id,
+        }
+    return list(references.values())
 
 
 def build_academic_report(
@@ -41,170 +83,109 @@ def build_academic_report(
         c if isinstance(c, dict) else (c.to_dict() if hasattr(c, "to_dict") else {"claim": str(c), "claim_text": str(c), "text": str(c)})
         for c in (rejected_claims or [])
     ]
-    is_ood = any(
-        phrase in (answer or "").lower()
-        for phrase in ["hoàn toàn không được đề cập", "không được đề cập", "không có thông tin"]
-    ) or answer_status == "NOT_FOUND_IN_DOCUMENT"
-
-    is_ambiguous = any(
-        phrase in (answer or "").lower()
-        for phrase in ["vui lòng cung cấp thêm chi tiết", "cung cấp thêm chi tiết để tôi hỗ trợ chính xác hơn"]
-    ) or answer_status == "CLARIFICATION_NEEDED"
-
-    if is_ood:
-        status_label = "NOT_FOUND_IN_DOCUMENT"
-        references = []
-        sources_to_process = []
+    # Use an explicit terminal status, including for older runners that only emitted a refusal.
+    # A contradicted refusal must go through the same evidence checks as other drafts.
+    terminal = answer_status if not rejected_claims else None
+    if not terminal and not rejected_claims and not verified_claims:
+        if "hoàn toàn không được đề cập" in (answer or "").casefold():
+            terminal = "NOT_FOUND_IN_DOCUMENT"
+        elif "vui lòng cung cấp thêm chi tiết" in (answer or "").casefold():
+            terminal = "CLARIFICATION_NEEDED"
+    is_ood = terminal == "NOT_FOUND_IN_DOCUMENT"
+    is_ambiguous = terminal == "CLARIFICATION_NEEDED"
+    sources_to_process = [] if is_ood else list(retrieved_docs or [])
+    if is_ood or is_ambiguous:
         verified_claims = []
-        rejected_claims = []
-    elif is_ambiguous:
-        status_label = "CLARIFICATION_NEEDED"
-        references = []
-        sources_to_process = list(retrieved_docs or [])
-    else:
-        status_label = answer_status or ("ANSWERED_DIRECT_QUOTE" if verified_claims else "NOT_FOUND_IN_DOCUMENT")
-        references = []
-        sources_to_process = list(retrieved_docs or [])
 
-    seen_refs = set()
+    rejected_texts = {get_claim_text(c).strip().casefold() for c in rejected_claims}
+    verified_claims = [c for c in verified_claims if get_claim_text(c).strip()
+                       and get_claim_text(c).strip().casefold() not in rejected_texts
+                       and str(c.get("status", "support")).lower() in {"support", "supported"}]
+    linked_ids = {
+        evidence_id
+        for claim in verified_claims
+        for evidence_id in _claim_evidence_ids(claim)
+    }
+    linked_spans = [
+        span for span in (evidence_spans or [])
+        if isinstance(span, dict) and isinstance(span.get("id"), str) and span["id"] in linked_ids
+    ]
+    span_id_counts = Counter(span["id"] for span in linked_spans)
+    spans_by_id = {
+        span["id"]: span for span in linked_spans
+        if span_id_counts[span["id"]] == 1 and evidence_quote(span).strip() and citation_location(span)
+    }
+    citation_references = build_citation_references(list(spans_by_id.values()))
+    refs_by_page = {(ref["document_id"], ref["page"]): ref["ref_id"] for ref in citation_references}
+
     doc_title_lookup = {}
     for doc in sources_to_process:
-        d_id = str(doc.get("doc_id") or "").strip().lower()
-        t = doc.get("title") or doc.get("name") or doc.get("filename") or d_id
-        if "\\" in t or "/" in t:
-            t = t.replace("\\", "/").split("/")[-1]
-        if d_id:
-            doc_title_lookup[d_id] = t
+        document_id = str(doc.get("doc_id") or doc.get("document_id") or "").strip()
+        title_value = doc.get("title") or doc.get("name") or doc.get("filename") or document_id
+        if document_id:
+            doc_title_lookup[document_id] = str(title_value).replace("\\", "/").rsplit("/", 1)[-1]
 
-    if evidence_spans:
-        for span in evidence_spans:
-            d_id = str(span.get("doc_id") or "unknown").strip()
-            page_no = span.get("page_no", 1)
-            ref_key = (d_id.lower(), page_no)
-            if ref_key not in seen_refs:
-                seen_refs.add(ref_key)
-                ref_title = doc_title_lookup.get(d_id.lower(), d_id)
-                ref_id = len(references) + 1
-                references.append({
-                    "ref_id": ref_id,
-                    "title": ref_title,
-                    "doc_id": d_id,
-                    "page_no": page_no,
-                    "preview": span.get("quote", "")[:180],
-                    "bbox": span.get("bbox"),
-                })
+    references = []
+    for ref in citation_references:
+        document_id = ref["document_id"]
+        span = spans_by_id[ref["evidence_id"]]
+        references.append({
+            "ref_id": ref["ref_id"],
+            "title": doc_title_lookup.get(document_id, document_id),
+            "doc_id": document_id,
+            "page_no": ref["page"],
+            "preview": evidence_quote(span)[:180],
+            "bbox": span.get("bbox"),
+        })
 
-    for doc in sources_to_process:
-        d_id = str(doc.get("doc_id") or "unknown").strip()
-        page_no = doc.get("page_no") or 1
-        ref_key = (d_id.lower(), page_no)
-        if ref_key not in seen_refs:
-            seen_refs.add(ref_key)
-            t = doc.get("title") or doc.get("doc_id") or doc.get("filename") or f"Tài liệu #{len(references)+1}"
-            if "\\" in t or "/" in t:
-                t = t.replace("\\", "/").split("/")[-1]
-            ref_id = len(references) + 1
-            references.append({
-                "ref_id": ref_id,
-                "title": t,
-                "doc_id": d_id,
-                "page_no": page_no,
-                "preview": (doc.get("text") or doc.get("preview") or "")[:180].strip(),
-                "bbox": doc.get("bbox"),
-            })
-
-    # 2. Comprehensive Synthesis (always prioritize the full answer, removing any brief quick-answer prefixes)
-    if answer and len(answer.strip()) > 30:
-        clean_ans = answer.strip()
-        clean_ans = re.sub(r"^>\s*\*\*Câu trả lời trực tiếp:\*\*\s*", "", clean_ans, flags=re.IGNORECASE).strip()
-        clean_ans = re.sub(r"[,;\s]*\[\s*$", "", clean_ans).strip()
-        # Clean horizontal whitespace around citations and periods, DO NOT consume newlines
-        clean_ans = re.sub(r"(\[\d+\](?:\s*\*(?:\(Trang\s*\d+\))\*)?)[ \t]*\.[ \t]*(?!\n)", r"\1. ", clean_ans)
-        clean_ans = re.sub(r"(\[\d+\](?:\s*\*(?:\(Trang\s*\d+\))\*)?)[ \t]*\.[ \t]*\n", r"\1.\n", clean_ans)
-        clean_ans = re.sub(r"[ \t]+([,\.])", r"\1", clean_ans)
-
-        # Ensure numbered sections (e.g. 1. **Mục tiêu, 2. **Kiến trúc, 3. Cấu hình) start on a fresh paragraph (never splitting headers like ## 1.)
-        clean_ans = re.sub(r"([a-z0-9à-ỹ\.\)\]\>])[ \t]*([0-9]+\.\s+(?:\*\*|[A-ZÀ-ỸĐ]))", r"\1\n\n\2", clean_ans, flags=re.IGNORECASE)
-        # Ensure bullet points (- , * , •) start on their own lines
-        clean_ans = re.sub(r"([a-z0-9à-ỹ\.\)\]\>])[ \t]+([-\*•]\s+)", r"\1\n\2", clean_ans, flags=re.IGNORECASE)
-
-        # Smart paragraph break after sentence-ending citations before new sentences
-        clean_ans = re.sub(r"(\[\d+\](?:\s*\*(?:\(Trang\s*\d+\))\*)?\s*\.)[ \t]+([A-ZÀ-ỸĐ])", r"\1\n\n\2", clean_ans)
-        summary_narrative = clean_ans
-    elif verified_claims:
-        clean_sentences = []
-        for vc in verified_claims:
-            c_text = (vc.get("claim") or vc.get("text") or "").strip()
-            c_text = re.sub(r"^[\s\-*•\d\.:#]+", "", c_text).strip()
-            if (
-                c_text
-                and len(c_text) > 20
-                and not c_text.lower().startswith("1code")
-                and not c_text.lower().startswith("http")
-                and c_text not in clean_sentences
-            ):
-                clean_sentences.append(c_text)
-
-        summary_narrative = (
-            f"Dựa trên dữ liệu đối soát từ các tài liệu khoa học được chọn, nghiên cứu này xác thực và tổng hợp đầy đủ các luận điểm then chốt nhằm giải đáp câu hỏi: *\"{query}\"*:\n\n"
-            + "\n".join(f"- {s}" for s in clean_sentences[:7])
-        )
-    elif rejected_claims and any(rc.get("text") or rc.get("claim") for rc in rejected_claims):
-        r_sentences = []
-        for rc in rejected_claims:
-            t = (rc.get("claim") or rc.get("text") or "").strip()
-            t = re.sub(r"^[\s\-*•\d\.:#]+", "", t).strip()
-            if t and len(t) > 20 and t not in r_sentences:
-                r_sentences.append(t)
-        summary_narrative = (
-            f"Dựa trên thông tin trích xuất sơ bộ từ tài liệu cho câu hỏi *\"{query}\"*:\n\n"
-            + "\n\n".join(f"- {s}" for s in r_sentences[:6])
-        )
-    else:
-        summary_narrative = (
-            answer.strip()
-            if answer and answer.strip()
-            else (short_answer or "Chưa thể tổng hợp câu trả lời do không tìm thấy bằng chứng liên quan trong tài liệu đã chọn.")
-        )
-
-    # 3. Findings list with accurate in-text citations
+    supported = []
+    unlinked = []
     findings_lines = []
-    for vc in verified_claims:
-        claim_text = (vc.get("claim") or vc.get("text") or "").strip()
-        claim_text = re.sub(r"^[\s\-*•\d\.:#]+", "", claim_text).strip()
-        if not claim_text or len(claim_text) < 15 or claim_text.lower().startswith("1code") or claim_text.lower().startswith("http"):
+    summary_lines = []
+    for claim in verified_claims:
+        text = get_claim_text(claim).strip()
+        refs = sorted({refs_by_page[citation_location(spans_by_id[eid])]
+                       for eid in _claim_evidence_ids(claim) if eid in spans_by_id})
+        if not refs:
+            unlinked.append(claim)
             continue
-        evidence = vc.get("evidence", "")
-
-        ref_mark = "[1]"
-        for r in references:
-            if (r["title"] and len(r["title"]) >= 3 and r["title"].lower() in evidence.lower()) or (
-                r["doc_id"] and len(str(r["doc_id"])) >= 3 and str(r["doc_id"]).lower() in evidence.lower()
-            ):
-                ref_mark = f"[{r['ref_id']}]"
-                break
-
-        findings_lines.append(f"- **Nhận định {len(findings_lines)+1}:** {claim_text} {ref_mark}")
-
-    if not findings_lines:
-        findings_str = "> *Không có nhận định nào vượt qua vòng kiểm chứng nghiêm ngặt do thiếu chứng cứ gốc.*"
+        supported.append(claim)
+        marks = " ".join(f"[{ref}]" for ref in refs)
+        line = f"{_escape_raw_citations(text)} {marks}"
+        summary_lines.append(line)
+        findings_lines.append(f"- **Nhận định {len(findings_lines)+1}:** {line}")
+    verified_claims = supported
+    if summary_lines:
+        status_label = "ANSWERED_DIRECT_QUOTE"
+        summary_narrative = "\n\n".join(dict.fromkeys(summary_lines))
+    elif is_ood:
+        status_label = "NOT_FOUND_IN_DOCUMENT"
+        summary_narrative = f'Dựa trên các tài liệu đã chọn, thông tin về "{_escape_raw_citations(query)}" không được đề cập.'
+    elif is_ambiguous:
+        status_label = "CLARIFICATION_NEEDED"
+        summary_narrative = _escape_raw_citations(answer or "Vui lòng cho biết tài liệu hoặc khía cạnh cần làm rõ.")
     else:
-        findings_str = "\n".join(findings_lines)
+        status_label = "INSUFFICIENT_EVIDENCE"
+        summary_narrative = "Chưa đủ bằng chứng trong tài liệu đã chọn để xác nhận câu trả lời."
+
+    findings_str = "\n".join(findings_lines) or "> *Chưa có nhận định được xác minh và gắn với trang nguồn.*"
 
     # 4. Disclaimers for ungrounded / contradicted assertions
     disclaimer_block = ""
-    if rejected_claims:
-        disclaimer_lines = []
+    if rejected_claims or unlinked:
+        disclaimer_lines = [f"- {_escape_raw_citations(get_claim_text(c))} *(Trích dẫn chưa xác minh)*" for c in unlinked]
         for rc in rejected_claims:
-            c_txt = rc.get("claim") or rc.get("text") or ""
-            disclaimer_lines.append(f"- [Lưu ý] *{c_txt}* — Lý do: {rc.get('reasoning', 'Thiếu bằng chứng xác thực')}")
+            c_txt = get_claim_text(rc)
+            disclaimer_lines.append(f"- [Lưu ý] *{c_txt}* — Lý do: {rc.get('reason') or rc.get('reasoning') or 'Thiếu bằng chứng xác thực'}")
         disclaimer_block = f"\n\n### [Lưu ý] Các điểm chưa đủ căn cứ hoặc bị bác bỏ:\n" + "\n".join(disclaimer_lines)
 
     # 5. Bibliography block
     ref_lines = []
     for r in references:
-        ref_lines.append(f"[{r['ref_id']}] **{r['title']}** (Trang {r['page_no']}). *\"{r['preview']}...\"*")
-    bib_str = "\n".join(ref_lines) if ref_lines else "[1] *Kho tài liệu nội bộ đã chọn.*"
+        ref_title = _escape_raw_citations(r["title"])
+        preview = _escape_raw_citations(r["preview"])
+        ref_lines.append(f"[{r['ref_id']}] **{ref_title}** (Trang {r['page_no']}). *\"{preview}...\"*")
+    bib_str = "\n".join(ref_lines) if ref_lines else "*Chưa có trích dẫn gắn với một nhận định đã xác minh.*"
 
     status_tag = f"[`{status_label}`]"
 
@@ -217,7 +198,7 @@ def build_academic_report(
         for finding in statistical_audit.get("findings", []):
             audit_lines.append(f"  - {finding}")
     else:
-        audit_lines.append("- **Kiểm toán phương pháp:** Đã kiểm tra tính nhất quán số liệu và không phát hiện mâu thuẫn nội tại.")
+        audit_lines.append("- **Kiểm toán phương pháp:** Chưa có kết quả kiểm toán thống kê.")
 
     if code_verification and code_verification.get("status") == "PASS":
         audit_lines.append(
@@ -238,11 +219,12 @@ def build_academic_report(
         if len(unique_doc_titles) >= 2
         else "## 4. Ma trận Luận điểm Cốt lõi & Đối soát Bằng chứng (Core Claims & Evidence Verification Matrix)"
     )
-    matrix_md = build_cross_paper_matrix(query, retrieved_docs, verified_claims)
-    gaps = detect_research_gaps_and_hypotheses(query, verified_claims, retrieved_docs)
-    gaps_md = format_gap_radar_markdown(gaps)
+    cited_docs = [{**span, "text": evidence_quote(span)} for span in spans_by_id.values()]
+    matrix_md = build_cross_paper_matrix(query, cited_docs, verified_claims) if verified_claims else findings_str
+    gaps = detect_research_gaps_and_hypotheses(query, verified_claims, cited_docs) if cited_docs else []
+    gaps_md = format_gap_radar_markdown(gaps) if gaps else "Chưa có bằng chứng để đánh giá khoảng trống nghiên cứu."
 
-    academic_report_md = f"""# {title}
+    academic_report_md = f"""# {_escape_raw_citations(title)}
 
 > **Trạng thái Thẩm định:** {status_tag}
 
@@ -255,7 +237,7 @@ def build_academic_report(
 {findings_str}
 
 ## 3. Radar Khoảng trống & Giả thuyết Nghiên cứu (Research Gap Radar)
-{gaps_md}
+{_escape_raw_citations(gaps_md)}
 
 ## 4. Danh mục Tài liệu Trích dẫn (Evidence References)
 {bib_str}
@@ -268,11 +250,11 @@ def build_academic_report(
 ---
 
 {matrix_section_title}
-{matrix_md}
+{_escape_raw_citations(matrix_md)}
 
 ## Đánh giá Bình duyệt Chuyên sâu & Kiểm toán Phương pháp (Senior Peer-Review Audit)
-{peer_review_body}
-{disclaimer_block}
+{_escape_raw_citations(peer_review_body)}
+{_escape_raw_citations(disclaimer_block)}
 """
 
     markdown = f"""{academic_report_md.strip()}
@@ -290,6 +272,8 @@ def build_academic_report(
         "verified_claims": verified_claims,
         "rejected_claims": rejected_claims,
         "references": references,
+        "citation_renderer": "academic_report",
+        "citation_references": citation_references,
         "statistical_audit": statistical_audit,
         "code_verification": code_verification,
         "academic_report": academic_report_md,

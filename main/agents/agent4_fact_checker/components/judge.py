@@ -126,9 +126,9 @@ class FactCheckJudge:
                 }
                 top_label = max(label_scores, key=label_scores.get)
 
-                if "entailment" in top_label or "support" in top_label:
+                if top_label in {"entailment", "support", "supported"}:
                     status = "support"
-                elif "contradiction" in top_label or "contradict" in top_label:
+                elif top_label in {"contradiction", "contradict", "refuted"}:
                     status = "contradict"
                 else:
                     status = "not_enough_info"

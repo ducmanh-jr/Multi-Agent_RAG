@@ -9,7 +9,7 @@ Every Agent class must implement:
 from abc import ABC, abstractmethod
 from typing import Any
 
-from core.config import settings
+from core.config import agent_inference_mode, settings
 from core.state import AgentState
 from utils.logger import logger
 
@@ -31,6 +31,11 @@ class BaseAgent(ABC):
         Execute the agent's responsibilities and return a dictionary of state updates.
         """
         pass
+
+    def run_in_mode(self, state: AgentState, mode: str) -> dict[str, Any]:
+        """Run a delegated specialist with its own inference settings."""
+        with agent_inference_mode(mode):
+            return self.run(state)
 
     def log_action(self, action: str, details: Any = None) -> dict[str, Any]:
         """Helper to format a structured reasoning trace record."""

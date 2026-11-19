@@ -54,7 +54,7 @@ class AgenticSupervisorPlanner:
             ]
         )
         comparative_pattern = re.compile(
-            r"\b(so sánh|khác nhau|giống nhau|ưu điểm|nhược điểm|tốt hơn|cao hơn|nhiều hơn|kém hơn|khác biệt|đối chiếu|so với|vs|versus|compare|comparison|difference|between)\b",
+            r"\b(so sánh|khác nhau|giống nhau|tốt hơn|cao hơn|nhiều hơn|kém hơn|khác biệt|đối chiếu|so với|vs|versus|compare|comparison|difference|between)\b",
             re.IGNORECASE,
         )
         is_comparative = bool(comparative_pattern.search(q_lower))
@@ -84,10 +84,10 @@ class AgenticSupervisorPlanner:
             intent = "compare"
         elif is_numeric:
             intent = "results"
-        elif is_methodology:
-            intent = "methodology"
         elif is_limitation:
             intent = "limitation"
+        elif is_methodology:
+            intent = "methodology"
         elif is_summary:
             intent = "summarize"
         else:

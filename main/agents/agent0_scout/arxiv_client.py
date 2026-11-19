@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import re
 from typing import Any
-import arxiv
 from utils.logger import logger
 
 
@@ -27,11 +26,13 @@ def extract_arxiv_id(query: str) -> str | None:
     return None
 
 
-def search_arxiv_papers(query: str, max_results: int = 5, categories: list[str] | None = None) -> list[dict[str, Any]]:
+def search_arxiv_papers(query: str, max_results: int = 5, categories: list[str] | None = None, *, recent: bool = False) -> list[dict[str, Any]]:
     """
     Searches ArXiv using the official arxiv.Client SDK.
     Returns structured paper records with PDF download links.
     """
+    import arxiv
+
     client = arxiv.Client(
         page_size=max_results,
         delay_seconds=3.0,
@@ -54,7 +55,7 @@ def search_arxiv_papers(query: str, max_results: int = 5, categories: list[str] 
             search = arxiv.Search(
                 query=clean_query,
                 max_results=max_results,
-                sort_by=arxiv.SortCriterion.Relevance,
+                sort_by=arxiv.SortCriterion.SubmittedDate if recent else arxiv.SortCriterion.Relevance,
                 sort_order=arxiv.SortOrder.Descending
             )
 

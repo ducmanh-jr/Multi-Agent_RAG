@@ -1,58 +1,10 @@
-"""
-Agent 0 (Literature Scout) - SOTA Intent Intelligence & Academic Expander.
-Powered by LLM In-Context Intent Understanding with SQLite Caching
-and Resilient Offline Rule Fallback.
-
-Capabilities:
-  - 3-Way Decision: SEARCH / CLARIFY / REJECT.
-  - Multi-perspective search formulation (Architecture, Benchmark, Recent).
-  - Acronym disambiguation and bilingual STEM scoping.
-"""
+"""Classify discovery requests and build academic search queries locally."""
 
 from __future__ import annotations
 
 import re
 from typing import Any
 
-
-SYSTEM_PROMPT = """You are the Frontier Academic Intent Engine for Agent 0 (Literature Scout) in a scientific research platform.
-Your task is to analyze user queries (Vietnamese or English) and decide how to process them on ArXiv.
-ArXiv strictly covers STEM fields: Computer Science (cs.*), AI/Machine Learning, Mathematics (math.*), Physics (physics.*), Quantitative Biology, Statistics (stat.*), Quantitative Finance, and Electrical Engineering.
-
-You must classify the query into exactly one of three decisions:
-1. "REJECT":
-   - The query is outside ArXiv STEM scope (e.g. Vietnamese/world history, literature/poetry, pure local law/traffic codes, cooking/recipes, entertainment).
-   - Or the query is completely empty / meaningless ("tìm bài hay", "tài liệu tốt", "???").
-   - Provide a polite Vietnamese explanation in "message" explaining that the topic belongs to history/arts/pure law, outside ArXiv's STEM scope, and suggest uploading a PDF directly into the workspace.
-
-2. "CLARIFY":
-   - The query is ONLY an extremely broad 2-letter meta-word like "AI" or "ML" without any specific technique.
-   - The query has an ambiguous acronym with multiple interpretations (e.g. "CAT" -> Computerized Adaptive Testing, CAT robot, biology...).
-   - The query is about pure sports tactics without analytics context (e.g. "chiến thuật bóng đá" -> clarify if they mean Sports Analytics / Computer Vision in sports).
-   - Provide a clear, helpful Vietnamese question in "message".
-
-3. "SEARCH":
-   - The query is a legitimate academic STEM topic or hybrid topic (e.g. AI for cultural heritage, ML for air pollution prediction, Vietnamese NLP, quantum circuits, medical diffusion models, graph neural networks).
-   - If the user asks about foundational architectures or paradigms like "transformer" or "học sâu" / "deep learning", classify as "SEARCH" to retrieve landmark foundational and survey papers.
-   - Extract "academic_query": concise, standardized English academic search keywords (strip all conversational boilerplate words like "tìm giúp tôi", "cho mình xin", "nghiên cứu về", "search papers on", "có bài nào nói về").
-   - For acronyms like "TIM trong y học", disambiguate to "TIMI myocardial cardiac flow".
-   - For comparisons like "so sánh CNN và transformer cho thị giác máy tính", keep both concepts: "CNN vision transformer comparison image classification".
-   - Generate 3 multi-perspective search angles in "perspectives": Foundational/Architecture, Benchmark/Evaluation, and Recent Advancements.
-
-Respond ONLY with valid JSON following this schema:
-{
-  "decision": "SEARCH" | "CLARIFY" | "REJECT",
-  "domain": "STEM" | "NON_STEM",
-  "reason": "string",
-  "message": "string",
-  "academic_query": "string (empty if REJECT or CLARIFY)",
-  "perspectives": [
-    {"angle": "Architecture", "query": "string"},
-    {"angle": "Benchmark", "query": "string"},
-    {"angle": "Recent", "query": "string"}
-  ]
-}
-"""
 
 OUT_OF_DOMAIN_PATTERNS = [
     (r"\b(sau\s+giải\s+phóng|sau\s+giai\s+phong|giải\s+phóng\s+miền\s+nam|cách\s+mạng\s+tháng\s+tám|chiến\s+tranh\s+thế\s+giới|lịch\s+sử|triều\s+đại|nhà\s+trần|nhà\s+nguyễn)\b",
@@ -63,8 +15,7 @@ OUT_OF_DOMAIN_PATTERNS = [
      "Văn bản Pháp luật địa phương"),
     (r"\b(cách\s+nấu|nấu\s+ăn|món\s+ăn|phở\s+bò|bánh\s+chưng|công\s+thức\s+nấu)\b",
      "Ẩm thực / Đời sống"),
-    (r"^(?:tìm\s+bài\s+hay|bài\s+hay|tài\s+liệu\s+hay|tài\s+liệu\s+tốt)$",
-     "Yêu cầu chung chung"),
+
 ]
 
 
@@ -112,7 +63,7 @@ STEM_TRANSLATIONS = [
     (r"\btri tue nhan tao\b", "artificial intelligence"),
     (r"\by tế\b", "medical healthcare"),
     (r"\by te\b", "medical healthcare"),
-    (r"\btrong y học\b", "timi myocardial cardiac flow"),
+    (r"\btrong y học\b", "in medicine"),
     (r"\bbảo tồn di sản\b", "cultural heritage preservation"),
     (r"\bdự đoán ô nhiễm không khí\b", "air pollution prediction"),
     (r"\bso sánh cnn và transformer cho thị giác máy tính\b", "cnn transformer computer vision comparison"),
@@ -131,15 +82,23 @@ def clean_academic_keywords(text: str) -> str:
     filtered = [w for w in words if w.lower() not in stop]
     return " ".join(filtered)
 
-def _rule_based_fallback(user_query: str) -> dict[str, Any]:
+def _perspectives(keywords: str) -> list[dict[str, str]]:
+    return [
+        {"angle": "Architecture", "query": f"{keywords} architecture"},
+        {"angle": "Benchmark", "query": f"{keywords} benchmark"},
+        {"angle": "Recent", "query": keywords},
+    ]
+
+
+def analyze_intent(user_query: str) -> dict[str, Any]:
     """Fast local rule engine."""
     q_lower = user_query.strip().lower()
     
-    if not q_lower:
+    if not q_lower or not re.search(r"\w", q_lower):
         return {
             "decision": "REJECT",
             "domain": "NON_STEM",
-            "reason": "empty",
+            "reason": "empty_query",
             "message": "Vui lòng nhập chủ đề hoặc từ khóa tìm kiếm.",
             "academic_query": "",
             "perspectives": []
@@ -151,7 +110,7 @@ def _rule_based_fallback(user_query: str) -> dict[str, Any]:
             "decision": "CLARIFY",
             "domain": "STEM",
             "reason": "too_broad",
-            "message": "Từ khóa 'AI' quá rộng. Bạn muốn tìm về mảng nào: LLM, Computer Vision, hay Reinforcement Learning?",
+            "message": f"Từ khóa '{user_query.strip()}' quá rộng. Bạn muốn tìm về mảng nào: LLM, Computer Vision, hay Reinforcement Learning?",
             "academic_query": "",
             "perspectives": []
         }
@@ -176,29 +135,20 @@ def _rule_based_fallback(user_query: str) -> dict[str, Any]:
             "perspectives": []
         }
 
-    # 2. Out of Domain check FIRST
-    for pat, domain_name in OUT_OF_DOMAIN_PATTERNS:
-        if re.search(pat, q_lower):
-            return {
-                "decision": "REJECT",
-                "domain": "NON_STEM",
-                "reason": "out_of_domain",
-                "message": f"Chủ đề này thuộc lĩnh vực {domain_name}, nằm ngoài phạm vi học thuật STEM của ArXiv. Vui lòng tải tài liệu PDF trực tiếp vào Kho Tài Liệu.",
-                "academic_query": "",
-                "perspectives": []
-            }
+    if re.fullmatch(r"^(?:tìm\s+bài\s+hay|bài\s+hay|tài\s+liệu\s+hay|tài\s+liệu\s+tốt)$", q_lower):
+        return {
+            "decision": "REJECT", "domain": "NON_STEM", "reason": "empty_or_meaningless",
+            "message": "Vui lòng nêu chủ đề nghiên cứu cụ thể.", "academic_query": "", "perspectives": [],
+        }
 
-    # 3. Non-STEM scholarly check
-    for pat, domain_name in NON_STEM_PATTERNS:
-        if re.search(pat, q_lower):
-            clean_kw = clean_academic_keywords(user_query) or "scholarly work"
+    for pattern, domain_name in OUT_OF_DOMAIN_PATTERNS + NON_STEM_PATTERNS:
+        if re.search(pattern, q_lower):
+            # The scholarly index also covers topics outside arXiv's STEM catalogue.
+            keywords = clean_academic_keywords(user_query) or user_query.strip()
             return {
-                "decision": "REJECT",
-                "domain": "NON_STEM",
-                "reason": "non_stem_scholarly",
-                "message": f"Chủ đề học thuật về {domain_name} nằm ngoài phạm vi STEM của hệ thống.",
-                "academic_query": "",
-                "perspectives": []
+                "decision": "SEARCH", "domain": "NON_STEM", "reason": "non_stem_scholarly",
+                "message": f"Tìm tài liệu về {domain_name} trong chỉ mục học thuật.",
+                "academic_query": keywords, "perspectives": _perspectives(keywords),
             }
 
     # 4. Standard STEM Search
@@ -209,72 +159,8 @@ def _rule_based_fallback(user_query: str) -> dict[str, Any]:
         "reason": "rule_fallback",
         "message": "Chủ đề học thuật hợp lệ.",
         "academic_query": clean_kw,
-        "perspectives": [
-            {"angle": "Architecture", "query": f"{clean_kw} architecture"},
-            {"angle": "Benchmark", "query": f"{clean_kw} benchmark"},
-            {"angle": "Recent", "query": f"{clean_kw} 2024 2025"}
-        ]
+        "perspectives": _perspectives(clean_kw)
     }
-
-
-def analyze_intent(user_query: str) -> dict[str, Any]:
-    """
-    Fast rule-first intent classification with graceful fallback.
-    """
-    clean_q = user_query.strip()
-    if not clean_q:
-        return {
-            "decision": "REJECT",
-            "domain": "NON_STEM",
-            "reason": "empty_query",
-            "message": "Vui lòng nhập câu hỏi hoặc chủ đề nghiên cứu cụ thể.",
-            "academic_query": "",
-            "perspectives": []
-        }
-
-    # Fast check: If matches out-of-domain or clarification directly, return in <1ms
-    q_lower = clean_q.lower()
-    for pat, domain_name in OUT_OF_DOMAIN_PATTERNS:
-        if re.search(pat, q_lower):
-            return _rule_based_fallback(clean_q)
-
-    for pat, domain_name in NON_STEM_PATTERNS:
-        if re.search(pat, q_lower):
-            return _rule_based_fallback(clean_q)
-
-    # Broad acronyms or vague queries -> clarify / reject
-    if q_lower in {"ai", "trí tuệ nhân tạo", "tri tue nhan tao", "ml"}:
-        return _rule_based_fallback(clean_q)
-    if re.search(r"\bcat\b", q_lower) and "computer" not in q_lower and "adaptive" not in q_lower:
-        return _rule_based_fallback(clean_q)
-    if re.search(r"\bchiến thuật bóng đá\b|\bbóng đá\b", q_lower):
-        return _rule_based_fallback(clean_q)
-    if re.search(r"^(?:tìm\s+bài\s+hay|bài\s+hay|tài\s+liệu\s+hay|tài\s+liệu\s+tốt)$", q_lower):
-        return _rule_based_fallback(clean_q)
-
-    # If it has standard STEM indicators with word boundary regex (preventing false matches on 'bài', 'tại', 'hai', 'ngày mai')
-    stem_patterns = [
-        r"\battention\b", r"\btransformer\b", r"\bbert\b", r"\bgpt\b", r"\blora\b",
-        r"\bdiffusion\b", r"\b(ai|trí tuệ nhân tạo)\b", r"\bmachine learning\b",
-        r"\bdeep learning\b", r"\bhọc máy\b", r"\bhọc sâu\b", r"\balgorithm\b",
-        r"\bthuật toán\b", r"\bneural\b", r"\bllm\b"
-    ]
-    if any(re.search(pat, q_lower) for pat in stem_patterns):
-        clean_kw = clean_academic_keywords(clean_q) or clean_q
-        return {
-            "decision": "SEARCH",
-            "domain": "STEM",
-            "reason": "stem_academic",
-            "message": "Chủ đề học thuật STEM hợp lệ.",
-            "academic_query": clean_kw,
-            "perspectives": [
-                {"angle": "Architecture", "query": f"{clean_kw} architecture"},
-                {"angle": "Benchmark", "query": f"{clean_kw} benchmark"},
-                {"angle": "Recent", "query": f"{clean_kw} 2024"}
-            ]
-        }
-
-    return _rule_based_fallback(clean_q)
 
 
 def translate_to_academic_english(user_query: str) -> str:
@@ -287,13 +173,4 @@ def translate_to_academic_english(user_query: str) -> str:
 def generate_search_perspectives(user_query: str) -> list[dict[str, str]]:
     """Returns multi-angle search perspectives from Intent Engine."""
     analysis = analyze_intent(user_query)
-    perspectives = analysis.get("perspectives")
-    if perspectives and isinstance(perspectives, list) and len(perspectives) >= 2:
-        return perspectives
-        
-    core = analysis.get("academic_query") or user_query.strip()
-    return [
-        {"angle": "Architecture", "query": f"{core} architecture"},
-        {"angle": "Benchmark", "query": f"{core} benchmark performance"},
-        {"angle": "Recent", "query": f"{core} 2024 2025"}
-    ]
+    return analysis["perspectives"]

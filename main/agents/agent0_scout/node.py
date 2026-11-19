@@ -11,11 +11,7 @@ from typing import Any
 
 from core.base_agent import BaseAgent
 from core.state import AgentState
-from agents.agent0_scout.query_expander import (
-    analyze_intent,
-    generate_search_perspectives,
-    translate_to_academic_english
-)
+from agents.agent0_scout.query_expander import analyze_intent
 from agents.agent0_scout.arxiv_client import search_arxiv_papers
 from agents.agent0_scout.paper_ranker import rank_and_select_papers
 from agents.agent0_scout.downloader import download_and_register_paper
@@ -53,10 +49,11 @@ class ScoutAgent(BaseAgent):
 
         # 2. Analyze Intent (3-Way: SEARCH / CLARIFY / REJECT)
         intent = analyze_intent(user_query)
-        decision = intent.get("decision", "search")
+        decision = str(intent.get("decision", "SEARCH")).upper()
         domain = intent.get("domain", "STEM")
         
-        if decision == "reject":
+        if decision == "REJECT":
+            message = intent.get("message") or "Vui lòng nêu chủ đề nghiên cứu cụ thể hoặc tải lên tài liệu PDF."
             self.logger.warning(f"[LiteratureScout] Query rejected: {intent.get('reason')} - {intent.get('message')}")
             trace = self.log_action("discovery_rejected", {
                 "query": user_query,
@@ -65,11 +62,15 @@ class ScoutAgent(BaseAgent):
             })
             return {
                 "scout_decision": "reject",
-                "scout_message": intent.get("message"),
+                "scout_message": message,
+                "answer_status": "OUT_OF_SCOPE",
+                "answer": message,
+                "final_report": message,
                 "reasoning_trace": [trace]
             }
             
-        if decision == "clarify":
+        if decision == "CLARIFY":
+            message = intent.get("message") or "Bạn muốn tìm tài liệu về khía cạnh nào của chủ đề này?"
             self.logger.info(f"[LiteratureScout] Clarification required: {intent.get('message')}")
             trace = self.log_action("discovery_clarify", {
                 "query": user_query,
@@ -78,13 +79,16 @@ class ScoutAgent(BaseAgent):
             })
             return {
                 "scout_decision": "clarify",
-                "scout_message": intent.get("message"),
+                "scout_message": message,
+                "answer_status": "CLARIFICATION_NEEDED",
+                "answer": message,
+                "final_report": message,
                 "reasoning_trace": [trace]
             }
 
         # Query expansion into academic keywords and multi-perspectives
-        perspectives = generate_search_perspectives(user_query)
-        academic_query = translate_to_academic_english(user_query)
+        perspectives = intent["perspectives"]
+        academic_query = intent["academic_query"]
 
         # 3. NON-STEM ROUTE: Route directly to Gemini Academic Explorer
         if domain == "NON_STEM":
@@ -125,7 +129,7 @@ class ScoutAgent(BaseAgent):
         # 4. STEM ROUTE: Multi-angle search on ArXiv
         all_candidates: list[dict[str, Any]] = []
         for p in perspectives:
-            p_papers = search_arxiv_papers(p["query"], max_results=3)
+            p_papers = search_arxiv_papers(p["query"], max_results=3, recent=p["angle"] == "Recent")
             all_candidates.extend(p_papers)
 
         if not all_candidates:

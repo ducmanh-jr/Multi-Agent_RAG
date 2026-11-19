@@ -163,11 +163,11 @@ class SummarizerGeneratorOutput:
 @dataclass
 class SummarizerCriticOutput:
     """Output contract of Summarizer Critic (matches training_lab/agent3_summarizer/Code/prompts_critic.py)."""
-    is_supported: bool = True
+    is_supported: bool = False
     unsupported_claims: list[str] = field(default_factory=list)
     missing_key_points: list[str] = field(default_factory=list)
-    action: CriticActionType = "approve"
-    confidence: float = 0.9
+    action: CriticActionType = "lower_confidence"
+    confidence: float = 0.0
     critique_rationale: str = ""
     issues_found: list[str] = field(default_factory=list)
 
@@ -179,7 +179,8 @@ class SummarizerCriticOutput:
     def from_dict(cls, data: dict[str, Any]) -> "SummarizerCriticOutput":
         if not isinstance(data, dict):
             return cls()
-        is_sup = bool(data.get("is_supported", True))
+        verdict = data.get("is_supported")
+        is_sup = verdict is True
         unsup = (
             data.get("unsupported_claims")
             or data.get("Unsupported_claims")
@@ -197,22 +198,29 @@ class SummarizerCriticOutput:
         if not isinstance(missing, list):
             missing = [str(missing)]
 
-        raw_action = str(data.get("action") or ("approve" if is_sup else "rewrite")).lower().strip()
+        issues = data.get("issues_found")
+        issues = [u for u in issues if isinstance(u, str) and u.strip()] if isinstance(issues, list) else []
+        raw_action = str(data.get("action") or data.get("critic_action") or "").lower().strip()
+        if raw_action == "accept":
+            raw_action = "approve"
+        if raw_action == "approve" and (not is_sup or unsup or missing or issues):
+            raw_action = "rewrite" if verdict is False or unsup or missing or issues else "lower_confidence"
         if raw_action not in ("approve", "rewrite", "request_more_context", "lower_confidence"):
-            raw_action = "approve" if is_sup else "rewrite"
-
+            raw_action = "lower_confidence"
+        is_sup = is_sup and raw_action == "approve"
         try:
-            conf = float(data.get("confidence", 0.9 if is_sup else 0.45))
-        except Exception:
-            conf = 0.9 if is_sup else 0.45
-
+            conf = float(data.get("confidence", 0.9 if is_sup else 0.0))
+            conf = min(1.0, conf) if 0 <= conf else 0.0
+        except (TypeError, ValueError):
+            conf = 0.0
         return cls(
             is_supported=is_sup,
             unsupported_claims=[str(u) for u in unsup if str(u).strip()],
             missing_key_points=[str(m) for m in missing if str(m).strip()],
+            issues_found=issues,
             action=raw_action,  # type: ignore[arg-type]
             confidence=conf,
-            critique_rationale=str(data.get("critique_rationale") or data.get("reason") or ""),
+            critique_rationale=str(data.get("critique_rationale") or data.get("reason") or data.get("critique") or ""),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -225,4 +233,5 @@ class SummarizerCriticOutput:
             "action": self.action,
             "confidence": self.confidence,
             "critique_rationale": self.critique_rationale,
+            "issues_found": self.issues_found,
         }
