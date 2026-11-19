@@ -59,6 +59,7 @@ class GPUFTRetrievalAgent(BaseAgent):
     def run(self, state: AgentState) -> dict[str, Any]:
         query = state.get("query", "")
         pdf_path = state.get("pdf_path")
+        pdf_paths = state.get("pdf_paths") or ([pdf_path] if pdf_path else [])
         retry_count = state.get("retry_count", 0)
         seen_chunks = state.get("seen_chunks", []) or []
 
@@ -93,8 +94,10 @@ class GPUFTRetrievalAgent(BaseAgent):
                 self.logger.warning(f"[GPU FT Retrieval] Remote router adapter fallback to Supervisor ({e})")
 
         # 1. Scope strictly to user-selected PDF if provided
-        pdf_chunks = load_or_parse_selected_pdf(pdf_path) if pdf_path else []
-        if pdf_chunks:
+        pdf_chunks = []
+        for path in dict.fromkeys(pdf_paths):
+            pdf_chunks.extend(load_or_parse_selected_pdf(path))
+        if pdf_paths:
             active_fts = SQLiteFTS5Searcher()
             active_bm25 = SimpleBM25()
             active_fts.fit(pdf_chunks)

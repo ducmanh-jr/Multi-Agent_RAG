@@ -6,9 +6,10 @@ to their independent 5-agent implementations.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Callable, Optional
 from core.base_agent import BaseAgent
-from core.config import settings
+from core.config import agent_inference_mode, settings
+from core.state import AgentState
 from utils.logger import logger
 
 MODE_MAP = {
@@ -164,3 +165,15 @@ def get_active_agents() -> dict[str, BaseAgent]:
         mode_to_use = normalize_mode(agent_mode) if agent_mode else global_mode
         agents[agent_key] = get_agent_class(clean_key, mode_to_use)()
     return agents
+
+
+def get_agent_runners(mode: Optional[str] = None) -> dict[str, Callable[[AgentState], dict[str, Any]]]:
+    """Capture both agent implementations and their inference routes for one compiled graph."""
+    runners = {}
+    default_mode = settings.EXECUTION_MODE
+    for role, configured_mode in settings.get_all_agent_modes().items():
+        agent_mode = normalize_mode(mode or configured_mode or default_mode)
+        agent = get_agent(role, agent_mode)
+        node_role = "fact_checker" if role == "factchecker" else role
+        runners[node_role] = agent_inference_mode(agent_mode)(agent.run)
+    return runners

@@ -56,15 +56,16 @@ class CPUMaxSummarizerAgent(BaseAgent):
             try:
                 from agents.agent3_summarizer.components.critic import critique_summary_and_claims
                 from agents.agent3_summarizer.components.generator import generate_summary_and_claims
-                from core.schemas import SummarizerCriticOutput
                 from core.verifier import ensure_inline_citations, evaluate_inner_critic_fast
 
-                raw_answer, evidence_spans, raw_claims = generate_summary_and_claims(query, source_units)
+                raw_answer, evidence_spans, raw_claims = generate_summary_and_claims(
+                    query, source_units, critic_feedback=state.get("critic_feedback")
+                )
                 if raw_answer:
                     raw_answer = re.sub(r"^>\s*\*\*Câu trả lời trực tiếp:\*\*\s*", "", raw_answer.strip(), flags=re.IGNORECASE).strip()
 
-                # If generator returned fallback stub, overly short answer (< 200 chars), or empty claims, use comprehensive CPU engine
-                if not raw_answer or len(raw_answer.strip()) < 200 or "chế độ dự phòng" in raw_answer or not raw_claims:
+                # A model draft needs both claims and their supporting quotes.
+                if not raw_answer or not evidence_spans or not raw_claims:
                     self.logger.warning(
                         "[CPU Max Summarizer] Local LLM produced brief/stub answer, seamlessly engaging CPU High-Precision Comprehensive engine."
                     )
@@ -82,6 +83,8 @@ class CPUMaxSummarizerAgent(BaseAgent):
                 refined_answer, filtered_claims, warnings = critique_summary_and_claims(
                     raw_answer, raw_claims, evidence_spans
                 )
+                if not filtered_claims:
+                    return self.cpu_engine.run(state)
                 refined_answer = ensure_inline_citations(refined_answer, source_units, evidence_spans)
                 refined_answer = re.sub(r"^>\s*\*\*Câu trả lời trực tiếp:\*\*\s*", "", refined_answer.strip(), flags=re.IGNORECASE).strip()
 

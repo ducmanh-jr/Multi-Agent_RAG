@@ -13,18 +13,18 @@ import re
 from typing import Any
 
 from agents.agent3_summarizer.components.generator import (
-    generate_summary_and_claims,
+    bind_evidence_spans,
+    bind_summary_claims,
     pack_context_by_token_budget,
 )
 from core.base_agent import BaseAgent
+from core.handoff_inputs import revision_note
 from core.schemas import SummarizerCriticOutput, SummarizerGeneratorOutput
-from core.state import AgentState, EvidenceSpan
+from core.state import AgentState
 from core.verifier import (
     TRAINING_LAB_CRITIC_SYSTEM_PROMPT,
     TRAINING_LAB_GENERATOR_SYSTEM_PROMPT,
     ensure_inline_citations,
-    find_best_supporting_unit,
-    split_answer_into_atomic_claims,
 )
 from utils.llm_client import llm_client
 from utils.domain_guard import check_out_of_domain, build_out_of_domain_response
@@ -56,14 +56,16 @@ class GPUFinetuneSummarizerAgent(BaseAgent):
             res["reasoning_trace"] = [trace]
             return res
 
-        context_str, _ = pack_context_by_token_budget(source_units, max_tokens=1500)
+        context_str, included = pack_context_by_token_budget(source_units, max_tokens=1500)
 
         current_answer = ""
-        current_claims: list[str] = []
+        current_claims: list = []
+        claims, refined_spans = [], []
         current_spans_raw: list[dict[str, Any]] = []
         internal_attempts = 0
+        revision = revision_note(state)
         last_critic_feedback = ""
-        critic_action = "accept"
+        critic_action = "lower_confidence"
         critique_text = ""
         critic_out = None
 
@@ -71,18 +73,16 @@ class GPUFinetuneSummarizerAgent(BaseAgent):
             internal_attempts += 1
 
             # 1. Generator Pass: Call Remote fine-tuned Generator QLoRA
-            gen_prompt = (
-                f"User Question: {clean_q}\n\n"
-                f"Context:\n{context_str}\n\n"
-            )
-            if last_critic_feedback:
-                gen_prompt += f"\n[Previous Critic Feedback to Address]:\n{last_critic_feedback}\n"
+            feedback = "\n\n".join(part for part in (revision, last_critic_feedback) if part)
+            gen_prompt = f"User Question: {clean_q}\n\n"
+            if feedback:
+                gen_prompt += f"[Previous Critic Feedback to Address]:\n{feedback}\n\n"
+            gen_prompt += f"Context:\n{context_str}\n\n"
 
-            generator_failed = False
             try:
                 gen_dict = llm_client.call_kaggle_specialist(
                     endpoint="api/summarize/generator",
-                    payload={"query": clean_q, "context": context_str, "feedback": last_critic_feedback, "adapter": "generator"},
+                    payload={"query": clean_q, "context": context_str, "feedback": feedback, "adapter": "generator"},
                     fallback_prompt=gen_prompt,
                     fallback_system=TRAINING_LAB_GENERATOR_SYSTEM_PROMPT,
                     adapter="generator",
@@ -94,59 +94,48 @@ class GPUFinetuneSummarizerAgent(BaseAgent):
                 current_spans_raw = gen_out.evidence_spans
             except Exception as e:
                 self.logger.warning(f"[GPU Finetune Summarizer] Remote generator fallback to local: {e}")
-                generator_failed = True
-                current_answer, fb_spans, fb_cl = generate_summary_and_claims(clean_q, source_units, force_extractive=False)
-                current_spans_raw = fb_spans
-                current_claims = fb_cl or split_answer_into_atomic_claims(current_answer, source_units)
+                result = self.cpu_engine.run(state)
+                return {**result, "generator_model_family": "gpu_finetune_cpu_fallback"}
 
-            if not current_claims and not any(k in current_answer.lower() for k in ["không chứa nội dung", "không có thông tin", "không được đề cập"]):
-                current_claims = split_answer_into_atomic_claims(current_answer, source_units)
+            refined_spans = bind_evidence_spans(current_spans_raw, included)
+            claims = bind_summary_claims(current_claims or [s["quote"] for s in refined_spans], refined_spans)
+            if not current_answer or not claims:
+                self.logger.info("[GPU Finetune Summarizer] No grounded synthesis; using extractive reader output.")
+                result = self.cpu_engine.run(state)
+                return {**result, "generator_model_family": "gpu_finetune_cpu_fallback"}
 
             # 2. Critic Pass: Call Remote fine-tuned Critic QLoRA only if generator succeeded
-            if not generator_failed:
-                try:
-                    critic_claims = [c.get("text") or c.get("claim_text") or str(c) if isinstance(c, dict) else str(c) for c in current_claims]
-                    critic_dict = llm_client.call_kaggle_specialist(
-                        endpoint="api/summarize/critic",
-                        payload={"query": clean_q, "answer": current_answer, "context": context_str, "claims": critic_claims, "adapter": "critic"},
-                        fallback_prompt=f"Question: {clean_q}\nContext:\n{context_str}\nAnswer:\n{current_answer}\nClaims: {critic_claims}",
-                        fallback_system=TRAINING_LAB_CRITIC_SYSTEM_PROMPT,
-                        adapter="critic",
-                        timeout=float(self.settings.REMOTE_TIMEOUT_SECONDS or 90.0),
-                    )
-                    critic_out = SummarizerCriticOutput.from_dict(critic_dict)
-                    critic_action = critic_out.action
-                    critique_text = getattr(critic_out, "critique_rationale", "") or str(getattr(critic_out, "critique", ""))
+            try:
+                critic_claims = [c["text"] for c in claims]
+                critic_dict = llm_client.call_kaggle_specialist(
+                    endpoint="api/summarize/critic",
+                    payload={"query": clean_q, "answer": current_answer, "context": context_str, "claims": critic_claims, "adapter": "critic"},
+                    fallback_prompt=f"Question: {clean_q}\nContext:\n{context_str}\nAnswer:\n{current_answer}\nClaims: {critic_claims}",
+                    fallback_system=TRAINING_LAB_CRITIC_SYSTEM_PROMPT,
+                    adapter="critic",
+                    timeout=float(self.settings.REMOTE_TIMEOUT_SECONDS or 90.0),
+                )
+                critic_out = SummarizerCriticOutput.from_dict(critic_dict)
+                critic_action = critic_out.action
+                critique_text = getattr(critic_out, "critique_rationale", "") or str(getattr(critic_out, "critique", ""))
 
-                    if critic_action in ("accept", "approve"):
-                        self.logger.info(f"[GPU Finetune Critic] PASS: Answer accepted on attempt {internal_attempts}")
-                        break
-                    elif critic_action in ("rewrite", "request_more_context") and internal_attempts <= self.max_internal_retry:
-                        last_critic_feedback = f"Critique: {critique_text}. Issues: {getattr(critic_out, 'issues_found', [])}"
-                        self.logger.info(f"[GPU Finetune Critic] REWRITE requested ({critique_text}) -> Looping pass {internal_attempts + 1}")
-                        continue
-                    else:
-                        break
-                except Exception as e:
-                    self.logger.warning(f"[GPU Finetune Critic] Remote critic skipped ({e}), accepting synthesis.")
+                if critic_action in ("accept", "approve"):
+                    self.logger.info(f"[GPU Finetune Critic] PASS: Answer accepted on attempt {internal_attempts}")
                     break
-            else:
-                self.logger.info("[GPU Finetune Critic] Generator synthesized locally with 100% ground-truth citations. Skipping remote critic.")
-                critic_action = "accept"
-                critique_text = "Deterministic ground truth accepted."
+                elif critic_action == "rewrite" and internal_attempts <= self.max_internal_retry:
+                    last_critic_feedback = f"Critique: {critique_text}. Issues: {getattr(critic_out, 'issues_found', [])}"
+                    self.logger.info(f"[GPU Finetune Critic] REWRITE requested ({critique_text}) -> Looping pass {internal_attempts + 1}")
+                    continue
+                else:
+                    break
+            except Exception as e:
+                critic_action = "lower_confidence"
+                critique_text = "Critic unavailable"
+                self.logger.warning(f"[GPU Finetune Critic] Remote critic unavailable ({e}).")
                 break
-
-        # Fallback to CPU engine if generation was completely empty or failed
-        if not current_answer or len(current_answer.strip()) < 50:
-            self.logger.warning("[GPU Finetune Summarizer] Output insufficient, running CPU Engine fallback.")
-            res = self.cpu_engine.run(state)
-            res["generator_model_family"] = "gpu_finetune_cpu_fallback"
-            return res
-
         # Ensure inline citations
-        cited_answer = ensure_inline_citations(current_answer, source_units, current_spans_raw)
+        cited_answer = ensure_inline_citations(current_answer, included, refined_spans)
         cited_answer = re.sub(r"[,;\s]*\[\s*$", "", cited_answer).strip()
-        refined_spans = current_spans_raw
 
         trace = self.log_action(
             "gpu_finetune_summarization_completed",
@@ -160,8 +149,8 @@ class GPUFinetuneSummarizerAgent(BaseAgent):
 
         return {
             "answer": cited_answer,
-            "claims": current_claims,
-            "evidence_spans": [s.to_dict() if hasattr(s, "to_dict") else s for s in refined_spans],
+            "claims": claims,
+            "evidence_spans": refined_spans,
             "critic_action": critic_action,
             "critic_feedback": {
                 "action": critic_action,

@@ -41,7 +41,7 @@ class HybridSummarizerAgent(BaseAgent):
         if caps.get("gpu_finetune", {}).get("online") or caps.get("gpu_ft", {}).get("online"):
             try:
                 selected_backend = "gpu_finetune_dual_qlora"
-                out = self._gpu_finetune.run(state)
+                out = self._gpu_finetune.run_in_mode(state, "gpu_finetune")
             except Exception as exc:
                 self.logger.warning(f"[Hybrid Summarizer] GPU Finetune failed ({exc}), cascading...")
 
@@ -49,7 +49,7 @@ class HybridSummarizerAgent(BaseAgent):
         if not out.get("answer") and caps.get("kaggle_max", {}).get("online") and caps.get("kaggle_max", {}).get("has_vllm_32b"):
             try:
                 selected_backend = "gpu_max_32b"
-                out = self._gpu_max.run(state)
+                out = self._gpu_max.run_in_mode(state, "gpu_max")
             except Exception as exc:
                 self.logger.warning(f"[Hybrid Summarizer] GPU Max 32B failed ({exc}), cascading...")
 
@@ -57,7 +57,7 @@ class HybridSummarizerAgent(BaseAgent):
         if not out.get("answer"):
             try:
                 selected_backend = "cpu_max_local"
-                out = self._cpu_max.run(state)
+                out = self._cpu_max.run_in_mode(state, "cpu_max")
             except Exception as exc:
                 self.logger.warning(f"[Hybrid Summarizer] Local CPU Max failed ({exc}), cascading to Gemini fallback...")
 
@@ -65,13 +65,13 @@ class HybridSummarizerAgent(BaseAgent):
         if not out.get("answer") and caps.get("gemini", {}).get("online"):
             try:
                 selected_backend = "gemini_2.5_flash_fallback"
-                out = self._gemini.run(state)
+                out = self._gemini.run_in_mode(state, "gemini")
             except Exception as exc:
                 self.logger.warning(f"[Hybrid Summarizer] Gemini fallback failed ({exc})")
 
         # Emergency fallback if all failed
         if not out.get("answer"):
-            out = self._cpu_max.run(state)
+            out = self._cpu_max.run_in_mode(state, "cpu_max")
             selected_backend = "cpu_max_emergency"
 
         trace = self.log_action(
@@ -80,7 +80,7 @@ class HybridSummarizerAgent(BaseAgent):
                 "selected_generator_backend": selected_backend,
                 "generator_model_family": out.get("generator_model_family", selected_backend),
                 "complexity": complexity,
-                "critic_action": out.get("critic_action", "approve"),
+                "critic_action": out.get("critic_action", "lower_confidence"),
             },
         )
         existing_traces = list(out.get("reasoning_trace") or [])

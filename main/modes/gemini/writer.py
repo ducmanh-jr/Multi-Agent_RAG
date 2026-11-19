@@ -37,6 +37,7 @@ class GeminiWriterAgent(BaseAgent):
             rejected_claims=rejected_claims,
             retrieved_docs=retrieved_docs,
             answer=answer,
+            answer_status=state.get("answer_status"),
             evidence_spans=evidence_spans,
         )
         report_data["engine"] = "Gemini_Cloud_Agentic"

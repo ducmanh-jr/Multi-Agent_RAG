@@ -18,6 +18,7 @@ from agents.agent1_retrieval.tools.bm25 import SimpleBM25
 from agents.agent1_retrieval.tools.fts5_search import SQLiteFTS5Searcher
 from agents.agent1_retrieval.tools.hybrid import reciprocal_rank_fusion
 from core.base_agent import BaseAgent
+from core.handoff_inputs import is_focused_retrieval
 from core.state import AgentState
 from core.supervisor import supervisor_planner
 from core.tools import load_or_parse_selected_pdf
@@ -133,7 +134,7 @@ class CPUMinRetrievalAgent(BaseAgent):
 
         # 2. Retrieval Strategy:
         # If this is a general summary/overview query: sample chunks distributed across ALL pages of ALL documents!
-        if is_summary_query and active_pool:
+        if is_summary_query and active_pool and not is_focused_retrieval(state):
             docs_by_id: dict[str, dict[int, list[dict[str, Any]]]] = {}
             for chunk in active_pool:
                 d_id = str(chunk.get("doc_id", "doc"))

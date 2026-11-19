@@ -19,6 +19,7 @@ from agents.agent1_retrieval.tools.fts5_search import SQLiteFTS5Searcher
 from agents.agent1_retrieval.tools.hybrid import reciprocal_rank_fusion
 from agents.agent1_retrieval.tools.perspective import generate_research_perspectives
 from core.base_agent import BaseAgent
+from core.handoff_inputs import is_focused_retrieval
 from core.state import AgentState
 from core.supervisor import supervisor_planner
 from core.tools import load_or_parse_selected_pdf
@@ -62,6 +63,7 @@ class CPUMaxRetrievalAgent(BaseAgent):
         evidence_gaps = state.get("evidence_gaps", [])
         seen_chunks = state.get("seen_chunks", []) or []
         plan_subs = state.get("sub_queries") or []
+        focused = is_focused_retrieval(state)
         required_entities = state.get("required_entities") or []
         top_k = int(state.get("top_k") or 8)
 
@@ -109,7 +111,7 @@ class CPUMaxRetrievalAgent(BaseAgent):
         # 2. Retrieval Strategy:
         # If this is a general summary/overview query: sample chunks distributed across representative pages!
         perspectives = []
-        if is_summary_query and active_pool:
+        if is_summary_query and active_pool and not focused:
             docs_by_id: dict[str, dict[int, list[dict[str, Any]]]] = {}
             for chunk in active_pool:
                 d_id = str(chunk.get("doc_id", "doc"))
@@ -143,13 +145,13 @@ class CPUMaxRetrievalAgent(BaseAgent):
         else:
             # Multi-perspective STORM expansion (bypassed if Ollama local server is offline)
             from utils.llm_client import probe_ollama_models
-            ollama_stat = probe_ollama_models(timeout=1.5)
-            if ollama_stat.get("online"):
+            if not focused and probe_ollama_models(timeout=1.5).get("online"):
                 perspectives, storm_subs = generate_research_perspectives(clean_q)
             else:
                 perspectives, storm_subs = [], []
             combined_queries = []
-            for q_cand in [clean_q] + list(plan_subs) + list(storm_subs):
+            query_candidates = [*plan_subs, clean_q] if focused else [clean_q, *plan_subs, *storm_subs]
+            for q_cand in query_candidates:
                 if q_cand and q_cand not in combined_queries:
                     combined_queries.append(q_cand)
             combined_queries = combined_queries[:5]

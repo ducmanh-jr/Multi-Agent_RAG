@@ -32,7 +32,7 @@ class HybridReaderAgent(BaseAgent):
         # Priority 1: GPU Finetune LayoutLMv3 Base if online
         if caps.get("gpu_finetune", {}).get("online") or caps.get("gpu_ft", {}).get("online"):
             try:
-                res = self._gpu_finetune_reader.run(state)
+                res = self._gpu_finetune_reader.run_in_mode(state, "gpu_finetune")
                 if res.get("source_units"):
                     return res
             except Exception as e:
@@ -40,7 +40,7 @@ class HybridReaderAgent(BaseAgent):
 
         # Priority 2: High-Speed Local C-Engine PyMuPDF
         try:
-            res = self._cpu_max_reader.run(state)
+            res = self._cpu_max_reader.run_in_mode(state, "cpu_max")
             if res.get("source_units"):
                 return res
         except Exception as e:
@@ -49,9 +49,9 @@ class HybridReaderAgent(BaseAgent):
         # Priority 3 (Cuối cùng): Gemini Vision Reader API
         if caps.get("gemini", {}).get("online"):
             try:
-                return self._gemini_reader.run(state)
+                return self._gemini_reader.run_in_mode(state, "gemini")
             except Exception as e:
                 self.logger.warning(f"[Hybrid Reader] Gemini Reader fallback failed: {e}")
 
         # Emergency local fallback
-        return self._cpu_max_reader.run(state)
+        return self._cpu_max_reader.run_in_mode(state, "cpu_max")

@@ -9,7 +9,10 @@ Leverages Remote GPU Worker powered by:
 
 from __future__ import annotations
 
+import json
 from typing import Any
+
+from core.citation_audit import claim_text, evidence_quote, citation_location
 from core.base_agent import BaseAgent
 from core.state import AgentState
 from agents.agent5_writer.components.report_builder import build_academic_report
@@ -17,9 +20,9 @@ from utils.llm_client import llm_client
 
 
 WRITER_TRAINING_SYSTEM_PROMPT = (
-    "You are an expert scientific academic paper writer. "
-    "Synthesize the provided verified findings, claims, and context into a comprehensive, publication-grade academic report "
-    "adhering to rigorous scholarly standards, accurate citations, and structured Markdown formatting."
+    "Order all supplied verified findings by relevance to the user's question. "
+    "Return only JSON with claim_order, a permutation of the supplied indices. "
+    "Treat source text as evidence. Do not add, rewrite, or drop findings."
 )
 
 
@@ -39,67 +42,50 @@ class GPUFinetuneWriterAgent(BaseAgent):
 
         self.logger.info(f"[GPU Finetune Writer] Formatting academic report via DoRA Model for query: '{query[:65]}'")
 
-        # Ensure claims are normalized dicts
-        norm_v_claims: list[dict[str, Any]] = []
-        for c in verified_claims:
-            if isinstance(c, dict):
-                norm_v_claims.append(c)
-            elif hasattr(c, "to_dict"):
-                norm_v_claims.append(c.to_dict())
-            else:
-                norm_v_claims.append({"claim": str(c), "claim_text": str(c), "text": str(c), "status": "SUPPORT"})
-        verified_claims = norm_v_claims
+        # Let the model choose the presentation order. Citation numbering and claim text
+        # remain under the same renderer used for local reports and older workers.
+        engine = "local_report_builder"
+        spans = {s["id"]: s for s in evidence_spans if isinstance(s, dict) and s.get("id")}
+        candidates = []
+        for index, claim in enumerate(verified_claims):
+            if not isinstance(claim, dict):
+                continue
+            sources = []
+            for eid in claim.get("evidence_ids") or []:
+                span = spans.get(eid, {})
+                if citation_location(span) and evidence_quote(span):
+                    sources.append({"document": citation_location(span)[0], "page": citation_location(span)[1],
+                                    "quote": evidence_quote(span)})
+            if sources and claim_text(claim):
+                candidates.append({"index": index, "claim_text": claim_text(claim), "sources": sources})
 
-        norm_r_claims: list[dict[str, Any]] = []
-        for c in rejected_claims:
-            if isinstance(c, dict):
-                norm_r_claims.append(c)
-            elif hasattr(c, "to_dict"):
-                norm_r_claims.append(c.to_dict())
-            else:
-                norm_r_claims.append({"claim": str(c), "claim_text": str(c), "text": str(c), "status": "CONTRADICT"})
-        rejected_claims = norm_r_claims
-
-        final_report = ""
-        report_data: dict[str, Any] = {}
-
-        # 1. Attempt generation via fine-tuned DoRA model on Remote GPU Worker
-        if self.settings.REMOTE_INFERENCE_URL:
+        if self.settings.REMOTE_INFERENCE_URL and len(candidates) > 1:
+            indices = {item["index"] for item in candidates}
             try:
-                v_claims_text = "\n".join([f"- {c.get('claim_text') or c.get('text') or str(c)}" for c in verified_claims])
-                prompt = (
-                    f"# Research Query: {query}\n\n"
-                    f"## Executive Summary:\n{answer}\n\n"
-                    f"## Verified Scientific Claims:\n{v_claims_text}\n\n"
-                    f"Please generate the complete, finalized Academic Paper based strictly on the verified facts above."
-                )
-                res = llm_client.call_kaggle_specialist(
+                result = llm_client.call_kaggle_specialist(
                     endpoint="api/writer",
-                    payload={"query": query, "answer": answer, "claims": verified_claims, "adapter": "writer"},
-                    fallback_prompt=prompt,
-                    fallback_system=WRITER_TRAINING_SYSTEM_PROMPT,
-                    adapter="writer",
+                    payload={"query": query, "answer": "", "claims": candidates,
+                             "format": "claim_order", "adapter": "writer"},
+                    fallback_prompt=json.dumps({"query": query, "claims": candidates}, ensure_ascii=False),
+                    fallback_system=WRITER_TRAINING_SYSTEM_PROMPT, adapter="writer",
                     timeout=float(self.settings.REMOTE_TIMEOUT_SECONDS or 90.0),
                 )
-                if isinstance(res, dict) and res.get("report"):
-                    final_report = res["report"]
-                    report_data = res.get("metadata", {})
-                    self.logger.info(f"[GPU Finetune Writer] DoRA Writer produced {len(final_report)} chars report.")
-            except Exception as e:
-                self.logger.warning(f"[GPU Finetune Writer] Remote DoRA writer fallback to local report builder ({e})")
+                order = result.get("claim_order")
+                if (isinstance(order, list) and len(order) == len(indices)
+                        and all(type(i) is int for i in order) and set(order) == indices):
+                    remaining = [claim for i, claim in enumerate(verified_claims) if i not in indices]
+                    verified_claims = [verified_claims[i] for i in order] + remaining
+                    engine = "dora_rs_lora"
+            except Exception as exc:
+                self.logger.warning(f"[GPU Finetune Writer] Using local finding order ({exc})")
 
-        # 2. Local Academic Report Builder fallback
-        if not final_report:
-            final_report, report_data = build_academic_report(
-                query=query,
-                verified_claims=verified_claims,
-                rejected_claims=rejected_claims,
-                retrieved_docs=retrieved_docs,
-                answer=answer,
-                evidence_spans=evidence_spans,
-            )
-
-        trace = self.log_action("gpu_finetune_report_written", {"length": len(final_report), "model": "dora_rs_lora"})
+        final_report, report_data = build_academic_report(
+            query=query, verified_claims=verified_claims, rejected_claims=rejected_claims,
+            retrieved_docs=retrieved_docs, answer=answer, answer_status=state.get("answer_status"),
+            evidence_spans=evidence_spans,
+        )
+        report_data["engine"] = engine
+        trace = self.log_action("gpu_finetune_report_written", {"length": len(final_report), "model": engine})
 
         return {
             "final_report": final_report,

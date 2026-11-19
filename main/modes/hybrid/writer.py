@@ -44,11 +44,11 @@ class HybridWriterAgent(BaseAgent):
         # Priority 1 (Cao nhất): GPU Finetune DoRA + rsLoRA Writer Model (if online)
         if caps.get("gpu_finetune", {}).get("online") or caps.get("gpu_ft", {}).get("online"):
             try:
-                res = self._gpu_finetune_writer.run(state)
+                res = self._gpu_finetune_writer.run_in_mode(state, "gpu_finetune")
                 if res.get("final_report") and len(res["final_report"].strip()) > 100:
                     final_report = res["final_report"]
                     report_data = res.get("written_report_data", {})
-                    writer_backend = "gpu_finetune_dora_rs_lora"
+                    writer_backend = report_data.get("engine", "local_report_builder")
             except Exception as e:
                 self.logger.warning(f"[Hybrid Writer] GPU Finetune Writer failed ({e}), falling back...")
 
@@ -60,6 +60,7 @@ class HybridWriterAgent(BaseAgent):
                 rejected_claims=rejected_claims,
                 retrieved_docs=retrieved_docs,
                 answer=answer,
+                answer_status=state.get("answer_status"),
                 evidence_spans=evidence_spans,
             )
             writer_backend = "local_academic_report_builder"
@@ -67,7 +68,7 @@ class HybridWriterAgent(BaseAgent):
         # Priority 3 (Cuối cùng): Gemini Writer fallback nếu cả 2 trên không tạo được báo cáo
         if not final_report and caps.get("gemini", {}).get("online"):
             try:
-                res = self._gemini_writer.run(state)
+                res = self._gemini_writer.run_in_mode(state, "gemini")
                 final_report = res.get("final_report", "")
                 report_data = res.get("written_report_data", {})
                 writer_backend = "gemini_writer_fallback"

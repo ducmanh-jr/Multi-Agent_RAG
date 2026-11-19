@@ -21,6 +21,7 @@ from typing import Any
 
 from agents.agent1_retrieval.tools.bm25 import SimpleBM25
 from core.base_agent import BaseAgent
+from core.handoff_inputs import focus_matches, revision_terms
 from core.state import AgentState, AtomicClaim, EvidenceSpan
 from core.verifier import evaluate_inner_critic_fast
 from utils.domain_guard import (
@@ -477,6 +478,7 @@ class CPUMinSummarizerAgent(BaseAgent):
     def run(self, state: AgentState) -> dict[str, Any]:
         query = state.get("query") or state.get("question", "")
         clean_q = query.strip()
+        focus_terms = revision_terms(state)
         raw_units = state.get("source_units", []) or []
         source_units = [
             u.to_dict()
@@ -681,8 +683,10 @@ class CPUMinSummarizerAgent(BaseAgent):
                         score += 1.0
                     if re.match(r"^(?:ảnh|hình|nguồn|bảng|theo|chú thích)\s*[:.]", text, re.IGNORECASE):
                         score -= 5.0
-                    return score
+                    return score + 3 * focus_matches(text, focus_terms)
 
+                if focus_terms:
+                    d_passages.sort(key=lambda item: focus_matches(item[1], focus_terms), reverse=True)
                 core_candidate = max(d_passages[:10], key=_score_core_passage)
                 core_s, core_passage, core_p, core_u = core_candidate
                 current_ref = ref_idx
@@ -794,7 +798,15 @@ class CPUMinSummarizerAgent(BaseAgent):
                     page_passages.setdefault(p_no, []).append((s, passage, u))
 
             sorted_pages = sorted(page_passages.keys())
-            if len(sorted_pages) > 6:
+            if focus_terms:
+                for passages in page_passages.values():
+                    passages.sort(key=lambda item: focus_matches(item[1], focus_terms), reverse=True)
+                selected_pages = sorted(
+                    sorted_pages,
+                    key=lambda page: focus_matches(page_passages[page][0][1], focus_terms),
+                    reverse=True,
+                )[:6]
+            elif len(sorted_pages) > 6:
                 step = len(sorted_pages) / 6.0
                 selected_pages = [sorted_pages[int(i * step)] for i in range(6)]
             else:
@@ -913,6 +925,7 @@ class CPUMinSummarizerAgent(BaseAgent):
                     + tech_hits * 8
                     + req_ent_hits * 3
                     + quote_hits * 25
+                    + min(12, 3 * focus_matches(s, focus_terms))
                 )
 
                 # Direct Definition / Section Heading Bonus:

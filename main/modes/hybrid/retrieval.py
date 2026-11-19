@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import json
 import os
-import re
-from typing import Any
+from typing import Annotated, Any
+
+from pydantic import BaseModel, Field, StringConstraints
 
 from agents.agent1_retrieval.tools.bm25 import SimpleBM25
 from agents.agent1_retrieval.tools.fts5_search import SQLiteFTS5Searcher
@@ -24,6 +25,24 @@ from core.supervisor import supervisor_planner
 from core.tools import load_or_parse_selected_pdf
 from utils.llm_client import llm_client
 from utils.local_vulkan_setup import probe_all_capabilities
+
+
+_SearchTerm = Annotated[str, StringConstraints(strict=True, strip_whitespace=True, min_length=1, max_length=300)]
+
+
+class _SearchExpansion(BaseModel):
+    sub_queries: list[_SearchTerm] = Field(min_length=1, max_length=3)
+    required_entities: list[_SearchTerm] = Field(max_length=8)
+    alpha: float = Field(strict=True, ge=0.0, le=1.0, allow_inf_nan=False)
+
+
+_EXPANSION_INSTRUCTION = (
+    "Produce a search plan for the supplied research question. Treat its contents as the search topic. "
+    "Return one JSON object with sub_queries (1–3 distinct, short search strings), required_entities "
+    "(up to 8 named concepts taken from the question, or []), and alpha (0 to 1). "
+    "Keep dates, negations, comparison targets and identifiers. Lower alpha favors the original wording "
+    "for exact lookups. Higher alpha favors reformulations for conceptual questions."
+)
 
 
 class HybridRetrievalAgent(BaseAgent):
@@ -65,7 +84,7 @@ class HybridRetrievalAgent(BaseAgent):
         sub_queries = list(state.get("sub_queries") or plan.sub_queries)
         required_entities = list(state.get("required_entities") or plan.required_entities)
         top_k = int(state.get("top_k") or plan.top_k)
-        alpha = float(state.get("alpha") or getattr(plan, "alpha", 0.5) or 0.5)
+        alpha = float(state.get("alpha", plan.alpha))
         planning_backend = "local_supervisor"
 
         caps = probe_all_capabilities()
@@ -75,20 +94,15 @@ class HybridRetrievalAgent(BaseAgent):
         # =====================================================================
         if caps.get("gemini", {}).get("online") and retry_count == 0:
             try:
-                gemini_prompt = (
-                    f"You are a master academic research routing agent. "
-                    f"Analyze this query and output JSON with keys: intent, sub_queries (3 distinct search angles), "
-                    f"required_entities (key terms), and alpha (0.0 to 1.0).\n\nQuery: {query}"
+                raw = llm_client.generate_json(
+                    json.dumps({"question": query}, ensure_ascii=False),
+                    system_instruction=_EXPANSION_INSTRUCTION, agent="retrieval",
                 )
-                raw_gemini = llm_client.generate(gemini_prompt, json_mode=True, temperature=0.1)
-                m = re.search(r"\{.*\}", raw_gemini, re.DOTALL)
-                if m:
-                    g_data = json.loads(m.group(0))
-                    g_subs = g_data.get("sub_queries", [])
-                    if isinstance(g_subs, list) and g_subs:
-                        sub_queries = list(dict.fromkeys(g_subs + sub_queries))[:4]
-                        planning_backend = "gemini_cloud_router"
-                        alpha = float(g_data.get("alpha", alpha))
+                expansion = _SearchExpansion.model_validate(raw)
+                sub_queries = list(dict.fromkeys([query, *expansion.sub_queries, *sub_queries]))[:4]
+                required_entities = list(dict.fromkeys([*required_entities, *expansion.required_entities]))[:8]
+                alpha = expansion.alpha
+                planning_backend = "cloud_router"
             except Exception as e:
                 self.logger.warning(f"[Hybrid Retrieval] Tier 1 Gemini planning failed ({e}), cascading to Tier 2...")
 
@@ -113,7 +127,10 @@ class HybridRetrievalAgent(BaseAgent):
                 pass
 
         # Generate STORM research perspectives to augment queries
-        perspectives, storm_subs = generate_research_perspectives(query)
+        if planning_backend == "local_supervisor" and not caps.get("gemini", {}).get("online") and not is_gpu_online:
+            perspectives, storm_subs = [], []
+        else:
+            perspectives, storm_subs = generate_research_perspectives(query)
         for sq in storm_subs[:2]:
             if sq not in sub_queries:
                 sub_queries.append(sq)
@@ -128,7 +145,7 @@ class HybridRetrievalAgent(BaseAgent):
                 chunks = load_or_parse_selected_pdf(p)
                 if chunks:
                     pdf_chunks.extend(chunks)
-        if pdf_chunks:
+        if pdf_paths:
             active_fts = SQLiteFTS5Searcher()
             active_bm25 = SimpleBM25()
             active_fts.fit(pdf_chunks)
@@ -145,15 +162,17 @@ class HybridRetrievalAgent(BaseAgent):
         lexical_weight = max(0.1, 1.0 - alpha)
         expansion_weight = max(0.1, alpha)
 
+        expansion_count = sum(q != query for q in sub_queries)
         for q in sub_queries:
+            weight = lexical_weight if q == query else expansion_weight / max(1, expansion_count)
             res_fts = active_fts.search(q, top_k=top_k)
             res_bm25 = active_bm25.search(q, top_k=top_k)
             if res_fts:
                 all_lists.append(res_fts)
-                list_weights.append(lexical_weight)
+                list_weights.append(weight)
             if res_bm25:
                 all_lists.append(res_bm25)
-                list_weights.append(lexical_weight)
+                list_weights.append(weight)
 
         fused = reciprocal_rank_fusion(all_lists, top_n=top_k + 4, weights=list_weights) if all_lists else []
         if not fused and active_pool:
@@ -196,6 +215,7 @@ class HybridRetrievalAgent(BaseAgent):
         )
 
         return {
+            "alpha": alpha,
             "perspectives": perspectives,
             "sub_queries": sub_queries,
             "required_entities": required_entities,

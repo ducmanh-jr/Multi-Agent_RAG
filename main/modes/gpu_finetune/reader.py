@@ -58,7 +58,7 @@ class GPUFinetuneReaderAgent(BaseAgent):
             source_units.append(unit.to_dict())
 
         # 2. LayoutLMv3 Document Layout Analysis
-        extracted_tables = []
+        extracted_tables: list[tuple[int, str]] = []
         if pdf_path and os.path.exists(pdf_path):
             # Check if remote LayoutLMv3 worker endpoint is available
             if self.settings.REMOTE_INFERENCE_URL:
@@ -70,7 +70,13 @@ class GPUFinetuneReaderAgent(BaseAgent):
                     )
                     if layout_resp.status_code == 200:
                         layout_data = layout_resp.json()
-                        extracted_tables = layout_data.get("extracted_tables", [])
+                        for entry in layout_data.get("extracted_tables", []):
+                            if not isinstance(entry, dict):
+                                continue  # Legacy string-only detections have no verifiable page.
+                            page = entry.get("page_no")
+                            table = entry.get("text")
+                            if type(page) is int and page in pages_covered and isinstance(table, str) and table.strip():
+                                extracted_tables.append((page, table.strip()))
                         document_schema = layout_data.get("document_schema", {})
                         self.logger.info(f"[GPU Finetune Reader] LayoutLMv3 parsed {len(extracted_tables)} tables/structures.")
                 except Exception as e:
@@ -81,15 +87,15 @@ class GPUFinetuneReaderAgent(BaseAgent):
                 for p in sorted(pages_covered)[:2]:
                     tbl = extract_table_or_equations_tool(pdf_path, p)
                     if tbl and tbl.strip():
-                        extracted_tables.append(tbl.strip())
+                        extracted_tables.append((p, tbl.strip()))
 
         # 3. Augment source units with extracted tables if any
-        for t_idx, tbl_str in enumerate(extracted_tables[:2]):
+        for t_idx, (page, tbl_str) in enumerate(extracted_tables[:2]):
             t_unit = SourceUnit(
                 id=f"table_layoutlmv3_{t_idx + 1}",
-                text=f"[LayoutLMv3 Extracted Table]:\n{tbl_str}",
+                text=tbl_str,
                 doc_id=str(os.path.basename(pdf_path) if pdf_path else "extracted_tables"),
-                page_no=list(pages_covered)[0] if pages_covered else 1,
+                page_no=page,
                 character_offset=curr_offset,
             )
             curr_offset += len(t_unit.text) + 1

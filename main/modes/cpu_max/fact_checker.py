@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any
 from core.base_agent import BaseAgent
 from core.state import AgentState, EvidenceGap
+from core.verifier import review_abstention, review_claims
 from agents.agent4_fact_checker.components.claim_extractor import ClaimExtractor
 from agents.agent4_fact_checker.components.judge import FactCheckJudge
 from agents.agent4_fact_checker.components.numeric_verifier import verify_numbers_in_claim
@@ -48,33 +49,18 @@ class CPUMaxFactCheckerAgent(BaseAgent):
                 "reasoning_trace": [trace],
             }
 
-        # Zero Hallucination: honest refusal verification
-        critic_fb = state.get("critic_feedback", {}) or {}
-        if (
-            critic_fb.get("reason") == "out_of_domain"
-            or "hoàn toàn không được đề cập" in answer
-            or "không được đề cập" in answer
-            or "Đánh giá tương quan:" in answer
-            or "không cùng một hệ quy chiếu" in answer
-        ):
-            trace = self.log_action("out_of_domain_verified", {"status": "support"})
-            return {
-                "fact_check_label": "support",
-                "verified_claims": [
-                    {
-                        "claim": "Tài liệu nguồn không đề cập đến thông tin câu hỏi.",
-                        "text": "Tài liệu nguồn không đề cập đến thông tin câu hỏi.",
-                        "status": "support",
-                        "rationale": "Xác nhận tài liệu nguồn không chứa thông tin của câu hỏi (Zero Hallucination).",
-                        "confidence": 1.0,
-                    }
-                ],
-                "rejected_claims": [],
-                "evidence_gaps": [],
-                "reasoning_trace": [trace],
-            }
+        if self.judge.classifier is None:
+            result = review_claims(state)
+            result.setdefault("reasoning_trace", []).append(
+                self.log_action("cpu_max_fact_check_completed", {"label": result["fact_check_label"]}))
+            return result
+        refusal = review_abstention(state)
+        if refusal is not None:
+            return refusal
 
-        ev_texts = [e.get("quote", "") if isinstance(e, dict) else str(e) for e in evidence_spans]
+        original_text = [str(u.get("text") or "") for u in (source_units or retrieved_docs)]
+        ev_texts = [e["quote"] for e in evidence_spans if isinstance(e, dict) and e.get("quote")
+                    and any(e["quote"] in text for text in original_text)]
         all_sources = list(retrieved_docs) + [c for c in seen_chunks if c not in retrieved_docs]
         unit_texts = [u.get("text", "") for u in source_units if isinstance(u, dict)]
         context_corpus = " ".join([d.get("text", "") for d in all_sources] + ev_texts + unit_texts)
@@ -111,6 +97,7 @@ class CPUMaxFactCheckerAgent(BaseAgent):
                 status = "not_enough_info"
                 eval_res["rationale"] = f"Cảnh báo mốc thời gian: {date_reason}"
 
+            eval_res["status"] = status
             statuses.append(status)
             if status == "support":
                 verified_claims.append(eval_res)
@@ -118,16 +105,9 @@ class CPUMaxFactCheckerAgent(BaseAgent):
                 rejected_claims.append(eval_res)
                 evidence_gaps.append(EvidenceGap(missing_aspect=c_text[:120], suggested_query=c_text).to_dict())
 
-        # Consensus labeling: if verified claims exist and outnumber contradictions, approve
-        has_contradict = any(s == "contradict" for s in statuses)
-        if verified_claims and len(verified_claims) >= len(rejected_claims):
-            consensus_label = "support"
-        elif has_contradict and not verified_claims:
+        consensus_label = "support" if verified_claims and not rejected_claims else "not_enough_info"
+        if "contradict" in statuses:
             consensus_label = "contradict"
-        elif verified_claims:
-            consensus_label = "support"
-        else:
-            consensus_label = "not_enough_info"
 
         trace = self.log_action(
             "cpu_max_fact_check_completed",
