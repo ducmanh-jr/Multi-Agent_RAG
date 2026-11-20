@@ -483,6 +483,13 @@ class WorkerManager:
         self._pgid = None
         self.active_worker = None
 
+        if hasattr(self, "_log_file") and self._log_file:
+            try:
+                self._log_file.close()
+            except Exception:
+                pass
+            self._log_file = None
+
         # Remove worker.pgid file if present
         pgid_file = Path(self.project_dir) / "kaggle" / "worker.pgid"
         if pgid_file.exists():
@@ -553,11 +560,16 @@ class WorkerManager:
         """
         log_dir = Path(self.project_dir) / "kaggle"
         log_dir.mkdir(parents=True, exist_ok=True)
-        log_file = open(log_dir / log_filename, "a", encoding="utf-8", errors="ignore")
+        if hasattr(self, "_log_file") and self._log_file:
+            try:
+                self._log_file.close()
+            except Exception:
+                pass
+        self._log_file = open(log_dir / log_filename, "a", encoding="utf-8", errors="ignore")
 
         proc = subprocess.Popen(
             cmd,
-            stdout=log_file,
+            stdout=self._log_file,
             stderr=subprocess.STDOUT,
             start_new_session=True,
             cwd=str(Path(self.project_dir) / "kaggle"),
@@ -573,7 +585,7 @@ class WorkerManager:
 
         return proc
 
-    async def _poll_worker_ready(self, target_worker: str, url: str, timeout_seconds: int = 90) -> bool:
+    async def _poll_worker_ready(self, target_worker: str, url: str, timeout_seconds: int = 300) -> bool:
         """
         Deep Readiness Polling (P0-4):
         1. Checks child process health; fails-fast immediately if process exits.
@@ -797,7 +809,8 @@ class WorkerManager:
                     "--port", "8002",
                 ]
                 self._proc = self._spawn_process(cmd, "worker_max.log")
-                online = await self._poll_worker_ready("gpu_max", "http://127.0.0.1:8002", timeout_seconds=90)
+                max_timeout = int(os.environ.get("WORKER_MAX_TIMEOUT", "300"))
+                online = await self._poll_worker_ready("gpu_max", "http://127.0.0.1:8002", timeout_seconds=max_timeout)
             else:
                 cmd = [
                     sys.executable, "-m", "uvicorn",
@@ -807,7 +820,8 @@ class WorkerManager:
                     "--app-dir", str(Path(self.project_dir) / "kaggle"),
                 ]
                 self._proc = self._spawn_process(cmd, "worker_finetune.log")
-                online = await self._poll_worker_ready("gpu_finetune", "http://127.0.0.1:8001", timeout_seconds=75)
+                ft_timeout = int(os.environ.get("WORKER_FINETUNE_TIMEOUT", "300"))
+                online = await self._poll_worker_ready("gpu_finetune", "http://127.0.0.1:8001", timeout_seconds=ft_timeout)
 
             if not online:
                 raise RuntimeError(f"Worker {target_worker} không vượt qua kiểm tra readiness (health check / mandatory endpoints).")

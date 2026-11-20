@@ -100,7 +100,7 @@ async def startup_event():
 async def shutdown_event():
     print("[Supervisor] Gateway đang tắt, dọn dẹp GPU worker hiện tại...")
     try:
-        await asyncio.wait_for(worker_manager._terminate_current_worker(), timeout=25.0)
+        await asyncio.wait_for(worker_manager._terminate_current_worker(), timeout=35.0)
     except Exception as e:
         print(f"[Supervisor] Lỗi khi dọn dẹp worker lúc tắt: {e}")
     try:

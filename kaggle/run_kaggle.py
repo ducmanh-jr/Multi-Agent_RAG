@@ -25,18 +25,20 @@ def format_bytes(size):
 def cleanup_cluster(server_process, repo_dir):
     """
     Guaranteed cluster cleanup (P0 fix):
-    1. Gives supervisor process up to 25s to run graceful shutdown (which reaps worker & reclaims VRAM).
+    1. Gives supervisor process up to 40s to run graceful shutdown (which reaps worker & reclaims VRAM).
     2. If supervisor times out, escalates to SIGKILL.
     3. Reads kaggle/worker.pgid to ensure any detached worker process group is explicitly killed.
-    4. Performs safety sweep for lingering processes on Linux.
+    4. Polling confirms PGID is verified dead before unlinking worker.pgid.
+       If still alive, retains worker.pgid and logs P0 error.
+    5. Zero blind/global pkill commands.
     """
     print("\n    🛑 Đang dọn dẹp cụm tiến trình Supervisor & GPU Workers...")
     if server_process and server_process.poll() is None:
         server_process.terminate()
         try:
-            server_process.wait(timeout=25)
+            server_process.wait(timeout=40)
         except subprocess.TimeoutExpired:
-            print("    ⚠️ Supervisor không dừng trong 25s, cưỡng chế kill tiến trình Supervisor...")
+            print("    ⚠️ Supervisor không dừng trong 40s, cưỡng chế kill tiến trình Supervisor...")
             server_process.kill()
             try:
                 server_process.wait(timeout=5)
@@ -47,29 +49,43 @@ def cleanup_cluster(server_process, repo_dir):
     pgid_file = os.path.join(repo_dir, "kaggle", "worker.pgid")
     if os.path.exists(pgid_file):
         try:
-            with open(pgid_file, "r") as f:
+            with open(pgid_file, "r", encoding="utf-8") as f:
                 raw_pid = f.read().strip()
             if raw_pid.isdigit():
                 worker_pgid = int(raw_pid)
                 from kaggle.worker_manager import is_process_group_alive, kill_process_group, SIGKILL, SIGTERM
                 if is_process_group_alive(worker_pgid):
-                    print(f"    ⚠️ Phát hiện Worker Process Group {worker_pgid} còn sống! Cưỡng chế giải phóng...")
+                    print(f"    ⚠️ Phát hiện Worker Process Group {worker_pgid} còn sống! Gửi SIGTERM...")
                     kill_process_group(worker_pgid, SIGTERM)
                     time.sleep(2)
                     if is_process_group_alive(worker_pgid):
+                        print(f"    ⚠️ Worker Process Group {worker_pgid} vẫn còn sống sau 2s! Leo thang SIGKILL...")
                         kill_process_group(worker_pgid, SIGKILL)
-            os.remove(pgid_file)
+
+                # Poll to verify process group is genuinely dead before unlinking PGID file
+                is_dead = False
+                for _ in range(10):  # Poll up to 5.0 seconds
+                    time.sleep(0.5)
+                    if not is_process_group_alive(worker_pgid):
+                        is_dead = True
+                        break
+
+                if is_dead:
+                    try:
+                        os.remove(pgid_file)
+                        print(f"    ✔ Đã xác minh Worker Process Group {worker_pgid} đã chết hoàn toàn và dọn dẹp worker.pgid.")
+                    except Exception as e:
+                        print(f"    ⚠️ Lỗi khi xóa worker.pgid: {e}")
+                else:
+                    print(f"    🛑 LỖI P0: Worker Process Group {worker_pgid} VẪN CÒN SỐNG sau SIGKILL! Giữ lại {pgid_file} để cách ly và điều tra.")
+            else:
+                try:
+                    os.remove(pgid_file)
+                except Exception:
+                    pass
         except Exception as e:
             print(f"    ⚠️ Cảnh báo dọn dẹp worker.pgid: {e}")
 
-    # Safety sweep on Linux
-    try:
-        import platform
-        if platform.system() != "Windows":
-            subprocess.run(["pkill", "-9", "-f", "vllm"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            subprocess.run(["pkill", "-9", "-f", "kaggle_finetune_server"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except Exception:
-        pass
     print("    ✔ Hoàn tất dọn dẹp cụm tiến trình.")
 
 
@@ -309,7 +325,7 @@ def run():
         pass
 
     # Animated progress bar waiting for worker warmup (Wait until Worker A finishes loading weights)
-    total_seconds = 75
+    total_seconds = int(os.environ.get("RUNNER_STARTUP_TIMEOUT", "360"))
     is_ready = False
     with tqdm(total=total_seconds, desc="    ⏳ Nạp mô hình vào 2 GPU", unit="s") as pbar:
         for s in range(total_seconds):
@@ -330,7 +346,7 @@ def run():
                 pass
 
     if not is_ready:
-        print("\n    ❌ LỖI NGHIÊM TRỌNG: Hết thời gian chờ (75s) nhưng GPU Worker chưa đạt trạng thái sẵn sàng (ready)!")
+        print(f"\n    ❌ LỖI NGHIÊM TRỌNG: Hết thời gian chờ ({total_seconds}s) nhưng GPU Worker chưa đạt trạng thái sẵn sàng (ready)!")
         for log_name in ["supervisor.log", "worker_finetune.log"]:
             lf_path = os.path.join(repo_dir, "kaggle", log_name)
             if os.path.exists(lf_path):
@@ -339,7 +355,7 @@ def run():
                     for line in lf.readlines()[-20:]:
                         print("      " + line.strip())
 
-        # Guaranteed cluster cleanup with up to 25s timeout & PGID reaping
+        # Guaranteed cluster cleanup with up to 40s timeout & verified PGID reaping
         cleanup_cluster(server_process, repo_dir)
 
         print("\n    🛑 DỪNG TOÀN BỘ HỆ THỐNG: Khởi chạy thất bại. Tuyệt đối không mở Cloudflare Tunnel.")

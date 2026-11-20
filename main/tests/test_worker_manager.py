@@ -945,7 +945,8 @@ def test_worker_pgid_persisted_and_unlinked_during_lifecycle(worker_manager):
 
 def test_cleanup_cluster_reaps_lingering_worker_pgid():
     """
-    CRITICAL P0: Verify cleanup_cluster in run_kaggle reaps any detached worker process group.
+    CRITICAL P0: Verify cleanup_cluster in run_kaggle reaps any detached worker process group
+    and only unlinks worker.pgid AFTER polling verifies the process group is dead.
     """
     import tempfile
     from kaggle.run_kaggle import cleanup_cluster
@@ -960,17 +961,51 @@ def test_cleanup_cluster_reaps_lingering_worker_pgid():
         mock_server = MagicMock()
         mock_server.poll.return_value = None
 
-        with patch("kaggle.worker_manager.is_process_group_alive", side_effect=[True, False]), \
+        # Call sequence: 1) Initial check (alive), 2) Check after SIGTERM (still alive -> SIGKILL),
+        # 3) Polling check (dead)
+        with patch("kaggle.worker_manager.is_process_group_alive", side_effect=[True, True, False]), \
              patch("kaggle.worker_manager.kill_process_group") as mock_kill, \
              patch("time.sleep"):
             cleanup_cluster(mock_server, tmp_dir)
-            # Supervisor terminated with up to 25s wait
+            # Supervisor terminated with up to 40s wait
             mock_server.terminate.assert_called_once()
-            mock_server.wait.assert_called_with(timeout=25)
-            # Detached worker PGID killed
-            mock_kill.assert_called_with(54321, 15)  # SIGTERM
-            # worker.pgid unlinked
+            mock_server.wait.assert_called_with(timeout=40)
+            # SIGTERM then SIGKILL sent
+            assert mock_kill.call_count == 2
+            mock_kill.assert_any_call(54321, 15)  # SIGTERM
+            mock_kill.assert_any_call(54321, 9)   # SIGKILL
+            # worker.pgid unlinked only after verified dead
             assert not os.path.exists(pgid_file)
+
+
+def test_cleanup_cluster_retains_pgid_file_if_worker_remains_alive_after_sigkill():
+    """
+    CRITICAL P0: If process group remains alive after SIGKILL, worker.pgid MUST be retained.
+    """
+    import tempfile
+    from kaggle.run_kaggle import cleanup_cluster
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        kaggle_dir = os.path.join(tmp_dir, "kaggle")
+        os.makedirs(kaggle_dir, exist_ok=True)
+        pgid_file = os.path.join(kaggle_dir, "worker.pgid")
+        with open(pgid_file, "w") as f:
+            f.write("99999")
+
+        mock_server = MagicMock()
+        mock_server.poll.return_value = None
+
+        # Always alive
+        with patch("kaggle.worker_manager.is_process_group_alive", return_value=True), \
+             patch("kaggle.worker_manager.kill_process_group") as mock_kill, \
+             patch("time.sleep"):
+            cleanup_cluster(mock_server, tmp_dir)
+            # Both SIGTERM and SIGKILL attempted
+            assert mock_kill.call_count >= 2
+            # worker.pgid MUST STILL EXIST because process did not die!
+            assert os.path.exists(pgid_file)
+            with open(pgid_file, "r") as f:
+                assert f.read().strip() == "99999"
 
 
 def test_truthful_capabilities_reporting_excludes_unloaded_models(worker_manager):
