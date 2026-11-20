@@ -1,0 +1,58 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "EvaluationResultSchema",
+  "type": "object",
+  "required": [
+    "run_id",
+    "timestamp",
+    "git_commit",
+    "test_id",
+    "mode",
+    "backend",
+    "status",
+    "scores"
+  ],
+  "properties": {
+    "run_id": { "type": "string" },
+    "timestamp": { "type": "string" },
+    "git_commit": { "type": "string" },
+    "git_branch": { "type": "string" },
+    "test_id": { "type": "string" },
+    "category": { "type": "string" },
+    "mode": { "type": "string" },
+    "backend": { "type": "string" },
+    "model_name": { "type": "string" },
+    "status": {
+      "type": "string",
+      "enum": ["PASS", "FAIL", "BLOCKED", "DEGRADED"]
+    },
+    "detected_intent": { "type": "string" },
+    "intent_correct": { "type": "boolean" },
+    "latency_sec": { "type": "number" },
+    "scores": {
+      "type": "object",
+      "required": [
+        "correctness",
+        "completeness",
+        "groundedness_and_citation",
+        "routing_and_compliance",
+        "uncertainty_calibration",
+        "total_score"
+      ],
+      "properties": {
+        "correctness": { "type": "number", "minimum": 0, "maximum": 4 },
+        "completeness": { "type": "number", "minimum": 0, "maximum": 2 },
+        "groundedness_and_citation": { "type": "number", "minimum": 0, "maximum": 2 },
+        "routing_and_compliance": { "type": "number", "minimum": 0, "maximum": 1 },
+        "uncertainty_calibration": { "type": "number", "minimum": 0, "maximum": 1 },
+        "total_score": { "type": "number", "minimum": 0, "maximum": 10 }
+      }
+    },
+    "answer": { "type": "string" },
+    "citations": { "type": "array" },
+    "verified_claims": { "type": "array" },
+    "evidence_status": { "type": "string" },
+    "fact_check_label": { "type": "string" },
+    "notes": { "type": "array", "items": { "type": "string" } }
+  }
+}

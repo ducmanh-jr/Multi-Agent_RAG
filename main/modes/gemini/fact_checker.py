@@ -157,9 +157,8 @@ YÊU CẦU TRẢ VỀ ĐÚNG ĐỊNH DẠNG JSON HỢP LỆ:
                     json_mode=True,
                 )
                 if res_text:
-                    clean = re.sub(r"^```(?:json)?|```$", "", res_text.strip(), flags=re.MULTILINE)
-                    sanitized = re.sub(r'\\(?![/"\\bfnrtu])', r"\\\\", clean)
-                    batch_parsed = json.loads(sanitized)
+                    from utils.json_repair import extract_and_parse_json
+                    batch_parsed = extract_and_parse_json(res_text)
             except Exception as exc:
                 self.logger.warning(f"[Gemini FactChecker] Batch NLI call fallback to deterministic verifier ({exc})")
 

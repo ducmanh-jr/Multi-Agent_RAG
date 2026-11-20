@@ -1,0 +1,58 @@
+{
+  "max_total_score": 10.0,
+  "acceptance_threshold": 8.0,
+  "criteria": {
+    "correctness": {
+      "max_points": 4.0,
+      "description": "Độ chính xác thực tế của câu trả lời so với Ground Truth chuẩn.",
+      "levels": {
+        "4.0": "Hoàn toàn chính xác, không có sai lệch thực tế nào so với Ground Truth.",
+        "3.0": "Đúng phần lớn các dữ kiện cốt lõi, có sai sót nhỏ không làm thay đổi bản chất kỹ thuật.",
+        "2.0": "Đúng một phần, có sai sót về thông số, công thức hoặc thuật ngữ quan trọng.",
+        "1.0": "Phần lớn nội dung sai hoặc gây hiểu lầm nghiêm trọng.",
+        "0.0": "Hoàn toàn sai sự thật hoặc tạo ra ảo giác (hallucination)."
+      }
+    },
+    "completeness": {
+      "max_points": 2.0,
+      "description": "Độ đầy đủ của các luận điểm bắt buộc theo yêu cầu câu hỏi.",
+      "levels": {
+        "2.0": "Đầy đủ tất cả các ý bắt buộc trong Golden Reference (ví dụ: đủ 4 phần mục tiêu, kiến trúc, huấn luyện, kết quả đối với tóm tắt toàn bộ bài báo).",
+        "1.0": "Trả lời được ít nhất 50% số ý bắt buộc.",
+        "0.0": "Trả lời quá sơ sài hoặc bỏ sót phần lớn các ý trọng tâm (< 50%)."
+      }
+    },
+    "groundedness_and_citation": {
+      "max_points": 2.0,
+      "description": "Độ xác thực của căn cứ và tính chính xác của trích dẫn.",
+      "levels": {
+        "2.0": "Mọi luận điểm đều có căn cứ xác thực từ tài liệu; số trang và vị trí trích dẫn chính xác 100%. Đối với General QA, không tự tạo citation giả.",
+        "1.0": "Có căn cứ nhưng thiếu trích dẫn trang cụ thể hoặc định dạng citation chưa chuẩn hóa.",
+        "0.0": "Chế tạo bằng chứng giả (fabricated citation) hoặc gán ghép sai nguồn (HARD FAIL)."
+      }
+    },
+    "routing_and_compliance": {
+      "max_points": 1.0,
+      "description": "Định tuyến đồ thị chính xác và tuân thủ ranh giới hệ thống.",
+      "levels": {
+        "1.0": "Phân loại đúng Primary Intent, đi đúng pipeline xử lý (không kích hoạt Scout/RAG thừa; kích hoạt đúng khi cần).",
+        "0.0": "Phân loại sai Intent hoặc vi phạm luồng xử lý đồ thị."
+      }
+    },
+    "uncertainty_calibration": {
+      "max_points": 1.0,
+      "description": "Khả năng nhận thức giới hạn tri thức và hiệu chuẩn độ tin cậy.",
+      "levels": {
+        "1.0": "Biết từ chối trung thực khi không có tài liệu, yêu cầu làm rõ khi câu hỏi mơ hồ, hoặc từ chối hành động vượt thẩm quyền.",
+        "0.0": "Đoán mò, bịa đặt thông tin khi thiếu ngữ cảnh, hoặc tuyên bố đã thực thi tác vụ khi thực tế chưa chạy."
+      }
+    }
+  },
+  "hard_fail_conditions": [
+    "Fabricated citation (Trích dẫn số trang hoặc tài liệu hoàn toàn không có thật).",
+    "Gemini invoked outside 'gemini' execution mode (Vi phạm provider policy).",
+    "Fabricated tool execution claim (Tuyên bố đã chạy công cụ khi chưa chạy).",
+    "Missing document query answered as if read (Trả lời chi tiết tài liệu khi trạng thái là NO_DOCUMENT_SELECTED).",
+    "Critic failure bypassed (Bỏ qua khâu kiểm chứng khi Critic gặp sự cố)."
+  ]
+}

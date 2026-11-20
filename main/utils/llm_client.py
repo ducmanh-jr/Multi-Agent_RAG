@@ -50,7 +50,12 @@ class UnifiedLLMClient:
         target_mode = self.settings.get_agent_mode(agent) if agent else self.settings.EXECUTION_MODE
         target_mode = (target_mode or "cpu_max").lower()
 
-        cache_key_str = f"{prompt}___{system_instruction or ''}___{json_mode}" if not agent else f"{prompt}___{system_instruction or ''}___{json_mode}___{agent}"
+        agent_str = agent or "default"
+        cache_key_str = (
+            f"mode={target_mode}___agent={agent_str}___temp={temperature:.2f}___"
+            f"max_tokens={max_tokens}___json={json_mode}___"
+            f"prompt={prompt}___sys={system_instruction or ''}"
+        )
         cache_key = hashlib.sha256(cache_key_str.encode("utf-8")).hexdigest()
         cached = get_cached_llm(cache_key)
         if cached:

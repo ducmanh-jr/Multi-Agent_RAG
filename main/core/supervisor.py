@@ -63,26 +63,27 @@ _AMBIGUOUS_EXACT = {
 }
 
 _TASK_EXECUTION_PATTERNS = [
-    r"\b(chạy\s+code|thực\s+thi\s+(?:lệnh|script|tool|công\s+cụ)|run\s+(?:python|code|script|command|tool)|execute\s+(?:code|command|tool))\b",
+    r"\b(chạy\s+(?:code|chương\s+trình|phần\s+mềm|script|lệnh|ứng\s+dụng)|thực\s+thi\s+(?:lệnh|script|tool|công\s+cụ|chương\s+trình)|run\s+(?:python|code|script|command|tool|program)|execute\s+(?:code|command|tool|script))\b",
     r"\b(xóa\s+file|tạo\s+file|chỉnh\s+sửa\s+file|gửi\s+email|triển\s+khai\s+server|deploy)\b",
     r"\b(tính\s+bằng\s+công\s+cụ|dùng\s+tool|gọi\s+tool|call\s+tool)\b",
 ]
 
 _TASK_ASSISTED_PATTERNS = [
     r"\b(viết\s+(?:code|hàm|chương\s+trình|script|sql|regex|class|api)|lập\s+trình|code\s+python|write\s+(?:a\s+)?(?:python|code|script|function|sql))\b",
+    r"\b(giải\s+thích\s+(?:lệnh|code|hàm|cú\s+pháp|thuật\s+toán|chương\s+trình|script)|explain\s+(?:command|code|syntax))\b",
     r"\b(hướng\s+dẫn\s+(?:cấu\s+hình|cài\s+đặt|triển\s+khai)|how\s+to\s+(?:configure|install|implement|build))\b",
     r"\b(dịch\s+(?:đoạn|câu|văn\s+bản|sang\s+tiếng)|translate\s+(?:this|to|into))\b",
     r"\b(đề\s+xuất\s+(?:phương\s+án|kiến\s+trúc|giải\s+pháp)|refactor\s+đoạn\s+code|debug\s+đoạn\s+code)\b",
 ]
 
 _WEB_RESEARCH_PATTERNS = [
-    r"\b(tìm\s+(?:bài\s+báo|tài\s+liệu|nghiên\s+cứu|công\s+trình)|search\s+papers?|find\s+papers?)\b",
-    r"\b(nghiên\s+cứu\s+mới(?:\s+nhất)?|bài\s+báo\s+mới(?:\s+nhất)?|recent\s+(?:papers?|research)|latest\s+(?:papers?|research|release|version))\b",
+    r"\b(tìm(?:\s+kiếm)?\s+(?:các\s+)?(?:bài\s+báo|tài\s+liệu|nghiên\s+cứu|công\s+trình)|search\s+(?:for\s+)?papers?|find\s+papers?)\b",
+    r"\b(nghiên\s+cứu\s+(?:mới(?:\s+nhất)?|mở\s+rộng|gần\s+đây|hiện\s+đại)|bài\s+báo\s+(?:mới(?:\s+nhất)?|gần\s+đây)|recent\s+(?:papers?|research)|latest\s+(?:papers?|research|release|version))\b",
     r"\b(phiên\s+bản\s+mới\s+nhất|tin\s+tức\s+mới\s+nhất|cập\s+nhật\s+mới\s+nhất|arxiv|openalex)\b",
 ]
 
 _EXPLICIT_DOCUMENT_PATTERNS = [
-    r"\b(tài\s+liệu(?:\s+này|\s+trên)?|trong\s+tài\s+liệu|theo\s+tài\s+liệu)\b",
+    r"\b(tài\s+liệu\s+(?:này|trên|đã\s+chọn|đính\s+kèm)|trong\s+tài\s+liệu|theo\s+tài\s+liệu|dựa\s+vào\s+tài\s+liệu)\b",
     r"\b(pdf(?:\s+này)?|file\s+pdf|trong\s+pdf|tệp\s+này|file\s+này)\b",
     r"\b(bài\s+báo\s+này|trong\s+bài\s+báo|theo\s+bài\s+báo|this\s+paper|the\s+paper|the\s+document|this\s+document|in\s+the\s+pdf)\b",
     r"\b(trang\s+\d+|page\s+\d+|bảng\s+\d+|table\s+\d+|hình\s+\d+|figure\s+\d+)\b",

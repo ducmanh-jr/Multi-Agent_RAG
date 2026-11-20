@@ -1,0 +1,79 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "GoldenTestCaseSchema",
+  "type": "object",
+  "required": ["id", "category", "query", "expected_intent", "golden_reference"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^(GQA|DOC|WEB|MIX|EDGE)-\\d{2}$"
+    },
+    "category": {
+      "type": "string",
+      "enum": ["general_qa", "document_qa", "web_research", "mixed_qa", "edge_cases"]
+    },
+    "query": {
+      "type": "string",
+      "minLength": 3
+    },
+    "expected_intent": {
+      "type": "string",
+      "enum": [
+        "GENERAL_QA",
+        "DOCUMENT_QA",
+        "WEB_RESEARCH",
+        "MIXED_QA",
+        "TASK_ASSISTED_RESPONSE",
+        "TASK_EXECUTION",
+        "CLARIFICATION_REQUIRED",
+        "SAFETY_RESTRICTED",
+        "UNSUPPORTED_CAPABILITY"
+      ]
+    },
+    "target_pdfs": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "target_pdf": {
+      "type": "string"
+    },
+    "simulate_no_pdf": {
+      "type": "boolean"
+    },
+    "timeout_sec": {
+      "type": "number",
+      "default": 30.0
+    },
+    "golden_reference": {
+      "type": "object",
+      "properties": {
+        "key_facts": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "key_concepts": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "must_contain": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "forbidden_claims": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "required_citations": {
+          "type": "object",
+          "properties": {
+            "page_no": { "type": ["integer", "array"] },
+            "keywords": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "is_adversarial_trap": { "type": "boolean" },
+        "expected_abstention": { "type": "boolean" },
+        "key_behavior": { "type": "string" }
+      }
+    }
+  }
+}

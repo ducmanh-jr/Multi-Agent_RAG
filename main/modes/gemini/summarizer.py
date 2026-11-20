@@ -148,10 +148,10 @@ YÊU CẦU TRẢ VỀ ĐÚNG ĐỊNH DẠNG JSON HỢP LỆ (không kèm markdow
         critic_out = SummarizerCriticOutput()
 
         if response_text:
-            clean_json = re.sub(r"^```(?:json)?|```$", "", response_text.strip(), flags=re.MULTILINE).strip()
+            clean_json = response_text.strip()
             try:
-                sanitized_json = re.sub(r'\\(?![/"\\bfnrtu])', r"\\\\", clean_json)
-                data = json.loads(sanitized_json)
+                from utils.json_repair import extract_and_parse_json
+                data = extract_and_parse_json(clean_json)
             except Exception as exc:
                 reason = f"Gemini returned malformed JSON (fail-closed): {exc}"
                 self.logger.error(f"[Gemini Summarizer] {reason}")

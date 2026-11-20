@@ -1,0 +1,103 @@
+{
+  "GQA-01": {
+    "primary_intent": "GENERAL_QA",
+    "needs_scout": false,
+    "needs_retrieval": false,
+    "target_node": "direct_assistant"
+  },
+  "GQA-02": {
+    "primary_intent": "GENERAL_QA",
+    "needs_scout": false,
+    "needs_retrieval": false,
+    "target_node": "direct_assistant"
+  },
+  "GQA-03": {
+    "primary_intent": "TASK_ASSISTED_RESPONSE",
+    "sub_intent": "Translation",
+    "needs_scout": false,
+    "needs_retrieval": false,
+    "target_node": "direct_assistant"
+  },
+  "GQA-04": {
+    "primary_intent": "TASK_ASSISTED_RESPONSE",
+    "sub_intent": "Coding_Or_Guidance",
+    "needs_scout": false,
+    "needs_retrieval": false,
+    "target_node": "direct_assistant"
+  },
+  "DOC-01": {
+    "primary_intent": "DOCUMENT_QA",
+    "needs_scout": false,
+    "needs_retrieval": true,
+    "target_node": "retrieval"
+  },
+  "DOC-02": {
+    "primary_intent": "DOCUMENT_QA",
+    "needs_scout": false,
+    "needs_retrieval": true,
+    "target_node": "retrieval"
+  },
+  "DOC-03": {
+    "primary_intent": "DOCUMENT_QA",
+    "needs_scout": false,
+    "needs_retrieval": true,
+    "target_node": "retrieval"
+  },
+  "DOC-04": {
+    "primary_intent": "DOCUMENT_QA",
+    "needs_scout": false,
+    "needs_retrieval": true,
+    "target_node": "retrieval"
+  },
+  "DOC-05": {
+    "primary_intent": "DOCUMENT_QA",
+    "needs_scout": false,
+    "needs_retrieval": true,
+    "target_node": "retrieval"
+  },
+  "WEB-01": {
+    "primary_intent": "WEB_RESEARCH",
+    "needs_scout": true,
+    "needs_retrieval": true,
+    "target_node": "scout"
+  },
+  "WEB-02": {
+    "primary_intent": "WEB_RESEARCH",
+    "needs_scout": true,
+    "needs_retrieval": true,
+    "target_node": "scout"
+  },
+  "MIX-01": {
+    "primary_intent": "MIXED_QA",
+    "needs_scout": true,
+    "needs_retrieval": true,
+    "target_node": "scout"
+  },
+  "MIX-02": {
+    "primary_intent": "MIXED_QA",
+    "needs_scout": true,
+    "needs_retrieval": true,
+    "target_node": "scout"
+  },
+  "EDGE-01": {
+    "primary_intent": "DOCUMENT_QA",
+    "input_status": "NO_DOCUMENT_SELECTED",
+    "needs_scout": false,
+    "needs_retrieval": false,
+    "target_node": "template_response"
+  },
+  "EDGE-02": {
+    "primary_intent": "CLARIFICATION_REQUIRED",
+    "input_status": "OK",
+    "needs_scout": false,
+    "needs_retrieval": false,
+    "target_node": "template_response"
+  },
+  "EDGE-03": {
+    "primary_intent": "UNSUPPORTED_CAPABILITY",
+    "input_status": "OK",
+    "needs_scout": false,
+    "needs_retrieval": false,
+    "target_node": "template_response"
+  }
+}

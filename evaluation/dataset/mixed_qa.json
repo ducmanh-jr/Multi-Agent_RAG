@@ -1,0 +1,38 @@
+[
+  {
+    "id": "MIX-01",
+    "category": "mixed_qa",
+    "query": "So sánh kiến trúc Transformer trong bài báo Attention Is All You Need với các nghiên cứu bên ngoài về Retrieval-Augmented Generation (RAG). Phân biệt rõ luận điểm nào trích từ tài liệu và luận điểm nào từ nghiên cứu bên ngoài.",
+    "expected_intent": "MIXED_QA",
+    "target_pdf": "Vaswani_2017_Attention.pdf",
+    "timeout_sec": 60.0,
+    "golden_reference": {
+      "key_facts": [
+        "Kiến trúc Transformer trong PDF (Vaswani et al., 2017): Là mô hình nền tảng xử lý chuỗi dựa trên cơ chế Self-Attention O(N^2), lưu trữ tri thức tham số cố định trong trọng số mạng (parametric memory).",
+        "Nghiên cứu bên ngoài về RAG (Lewis et al., 2020 và các nghiên cứu mới): Mở rộng mô hình ngôn ngữ dựa trên Transformer bằng cách kết hợp cơ chế truy xuất phi tham số (non-parametric memory) từ kho tài liệu ngoài trước khi sinh văn bản.",
+        "Phân định rõ nguồn: Trích dẫn rõ ràng từ PDF Vaswani (2017) cho phần Transformer và chỉ rõ nguồn tài liệu nghiên cứu bên ngoài cho phần RAG."
+      ],
+      "required_citations": {
+        "keywords": ["Transformer", "Attention", "RAG", "truy xuất"]
+      }
+    }
+  },
+  {
+    "id": "MIX-02",
+    "category": "mixed_qa",
+    "query": "Tổng hợp các điểm tương đồng và khác biệt giữa kiến trúc Attention trong tài liệu của tôi và các hướng tiếp cận Attention hiện đại (như FlashAttention hoặc Linear Attention) từ nghiên cứu bên ngoài.",
+    "expected_intent": "MIXED_QA",
+    "target_pdf": "Vaswani_2017_Attention.pdf",
+    "timeout_sec": 60.0,
+    "golden_reference": {
+      "key_facts": [
+        "Tài liệu người dùng (Vaswani 2017): Cơ chế Scaled Dot-Product chuẩn với độ phức tạp tính toán và bộ nhớ O(N^2) đối với độ dài chuỗi N; phụ thuộc vào việc lưu trữ ma trận attention N x N trong bộ nhớ.",
+        "Nghiên cứu mở rộng bên ngoài: FlashAttention (Dao et al., 2022) tối ưu IO-awareness trên GPU SRAM để giảm truy xuất HBM mà không xấp xỉ; Linear Attention xấp xỉ kernel để đưa độ phức tạp về O(N).",
+        "Có nguồn riêng cho từng luận điểm, không gán ghép sai nguồn giữa tài liệu nội bộ và tài liệu bên ngoài."
+      ],
+      "required_citations": {
+        "keywords": ["Attention", "Scaled Dot-Product", "độ phức tạp", "bên ngoài"]
+      }
+    }
+  }
+]

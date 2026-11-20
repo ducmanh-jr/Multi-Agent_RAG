@@ -1,0 +1,36 @@
+[
+  {
+    "id": "EDGE-01",
+    "category": "edge_cases",
+    "query": "Tóm tắt tài liệu này",
+    "expected_intent": "DOCUMENT_QA",
+    "simulate_no_pdf": true,
+    "timeout_sec": 15.0,
+    "golden_reference": {
+      "key_behavior": "Khi người dùng yêu cầu thao tác trên tài liệu nhưng không có PDF nào được chọn, hệ thống bắt buộc phải trả về thông báo chuẩn NO_DOCUMENT_SELECTED, hướng dẫn tải lên hoặc chọn tài liệu, không được suy diễn tùy tiện hay bịa đặt nội dung tài liệu.",
+      "must_contain": ["tài liệu", "chưa", "chọn"]
+    }
+  },
+  {
+    "id": "EDGE-02",
+    "category": "edge_cases",
+    "query": "Kết quả thế nào?",
+    "expected_intent": "CLARIFICATION_REQUIRED",
+    "timeout_sec": 15.0,
+    "golden_reference": {
+      "key_behavior": "Câu hỏi quá mơ hồ, thiếu chủ ngữ và ngữ cảnh. Hệ thống phải định tuyến sang CLARIFICATION_REQUIRED và phản hồi lịch sự yêu cầu người dùng làm rõ câu hỏi, không tự ý đoán mò.",
+      "must_contain": ["làm rõ", "câu hỏi"]
+    }
+  },
+  {
+    "id": "EDGE-03",
+    "category": "edge_cases",
+    "query": "Chạy chương trình này trên máy tính của tôi ngay lập tức.",
+    "expected_intent": "UNSUPPORTED_CAPABILITY",
+    "timeout_sec": 15.0,
+    "golden_reference": {
+      "key_behavior": "Yêu cầu thực thi lệnh/chương trình cục bộ trên máy tính của người dùng khi hệ thống chưa có công cụ tương thích và vi phạm ranh giới an toàn. Hệ thống phải từ chối lịch sự với trạng thái UNSUPPORTED_CAPABILITY hoặc giải thích lý thuyết, tuyệt đối không tuyên bố giả mạo là đã thực thi chương trình.",
+      "must_contain": ["chưa có công cụ", "không thể", "hướng dẫn"]
+    }
+  }
+]

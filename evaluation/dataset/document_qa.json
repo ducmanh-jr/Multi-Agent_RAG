@@ -1,0 +1,109 @@
+[
+  {
+    "id": "DOC-01",
+    "category": "document_qa",
+    "query": "Xác định tên bài báo, danh sách tất cả các tác giả và năm xuất bản trong tài liệu Vaswani_2017_Attention.pdf.",
+    "expected_intent": "DOCUMENT_QA",
+    "target_pdf": "Vaswani_2017_Attention.pdf",
+    "timeout_sec": 45.0,
+    "golden_reference": {
+      "key_facts": [
+        "Tên bài báo: Attention Is All You Need",
+        "Tác giả: Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Łukasz Kaiser, Illia Polosukhin",
+        "Tổ chức: Google Brain, Google Research, University of Toronto",
+        "Năm công bố: 2017 (31st Conference on Neural Information Processing Systems - NeurIPS 2017, Long Beach, CA, USA)"
+      ],
+      "required_citations": {
+        "page_no": 1,
+        "keywords": ["Attention Is All You Need", "Vaswani", "Google Brain", "2017"]
+      }
+    }
+  },
+  {
+    "id": "DOC-02",
+    "category": "document_qa",
+    "query": "Hãy tóm tắt toàn bộ bài báo Attention Is All You Need, bao gồm mục tiêu nghiên cứu, kiến trúc mô hình, phương pháp huấn luyện và kết quả thực nghiệm chính.",
+    "expected_intent": "DOCUMENT_QA",
+    "target_pdf": "Vaswani_2017_Attention.pdf",
+    "timeout_sec": 45.0,
+    "golden_reference": {
+      "key_facts": [
+        "Mục tiêu: Đề xuất kiến trúc mạng nơ-ron chuỗi hoàn toàn dựa trên cơ chế Attention (Transformer), loại bỏ hoàn toàn recurrence (RNN) và convolution (CNN) để tăng tốc độ huấn luyện song song hóa.",
+        "Kiến trúc: Encoder-Decoder gồm các khối xếp chồng (stack). Encoder gồm 6 lớp identical, mỗi lớp có 2 sub-layers: Multi-Head Self-Attention và Feed-Forward Network (FFN), kèm residual connection và LayerNorm. Decoder có thêm Masked Multi-Head Attention.",
+        "Cơ chế: Scaled Dot-Product Attention và Multi-Head Attention với Positional Encoding hình sin/cosin.",
+        "Huấn luyện: Tập dữ liệu WMT 2014 English-German và English-French, tối ưu hóa Adam, Warmup learning rate schedule, Dropout và Label Smoothing.",
+        "Kết quả thực nghiệm: Đạt 28.4 BLEU trên WMT 2014 English-to-German (SOTA mới, vượt 2.0 BLEU so với mô hình trước) và 41.8 BLEU (hoặc 41.0 single model) trên English-to-French với chi phí huấn luyện thấp hơn đáng kể."
+      ],
+      "required_citations": {
+        "page_no": [1, 2, 3, 7, 8],
+        "keywords": ["Transformer", "Encoder", "Decoder", "BLEU", "28.4"]
+      }
+    }
+  },
+  {
+    "id": "DOC-03",
+    "category": "document_qa",
+    "query": "Dựa trên bài báo Attention Is All You Need, giải thích chi tiết cơ chế Scaled Dot-Product Attention và Multi-Head Attention. Nêu rõ công thức và lý do tại sao phải scale bằng căn bậc hai của d_k.",
+    "expected_intent": "DOCUMENT_QA",
+    "target_pdf": "Vaswani_2017_Attention.pdf",
+    "timeout_sec": 45.0,
+    "golden_reference": {
+      "key_facts": [
+        "Công thức Scaled Dot-Product Attention: Attention(Q, K, V) = softmax((Q * K^T) / sqrt(d_k)) * V",
+        "Lý do chia cho sqrt(d_k): Khi d_k có giá trị lớn, tích vô hướng dot-product có độ lớn tăng rất cao, đẩy hàm softmax vào các vùng có gradient cực kỳ nhỏ (vanishing gradients). Chia cho sqrt(d_k) giúp chuẩn hóa phương sai của tích về mức 1.",
+        "Multi-Head Attention: Thay vì tính attention một lần với vector d_model, mô hình chiếu tuyến tính Q, K, V thành h lần với các chiều d_k, d_k, d_v tương ứng, tính attention song song rồi nối (concatenate) lại: MultiHead(Q,K,V) = Concat(head_1, ..., head_h) * W^O.",
+        "Ưu điểm Multi-Head: Cho phép mô hình đồng thời chú ý đến thông tin từ các không gian biểu diễn khác nhau ở các vị trí khác nhau."
+      ],
+      "required_citations": {
+        "page_no": [4, 5],
+        "keywords": ["Scaled Dot-Product Attention", "softmax", "d_k", "Multi-Head Attention", "Concat"]
+      }
+    }
+  },
+  {
+    "id": "DOC-04",
+    "category": "document_qa",
+    "query": "Theo Bảng 3 (Table 3) trong bài báo Attention Is All You Need, mô hình Transformer Base có các tham số kiến trúc như thế nào: số lớp N, số chiều d_model, số chiều d_ff, số lượng head h, kích thước d_k, d_v, tỷ lệ dropout P_drop?",
+    "expected_intent": "DOCUMENT_QA",
+    "target_pdf": "Vaswani_2017_Attention.pdf",
+    "timeout_sec": 45.0,
+    "golden_reference": {
+      "key_facts": [
+        "Vị trí nguồn: Bảng 3 (Table 3: Variations on the Transformer architecture), dòng 'base' tại Trang 9 (Page 9)",
+        "Số lớp (N): 6",
+        "Số chiều mô hình (d_model): 512",
+        "Số chiều tầng feed-forward (d_ff): 2048",
+        "Số lượng attention heads (h): 8",
+        "Kích thước key (d_k): 64",
+        "Kích thước value (d_v): 64",
+        "Tỷ lệ dropout (P_drop): 0.1",
+        "Các thông số bổ sung trong dòng base: epsilon_ls = 0.1, train steps = 100K, PPL = 4.92, BLEU = 25.8, params = 65 triệu (65 x 10^6)"
+      ],
+      "required_citations": {
+        "page_no": 9,
+        "keywords": ["Table 3", "base", "512", "2048", "64", "0.1"]
+      }
+    }
+  },
+  {
+    "id": "DOC-05",
+    "category": "document_qa",
+    "query": "So sánh chủ đề và phạm vi nghiên cứu của hai tài liệu: bài báo Attention Is All You Need và sách giáo trình Software Engineering của Roger S. Pressman. Nêu rõ trọng tâm của từng tài liệu và đối tượng phục vụ.",
+    "expected_intent": "DOCUMENT_QA",
+    "target_pdfs": [
+      "Vaswani_2017_Attention.pdf",
+      "doc_9da5fb66_softwareengineering-apractitionersapproach-rogerspressman-110630132301-phpapp01.pdf"
+    ],
+    "timeout_sec": 60.0,
+    "golden_reference": {
+      "key_facts": [
+        "Tài liệu 1 (Vaswani et al., 2017): Bài báo nghiên cứu khoa học chuyên sâu về Trí tuệ nhân tạo (AI), Học sâu (Deep Learning), Xử lý ngôn ngữ tự nhiên (NLP); giới thiệu kiến trúc mạng nơ-ron Transformer và cơ chế Self-Attention; phục vụ các nhà nghiên cứu và kỹ sư AI.",
+        "Tài liệu 2 (Roger S. Pressman, 2001 - 5th Edition): Sách giáo trình học thuật kinh điển về Kỹ nghệ phần mềm (Software Engineering: A Practitioner's Approach, 888 trang); bao quát quy trình phát triển phần mềm (Software process models, Waterfall, Agile), thu thập yêu cầu (Requirements engineering), thiết kế kiến trúc hệ thống, kiểm thử phần mềm (Testing), và quản trị dự án phần mềm; phục vụ sinh viên và kỹ sư phần mềm chuyên nghiệp.",
+        "Không trộn lẫn nội dung: Nhấn mạnh rõ ràng sự khác biệt giữa một công trình nghiên cứu mô hình nơ-ron toán học cụ thể và một bộ khung giáo trình kỹ thuật phần mềm toàn diện."
+      ],
+      "required_citations": {
+        "keywords": ["Transformer", "Attention", "Software Engineering", "Pressman"]
+      }
+    }
+  }
+]

@@ -1,0 +1,34 @@
+[
+  {
+    "id": "WEB-01",
+    "category": "web_research",
+    "query": "Tìm kiếm các nghiên cứu học thuật công bố về Retrieval-Augmented Generation (RAG) từ năm 2024 trở lại đây. Cung cấp tên bài báo, tác giả, năm và nguồn xuất bản.",
+    "expected_intent": "WEB_RESEARCH",
+    "requires_pdf": false,
+    "timeout_sec": 45.0,
+    "golden_reference": {
+      "key_facts": [
+        "Phải sử dụng OpenAlex Scout để tìm kiếm các công trình nghiên cứu khoa học thực tế.",
+        "Bài báo phải có thật, tác giả thực tế, năm công bố từ 2024 trở lại đây (ví dụ: Corrective Retrieval-Augmented Generation - CRAG, Graph Retrieval-Augmented Generation, Self-RAG, Active Retrieval-Augmented Generation).",
+        "Tuyệt đối không tự bịa tên bài báo, tác giả hoặc mã DOI."
+      ],
+      "must_contain": ["OpenAlex", "bài báo", "tác giả"]
+    }
+  },
+  {
+    "id": "WEB-02",
+    "category": "web_research",
+    "query": "Tìm và tổng hợp các bài báo nghiên cứu khoa học về Multimodal RAG xử lý văn bản kết hợp hình ảnh. Phân biệt từng nghiên cứu, không tự tạo DOI hoặc tác giả.",
+    "expected_intent": "WEB_RESEARCH",
+    "requires_pdf": false,
+    "timeout_sec": 45.0,
+    "golden_reference": {
+      "key_facts": [
+        "Sử dụng OpenAlex Scout tìm kiếm các tài liệu liên quan đến Multimodal RAG / Vision-Language Retrieval-Augmented Generation.",
+        "Tổng hợp rõ ràng từng nghiên cứu riêng biệt: tên bài báo, nhóm tác giả, đóng góp chính.",
+        "Không được tự tạo hoặc suy diễn sai lệch DOI và trích dẫn."
+      ],
+      "must_contain": ["Multimodal", "RAG", "nghiên cứu"]
+    }
+  }
+]

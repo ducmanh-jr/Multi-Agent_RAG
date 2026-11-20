@@ -1,0 +1,86 @@
+{
+  "tests": [
+    {
+      "test_id": "API-01",
+      "scenario": "Gửi câu hỏi General QA",
+      "status_code": 200,
+      "latency_sec": 0.06,
+      "passed": true,
+      "notes": "Nhận được phản hồi hợp lệ cho câu hỏi General QA (run_id=run_3092f383b4)."
+    },
+    {
+      "test_id": "API-02",
+      "scenario": "Upload một PDF",
+      "status_code": 200,
+      "latency_sec": 0.03,
+      "passed": true,
+      "notes": "File được nhận và định danh thành công."
+    },
+    {
+      "test_id": "API-03",
+      "scenario": "Upload nhiều PDF",
+      "status_code": 200,
+      "latency_sec": 0.02,
+      "passed": true,
+      "notes": "Nhiều tài liệu được tải lên và lưu vào cơ sở dữ liệu."
+    },
+    {
+      "test_id": "API-04",
+      "scenario": "Hỏi tiếp trong cùng hội thoại",
+      "status_code": 200,
+      "latency_sec": 0.05,
+      "passed": true,
+      "notes": "Context hội thoại được duy trì qua session_id."
+    },
+    {
+      "test_id": "API-05",
+      "scenario": "Chuyển execution mode",
+      "status_code": 200,
+      "latency_sec": 0.03,
+      "passed": true,
+      "notes": "Chuyển mode hợp lệ sang 'hybrid' thành công."
+    },
+    {
+      "test_id": "API-06",
+      "scenario": "Gemini thiếu API key",
+      "status_code": 200,
+      "latency_sec": 0.18,
+      "passed": true,
+      "notes": "Báo lỗi cấu hình rõ ràng khi thiếu GEMINI_API_KEY (Không thể tạo câu trả lời trực tiếp do lỗi cấu hình/chính sá...)"
+    },
+    {
+      "test_id": "API-07",
+      "scenario": "Gửi mode legacy gpu_ft",
+      "status_code": 400,
+      "latency_sec": 0.0,
+      "passed": true,
+      "notes": "API từ chối dứt khoát mode không chính thức 'gpu_ft' (HTTP 400)."
+    },
+    {
+      "test_id": "API-08",
+      "scenario": "PDF bị hỏng",
+      "status_code": 200,
+      "latency_sec": 0.01,
+      "passed": true,
+      "notes": "Server xử lý file lỗi có kiểm soát (status=200)."
+    },
+    {
+      "test_id": "API-09",
+      "scenario": "LLM timeout / fallback",
+      "status_code": 200,
+      "latency_sec": 0.01,
+      "passed": true,
+      "notes": "Không trả kết quả giả; kết thúc trong thời gian giới hạn có kiểm soát."
+    },
+    {
+      "test_id": "API-10",
+      "scenario": "Hai session độc lập",
+      "status_code": 200,
+      "latency_sec": 0.1,
+      "passed": true,
+      "notes": "Hai session độc lập hoàn toàn, run_ids phân biệt (run_7552ea3481 vs run_ee32cce841)."
+    }
+  ],
+  "total_passed": 10,
+  "total": 10
+}

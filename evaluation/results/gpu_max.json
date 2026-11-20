@@ -1,0 +1,505 @@
+{
+  "mode": "gpu_max",
+  "status": "BLOCKED",
+  "backend": "Remote Kaggle Cloudflare Worker",
+  "model_name": "qwen2.5-32b-instruct",
+  "details": "Remote worker unreachable at https://grad-populations-logan-walker.trycloudflare.com (<urlopen error [Errno 11001] getaddrinfo failed>). Marked BLOCKED per protocol.",
+  "runs": [
+    {
+      "run_id": "run_gpu_max_GQA-01",
+      "timestamp": "2026-11-20 13:13:12",
+      "git_commit": "1af1a1262ae2a9c603f12dbbb9303de7e716a124",
+      "git_branch": "refactor/assistant-core-reconstruction",
+      "test_id": "GQA-01",
+      "category": "general_qa",
+      "mode": "gpu_max",
+      "backend": "Remote Kaggle Cloudflare Worker",
+      "model_name": "qwen2.5-32b-instruct",
+      "status": "BLOCKED",
+      "detected_intent": "NONE",
+      "intent_correct": false,
+      "latency_sec": 0.0,
+      "scores": {
+        "correctness": 0.0,
+        "completeness": 0.0,
+        "groundedness_and_citation": 0.0,
+        "routing_and_compliance": 0.0,
+        "uncertainty_calibration": 0.0,
+        "total_score": 0.0
+      },
+      "answer": "",
+      "citations": [],
+      "verified_claims": [],
+      "evidence_status": "NOT_APPLICABLE",
+      "fact_check_label": "not_enough_info",
+      "notes": [
+        "BLOCKED: Remote backend unreachable (Remote worker unreachable at https://grad-populations-logan-walker.trycloudflare.com (<urlopen error [Errno 11001] getaddrinfo failed>). Marked BLOCKED per protocol.). No mock substitution permitted."
+      ]
+    },
+    {
+      "run_id": "run_gpu_max_GQA-02",
+      "timestamp": "2026-11-20 13:13:12",
+      "git_commit": "1af1a1262ae2a9c603f12dbbb9303de7e716a124",
+      "git_branch": "refactor/assistant-core-reconstruction",
+      "test_id": "GQA-02",
+      "category": "general_qa",
+      "mode": "gpu_max",
+      "backend": "Remote Kaggle Cloudflare Worker",
+      "model_name": "qwen2.5-32b-instruct",
+      "status": "BLOCKED",
+      "detected_intent": "NONE",
+      "intent_correct": false,
+      "latency_sec": 0.0,
+      "scores": {
+        "correctness": 0.0,
+        "completeness": 0.0,
+        "groundedness_and_citation": 0.0,
+        "routing_and_compliance": 0.0,
+        "uncertainty_calibration": 0.0,
+        "total_score": 0.0
+      },
+      "answer": "",
+      "citations": [],
+      "verified_claims": [],
+      "evidence_status": "NOT_APPLICABLE",
+      "fact_check_label": "not_enough_info",
+      "notes": [
+        "BLOCKED: Remote backend unreachable (Remote worker unreachable at https://grad-populations-logan-walker.trycloudflare.com (<urlopen error [Errno 11001] getaddrinfo failed>). Marked BLOCKED per protocol.). No mock substitution permitted."
+      ]
+    },
+    {
+      "run_id": "run_gpu_max_GQA-03",
+      "timestamp": "2026-11-20 13:13:12",
+      "git_commit": "1af1a1262ae2a9c603f12dbbb9303de7e716a124",
+      "git_branch": "refactor/assistant-core-reconstruction",
+      "test_id": "GQA-03",
+      "category": "general_qa",
+      "mode": "gpu_max",
+      "backend": "Remote Kaggle Cloudflare Worker",
+      "model_name": "qwen2.5-32b-instruct",
+      "status": "BLOCKED",
+      "detected_intent": "NONE",
+      "intent_correct": false,
+      "latency_sec": 0.0,
+      "scores": {
+        "correctness": 0.0,
+        "completeness": 0.0,
+        "groundedness_and_citation": 0.0,
+        "routing_and_compliance": 0.0,
+        "uncertainty_calibration": 0.0,
+        "total_score": 0.0
+      },
+      "answer": "",
+      "citations": [],
+      "verified_claims": [],
+      "evidence_status": "NOT_APPLICABLE",
+      "fact_check_label": "not_enough_info",
+      "notes": [
+        "BLOCKED: Remote backend unreachable (Remote worker unreachable at https://grad-populations-logan-walker.trycloudflare.com (<urlopen error [Errno 11001] getaddrinfo failed>). Marked BLOCKED per protocol.). No mock substitution permitted."
+      ]
+    },
+    {
+      "run_id": "run_gpu_max_GQA-04",
+      "timestamp": "2026-11-20 13:13:12",
+      "git_commit": "1af1a1262ae2a9c603f12dbbb9303de7e716a124",
+      "git_branch": "refactor/assistant-core-reconstruction",
+      "test_id": "GQA-04",
+      "category": "general_qa",
+      "mode": "gpu_max",
+      "backend": "Remote Kaggle Cloudflare Worker",
+      "model_name": "qwen2.5-32b-instruct",
+      "status": "BLOCKED",
+      "detected_intent": "NONE",
+      "intent_correct": false,
+      "latency_sec": 0.0,
+      "scores": {
+        "correctness": 0.0,
+        "completeness": 0.0,
+        "groundedness_and_citation": 0.0,
+        "routing_and_compliance": 0.0,
+        "uncertainty_calibration": 0.0,
+        "total_score": 0.0
+      },
+      "answer": "",
+      "citations": [],
+      "verified_claims": [],
+      "evidence_status": "NOT_APPLICABLE",
+      "fact_check_label": "not_enough_info",
+      "notes": [
+        "BLOCKED: Remote backend unreachable (Remote worker unreachable at https://grad-populations-logan-walker.trycloudflare.com (<urlopen error [Errno 11001] getaddrinfo failed>). Marked BLOCKED per protocol.). No mock substitution permitted."
+      ]
+    },
+    {
+      "run_id": "run_gpu_max_DOC-01",
+      "timestamp": "2026-11-20 13:13:12",
+      "git_commit": "1af1a1262ae2a9c603f12dbbb9303de7e716a124",
+      "git_branch": "refactor/assistant-core-reconstruction",
+      "test_id": "DOC-01",
+      "category": "document_qa",
+      "mode": "gpu_max",
+      "backend": "Remote Kaggle Cloudflare Worker",
+      "model_name": "qwen2.5-32b-instruct",
+      "status": "BLOCKED",
+      "detected_intent": "NONE",
+      "intent_correct": false,
+      "latency_sec": 0.0,
+      "scores": {
+        "correctness": 0.0,
+        "completeness": 0.0,
+        "groundedness_and_citation": 0.0,
+        "routing_and_compliance": 0.0,
+        "uncertainty_calibration": 0.0,
+        "total_score": 0.0
+      },
+      "answer": "",
+      "citations": [],
+      "verified_claims": [],
+      "evidence_status": "NOT_APPLICABLE",
+      "fact_check_label": "not_enough_info",
+      "notes": [
+        "BLOCKED: Remote backend unreachable (Remote worker unreachable at https://grad-populations-logan-walker.trycloudflare.com (<urlopen error [Errno 11001] getaddrinfo failed>). Marked BLOCKED per protocol.). No mock substitution permitted."
+      ]
+    },
+    {
+      "run_id": "run_gpu_max_DOC-02",
+      "timestamp": "2026-11-20 13:13:12",
+      "git_commit": "1af1a1262ae2a9c603f12dbbb9303de7e716a124",
+      "git_branch": "refactor/assistant-core-reconstruction",
+      "test_id": "DOC-02",
+      "category": "document_qa",
+      "mode": "gpu_max",
+      "backend": "Remote Kaggle Cloudflare Worker",
+      "model_name": "qwen2.5-32b-instruct",
+      "status": "BLOCKED",
+      "detected_intent": "NONE",
+      "intent_correct": false,
+      "latency_sec": 0.0,
+      "scores": {
+        "correctness": 0.0,
+        "completeness": 0.0,
+        "groundedness_and_citation": 0.0,
+        "routing_and_compliance": 0.0,
+        "uncertainty_calibration": 0.0,
+        "total_score": 0.0
+      },
+      "answer": "",
+      "citations": [],
+      "verified_claims": [],
+      "evidence_status": "NOT_APPLICABLE",
+      "fact_check_label": "not_enough_info",
+      "notes": [
+        "BLOCKED: Remote backend unreachable (Remote worker unreachable at https://grad-populations-logan-walker.trycloudflare.com (<urlopen error [Errno 11001] getaddrinfo failed>). Marked BLOCKED per protocol.). No mock substitution permitted."
+      ]
+    },
+    {
+      "run_id": "run_gpu_max_DOC-03",
+      "timestamp": "2026-11-20 13:13:12",
+      "git_commit": "1af1a1262ae2a9c603f12dbbb9303de7e716a124",
+      "git_branch": "refactor/assistant-core-reconstruction",
+      "test_id": "DOC-03",
+      "category": "document_qa",
+      "mode": "gpu_max",
+      "backend": "Remote Kaggle Cloudflare Worker",
+      "model_name": "qwen2.5-32b-instruct",
+      "status": "BLOCKED",
+      "detected_intent": "NONE",
+      "intent_correct": false,
+      "latency_sec": 0.0,
+      "scores": {
+        "correctness": 0.0,
+        "completeness": 0.0,
+        "groundedness_and_citation": 0.0,
+        "routing_and_compliance": 0.0,
+        "uncertainty_calibration": 0.0,
+        "total_score": 0.0
+      },
+      "answer": "",
+      "citations": [],
+      "verified_claims": [],
+      "evidence_status": "NOT_APPLICABLE",
+      "fact_check_label": "not_enough_info",
+      "notes": [
+        "BLOCKED: Remote backend unreachable (Remote worker unreachable at https://grad-populations-logan-walker.trycloudflare.com (<urlopen error [Errno 11001] getaddrinfo failed>). Marked BLOCKED per protocol.). No mock substitution permitted."
+      ]
+    },
+    {
+      "run_id": "run_gpu_max_DOC-04",
+      "timestamp": "2026-11-20 13:13:12",
+      "git_commit": "1af1a1262ae2a9c603f12dbbb9303de7e716a124",
+      "git_branch": "refactor/assistant-core-reconstruction",
+      "test_id": "DOC-04",
+      "category": "document_qa",
+      "mode": "gpu_max",
+      "backend": "Remote Kaggle Cloudflare Worker",
+      "model_name": "qwen2.5-32b-instruct",
+      "status": "BLOCKED",
+      "detected_intent": "NONE",
+      "intent_correct": false,
+      "latency_sec": 0.0,
+      "scores": {
+        "correctness": 0.0,
+        "completeness": 0.0,
+        "groundedness_and_citation": 0.0,
+        "routing_and_compliance": 0.0,
+        "uncertainty_calibration": 0.0,
+        "total_score": 0.0
+      },
+      "answer": "",
+      "citations": [],
+      "verified_claims": [],
+      "evidence_status": "NOT_APPLICABLE",
+      "fact_check_label": "not_enough_info",
+      "notes": [
+        "BLOCKED: Remote backend unreachable (Remote worker unreachable at https://grad-populations-logan-walker.trycloudflare.com (<urlopen error [Errno 11001] getaddrinfo failed>). Marked BLOCKED per protocol.). No mock substitution permitted."
+      ]
+    },
+    {
+      "run_id": "run_gpu_max_DOC-05",
+      "timestamp": "2026-11-20 13:13:12",
+      "git_commit": "1af1a1262ae2a9c603f12dbbb9303de7e716a124",
+      "git_branch": "refactor/assistant-core-reconstruction",
+      "test_id": "DOC-05",
+      "category": "document_qa",
+      "mode": "gpu_max",
+      "backend": "Remote Kaggle Cloudflare Worker",
+      "model_name": "qwen2.5-32b-instruct",
+      "status": "BLOCKED",
+      "detected_intent": "NONE",
+      "intent_correct": false,
+      "latency_sec": 0.0,
+      "scores": {
+        "correctness": 0.0,
+        "completeness": 0.0,
+        "groundedness_and_citation": 0.0,
+        "routing_and_compliance": 0.0,
+        "uncertainty_calibration": 0.0,
+        "total_score": 0.0
+      },
+      "answer": "",
+      "citations": [],
+      "verified_claims": [],
+      "evidence_status": "NOT_APPLICABLE",
+      "fact_check_label": "not_enough_info",
+      "notes": [
+        "BLOCKED: Remote backend unreachable (Remote worker unreachable at https://grad-populations-logan-walker.trycloudflare.com (<urlopen error [Errno 11001] getaddrinfo failed>). Marked BLOCKED per protocol.). No mock substitution permitted."
+      ]
+    },
+    {
+      "run_id": "run_gpu_max_WEB-01",
+      "timestamp": "2026-11-20 13:13:12",
+      "git_commit": "1af1a1262ae2a9c603f12dbbb9303de7e716a124",
+      "git_branch": "refactor/assistant-core-reconstruction",
+      "test_id": "WEB-01",
+      "category": "web_research",
+      "mode": "gpu_max",
+      "backend": "Remote Kaggle Cloudflare Worker",
+      "model_name": "qwen2.5-32b-instruct",
+      "status": "BLOCKED",
+      "detected_intent": "NONE",
+      "intent_correct": false,
+      "latency_sec": 0.0,
+      "scores": {
+        "correctness": 0.0,
+        "completeness": 0.0,
+        "groundedness_and_citation": 0.0,
+        "routing_and_compliance": 0.0,
+        "uncertainty_calibration": 0.0,
+        "total_score": 0.0
+      },
+      "answer": "",
+      "citations": [],
+      "verified_claims": [],
+      "evidence_status": "NOT_APPLICABLE",
+      "fact_check_label": "not_enough_info",
+      "notes": [
+        "BLOCKED: Remote backend unreachable (Remote worker unreachable at https://grad-populations-logan-walker.trycloudflare.com (<urlopen error [Errno 11001] getaddrinfo failed>). Marked BLOCKED per protocol.). No mock substitution permitted."
+      ]
+    },
+    {
+      "run_id": "run_gpu_max_WEB-02",
+      "timestamp": "2026-11-20 13:13:12",
+      "git_commit": "1af1a1262ae2a9c603f12dbbb9303de7e716a124",
+      "git_branch": "refactor/assistant-core-reconstruction",
+      "test_id": "WEB-02",
+      "category": "web_research",
+      "mode": "gpu_max",
+      "backend": "Remote Kaggle Cloudflare Worker",
+      "model_name": "qwen2.5-32b-instruct",
+      "status": "BLOCKED",
+      "detected_intent": "NONE",
+      "intent_correct": false,
+      "latency_sec": 0.0,
+      "scores": {
+        "correctness": 0.0,
+        "completeness": 0.0,
+        "groundedness_and_citation": 0.0,
+        "routing_and_compliance": 0.0,
+        "uncertainty_calibration": 0.0,
+        "total_score": 0.0
+      },
+      "answer": "",
+      "citations": [],
+      "verified_claims": [],
+      "evidence_status": "NOT_APPLICABLE",
+      "fact_check_label": "not_enough_info",
+      "notes": [
+        "BLOCKED: Remote backend unreachable (Remote worker unreachable at https://grad-populations-logan-walker.trycloudflare.com (<urlopen error [Errno 11001] getaddrinfo failed>). Marked BLOCKED per protocol.). No mock substitution permitted."
+      ]
+    },
+    {
+      "run_id": "run_gpu_max_MIX-01",
+      "timestamp": "2026-11-20 13:13:12",
+      "git_commit": "1af1a1262ae2a9c603f12dbbb9303de7e716a124",
+      "git_branch": "refactor/assistant-core-reconstruction",
+      "test_id": "MIX-01",
+      "category": "mixed_qa",
+      "mode": "gpu_max",
+      "backend": "Remote Kaggle Cloudflare Worker",
+      "model_name": "qwen2.5-32b-instruct",
+      "status": "BLOCKED",
+      "detected_intent": "NONE",
+      "intent_correct": false,
+      "latency_sec": 0.0,
+      "scores": {
+        "correctness": 0.0,
+        "completeness": 0.0,
+        "groundedness_and_citation": 0.0,
+        "routing_and_compliance": 0.0,
+        "uncertainty_calibration": 0.0,
+        "total_score": 0.0
+      },
+      "answer": "",
+      "citations": [],
+      "verified_claims": [],
+      "evidence_status": "NOT_APPLICABLE",
+      "fact_check_label": "not_enough_info",
+      "notes": [
+        "BLOCKED: Remote backend unreachable (Remote worker unreachable at https://grad-populations-logan-walker.trycloudflare.com (<urlopen error [Errno 11001] getaddrinfo failed>). Marked BLOCKED per protocol.). No mock substitution permitted."
+      ]
+    },
+    {
+      "run_id": "run_gpu_max_MIX-02",
+      "timestamp": "2026-11-20 13:13:12",
+      "git_commit": "1af1a1262ae2a9c603f12dbbb9303de7e716a124",
+      "git_branch": "refactor/assistant-core-reconstruction",
+      "test_id": "MIX-02",
+      "category": "mixed_qa",
+      "mode": "gpu_max",
+      "backend": "Remote Kaggle Cloudflare Worker",
+      "model_name": "qwen2.5-32b-instruct",
+      "status": "BLOCKED",
+      "detected_intent": "NONE",
+      "intent_correct": false,
+      "latency_sec": 0.0,
+      "scores": {
+        "correctness": 0.0,
+        "completeness": 0.0,
+        "groundedness_and_citation": 0.0,
+        "routing_and_compliance": 0.0,
+        "uncertainty_calibration": 0.0,
+        "total_score": 0.0
+      },
+      "answer": "",
+      "citations": [],
+      "verified_claims": [],
+      "evidence_status": "NOT_APPLICABLE",
+      "fact_check_label": "not_enough_info",
+      "notes": [
+        "BLOCKED: Remote backend unreachable (Remote worker unreachable at https://grad-populations-logan-walker.trycloudflare.com (<urlopen error [Errno 11001] getaddrinfo failed>). Marked BLOCKED per protocol.). No mock substitution permitted."
+      ]
+    },
+    {
+      "run_id": "run_gpu_max_EDGE-01",
+      "timestamp": "2026-11-20 13:13:12",
+      "git_commit": "1af1a1262ae2a9c603f12dbbb9303de7e716a124",
+      "git_branch": "refactor/assistant-core-reconstruction",
+      "test_id": "EDGE-01",
+      "category": "edge_cases",
+      "mode": "gpu_max",
+      "backend": "Remote Kaggle Cloudflare Worker",
+      "model_name": "qwen2.5-32b-instruct",
+      "status": "BLOCKED",
+      "detected_intent": "NONE",
+      "intent_correct": false,
+      "latency_sec": 0.0,
+      "scores": {
+        "correctness": 0.0,
+        "completeness": 0.0,
+        "groundedness_and_citation": 0.0,
+        "routing_and_compliance": 0.0,
+        "uncertainty_calibration": 0.0,
+        "total_score": 0.0
+      },
+      "answer": "",
+      "citations": [],
+      "verified_claims": [],
+      "evidence_status": "NOT_APPLICABLE",
+      "fact_check_label": "not_enough_info",
+      "notes": [
+        "BLOCKED: Remote backend unreachable (Remote worker unreachable at https://grad-populations-logan-walker.trycloudflare.com (<urlopen error [Errno 11001] getaddrinfo failed>). Marked BLOCKED per protocol.). No mock substitution permitted."
+      ]
+    },
+    {
+      "run_id": "run_gpu_max_EDGE-02",
+      "timestamp": "2026-11-20 13:13:12",
+      "git_commit": "1af1a1262ae2a9c603f12dbbb9303de7e716a124",
+      "git_branch": "refactor/assistant-core-reconstruction",
+      "test_id": "EDGE-02",
+      "category": "edge_cases",
+      "mode": "gpu_max",
+      "backend": "Remote Kaggle Cloudflare Worker",
+      "model_name": "qwen2.5-32b-instruct",
+      "status": "BLOCKED",
+      "detected_intent": "NONE",
+      "intent_correct": false,
+      "latency_sec": 0.0,
+      "scores": {
+        "correctness": 0.0,
+        "completeness": 0.0,
+        "groundedness_and_citation": 0.0,
+        "routing_and_compliance": 0.0,
+        "uncertainty_calibration": 0.0,
+        "total_score": 0.0
+      },
+      "answer": "",
+      "citations": [],
+      "verified_claims": [],
+      "evidence_status": "NOT_APPLICABLE",
+      "fact_check_label": "not_enough_info",
+      "notes": [
+        "BLOCKED: Remote backend unreachable (Remote worker unreachable at https://grad-populations-logan-walker.trycloudflare.com (<urlopen error [Errno 11001] getaddrinfo failed>). Marked BLOCKED per protocol.). No mock substitution permitted."
+      ]
+    },
+    {
+      "run_id": "run_gpu_max_EDGE-03",
+      "timestamp": "2026-11-20 13:13:12",
+      "git_commit": "1af1a1262ae2a9c603f12dbbb9303de7e716a124",
+      "git_branch": "refactor/assistant-core-reconstruction",
+      "test_id": "EDGE-03",
+      "category": "edge_cases",
+      "mode": "gpu_max",
+      "backend": "Remote Kaggle Cloudflare Worker",
+      "model_name": "qwen2.5-32b-instruct",
+      "status": "BLOCKED",
+      "detected_intent": "NONE",
+      "intent_correct": false,
+      "latency_sec": 0.0,
+      "scores": {
+        "correctness": 0.0,
+        "completeness": 0.0,
+        "groundedness_and_citation": 0.0,
+        "routing_and_compliance": 0.0,
+        "uncertainty_calibration": 0.0,
+        "total_score": 0.0
+      },
+      "answer": "",
+      "citations": [],
+      "verified_claims": [],
+      "evidence_status": "NOT_APPLICABLE",
+      "fact_check_label": "not_enough_info",
+      "notes": [
+        "BLOCKED: Remote backend unreachable (Remote worker unreachable at https://grad-populations-logan-walker.trycloudflare.com (<urlopen error [Errno 11001] getaddrinfo failed>). Marked BLOCKED per protocol.). No mock substitution permitted."
+      ]
+    }
+  ]
+}

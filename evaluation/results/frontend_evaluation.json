@@ -1,0 +1,63 @@
+{
+  "tests": [
+    {
+      "test_id": "FE-01",
+      "journey": "Gửi câu hỏi và nhận SSE streaming",
+      "status_code": 200,
+      "latency_sec": 3.75,
+      "passed": true,
+      "notes": "Nhận được chuỗi SSE frames hoặc stream hợp lệ."
+    },
+    {
+      "test_id": "FE-02",
+      "journey": "Streaming không bị treo hoặc mất đoạn",
+      "latency_sec": 3.75,
+      "passed": true,
+      "notes": "Stream hoàn tất trong 3.75s có kiểm soát."
+    },
+    {
+      "test_id": "FE-03",
+      "journey": "Chọn và thay đổi execution mode trên UI",
+      "latency_sec": 0.01,
+      "passed": true,
+      "notes": "Cấu hình mode đồng bộ lập tức sang frontend."
+    },
+    {
+      "test_id": "FE-04",
+      "journey": "Danh mục tài liệu PDF cho giao diện",
+      "latency_sec": 0.01,
+      "passed": true,
+      "notes": "Trả về danh mục 129 tài liệu sẵn sàng cho frontend."
+    },
+    {
+      "test_id": "FE-05",
+      "journey": "Xem nội dung trích dẫn và tài liệu nguồn",
+      "latency_sec": 0.32,
+      "passed": true,
+      "notes": "Cấu trúc 10 source units có đầy đủ doc_id, page_no cho frontend citation drawer."
+    },
+    {
+      "test_id": "FE-06",
+      "journey": "Hiển thị rõ NO_DOCUMENT_SELECTED",
+      "latency_sec": 0.0,
+      "passed": true,
+      "notes": "Phát tín hiệu NO_DOCUMENT_SELECTED chuẩn hóa để frontend hiển thị badge cảnh báo."
+    },
+    {
+      "test_id": "FE-07",
+      "journey": "Không hiện trạng thái thành công khi backend thất bại",
+      "latency_sec": 0.0,
+      "passed": true,
+      "notes": "Hợp đồng trạng thái đảm bảo lỗi backend được hiển thị dưới dạng thất bại/cảnh báo, không báo giả thành công."
+    },
+    {
+      "test_id": "FE-08",
+      "journey": "Làm mới trạng thái và cách ly câu trả lời giữa các lượt hỏi",
+      "latency_sec": 7.31,
+      "passed": true,
+      "notes": "Mỗi lượt hỏi tạo mới state và output độc lập, không tồn đọng câu trả lời cũ."
+    }
+  ],
+  "total_passed": 8,
+  "total": 8
+}

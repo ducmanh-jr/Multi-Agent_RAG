@@ -135,6 +135,13 @@ def direct_assistant_node(state: AgentState) -> dict[str, Any]:
             json_mode=False,
         )
         answer = (answer or "").strip()
+        if answer.startswith("{") and answer.endswith("}"):
+            try:
+                parsed_ans = json.loads(answer)
+                if isinstance(parsed_ans, dict) and "answer" in parsed_ans:
+                    answer = str(parsed_ans["answer"]).strip()
+            except Exception:
+                pass
         if not answer:
             raise RuntimeError("Empty response from direct assistant LLM.")
     except (ProviderPolicyError, ProviderConfigurationError) as exc:

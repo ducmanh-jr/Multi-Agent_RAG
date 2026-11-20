@@ -1,0 +1,76 @@
+{
+  "tests": [
+    {
+      "test_id": "REL-01",
+      "scenario": "LLM mất kết nối / Remote Offline",
+      "latency_sec": 0.01,
+      "passed": true,
+      "notes": "Hệ thống cascade sang fallback khi remote offline mà không sập."
+    },
+    {
+      "test_id": "REL-02",
+      "scenario": "LLM timeout / Bounded Execution",
+      "latency_sec": 0.06,
+      "passed": true,
+      "notes": "Graph hoàn tất trong 0.06s (< 10s timeout bound)."
+    },
+    {
+      "test_id": "REL-03",
+      "scenario": "Hybrid cascading priority",
+      "latency_sec": 0.06,
+      "passed": true,
+      "notes": "Hybrid cascade tuần tự qua các tier và trả lời thành công."
+    },
+    {
+      "test_id": "REL-04",
+      "scenario": "Critic fail-closed invariant",
+      "latency_sec": 0.0,
+      "passed": true,
+      "notes": "Critic thất bại chuyển thành VERIFICATION_FAILED, tuyệt đối không duyệt claims."
+    },
+    {
+      "test_id": "REL-05",
+      "scenario": "Truy xuất rỗng / Out-of-Domain",
+      "latency_sec": 0.27,
+      "passed": true,
+      "notes": "Không bịa đặt bằng chứng khi tài liệu không chứa thông tin."
+    },
+    {
+      "test_id": "REL-06",
+      "scenario": "Một trong hai PDF lỗi",
+      "latency_sec": 0.0,
+      "passed": true,
+      "notes": "Bảo toàn tài liệu hợp lệ (10 units từ Vaswani PDF) khi tệp thứ hai lỗi."
+    },
+    {
+      "test_id": "REL-07",
+      "scenario": "Context vượt budget / Truncation Coverage",
+      "latency_sec": 0.0,
+      "passed": true,
+      "notes": "Ghi nhận chính xác total_units=10, included=6, truncated=True."
+    },
+    {
+      "test_id": "REL-08",
+      "scenario": "Gemini bị gọi từ Hybrid (bị chặn tuyệt đối)",
+      "latency_sec": 0.0,
+      "passed": true,
+      "notes": "ProviderPolicyError ngăn chặn dứt khoát Gemini bị gọi ngoài mode 'gemini'."
+    },
+    {
+      "test_id": "REL-09",
+      "scenario": "Thiếu tool / Lệnh nguy hiểm bị từ chối",
+      "latency_sec": 3.69,
+      "passed": false,
+      "notes": "Hệ thống từ chối an toàn, không giả vờ thực thi công cụ."
+    },
+    {
+      "test_id": "REL-10",
+      "scenario": "Lặp lại 3 lần các tình huống trọng yếu (DOC-01, DOC-04, GQA-01)",
+      "latency_sec": 4.15,
+      "passed": true,
+      "notes": "Tất cả 9 lượt lặp (3x3) đều ổn định và trả về kết quả nhất quán."
+    }
+  ],
+  "total_passed": 9,
+  "total": 10
+}

@@ -1,0 +1,68 @@
+[
+  {
+    "id": "GQA-01",
+    "category": "general_qa",
+    "query": "RAG là gì? Giải thích kiến trúc và lấy ví dụ minh họa.",
+    "expected_intent": "GENERAL_QA",
+    "requires_pdf": false,
+    "timeout_sec": 30.0,
+    "golden_reference": {
+      "key_concepts": [
+        "Retrieval-Augmented Generation (Tạo sinh tăng cường truy xuất)",
+        "Kiến trúc gồm 2 thành phần cốt lõi: Retrieval (Truy xuất tài liệu từ cơ sở tri thức ngoài) và Generation (Mô hình ngôn ngữ sinh câu trả lời dựa trên ngữ cảnh)",
+        "Khắc phục các nhược điểm của LLM thuần túy: giảm thiểu ảo giác (hallucination), cập nhật tri thức mới mà không cần huấn luyện lại",
+        "Ví dụ minh họa: Hệ thống hỏi đáp pháp luật, y tế hoặc hỗ trợ khách hàng nội bộ doanh nghiệp"
+      ],
+      "must_contain": ["Retrieval-Augmented Generation", "truy xuất", "LLM", "ngữ cảnh"],
+      "forbidden_claims": ["RAG là mô hình dịch máy thuần túy", "RAG thay thế hoàn toàn mạng nơ-ron"]
+    }
+  },
+  {
+    "id": "GQA-02",
+    "category": "general_qa",
+    "query": "So sánh Dense Retrieval và Sparse Retrieval trong các hệ thống tìm kiếm thông tin và RAG.",
+    "expected_intent": "GENERAL_QA",
+    "requires_pdf": false,
+    "timeout_sec": 30.0,
+    "golden_reference": {
+      "key_concepts": [
+        "Sparse Retrieval: Dựa trên tần suất từ khóa chính xác (BM25, TF-IDF). Ưu điểm: nhanh, nhẹ, khớp từ khóa hiếm/mã định danh tốt; Nhược điểm: không hiểu ngữ nghĩa tương đồng (vocabulary mismatch).",
+        "Dense Retrieval: Dựa trên vector embedding biểu diễn ngữ nghĩa không gian nhiều chiều (bi-encoders, DPR). Ưu điểm: hiểu ngữ nghĩa sâu, từ đồng nghĩa; Nhược điểm: chi phí tính toán cao hơn, dễ bỏ sót từ khóa kỹ thuật hiếm.",
+        "Trường hợp sử dụng: Hybrid Search (kết hợp cả Dense + Sparse qua RRF) thường đạt hiệu quả tối ưu nhất trong RAG."
+      ],
+      "must_contain": ["Sparse", "Dense", "BM25", "embedding", "từ khóa"]
+    }
+  },
+  {
+    "id": "GQA-03",
+    "category": "general_qa",
+    "query": "Dịch đoạn tài liệu kỹ thuật sau sang tiếng Việt: 'Large language models (LLMs) have shown remarkable capabilities in text understanding and reasoning, but they frequently suffer from factual hallucinations and knowledge obsolescence. Retrieval-Augmented Generation mitigates these issues by dynamically fetching relevant context from an external knowledge store.'",
+    "expected_intent": "TASK_ASSISTED_RESPONSE",
+    "requires_pdf": false,
+    "timeout_sec": 30.0,
+    "golden_reference": {
+      "key_concepts": [
+        "Bản dịch tiếng Việt chính xác về mặt học thuật và ngữ pháp.",
+        "Dịch đúng thuật ngữ: LLM (mô hình ngôn ngữ lớn), factual hallucinations (ảo giác sự thật), knowledge obsolescence (tri thức lỗi thời / lạc hậu), Retrieval-Augmented Generation (Tạo sinh tăng cường truy xuất), external knowledge store (kho tri thức ngoài)."
+      ],
+      "must_contain": ["mô hình ngôn ngữ lớn", "ảo giác", "truy xuất"]
+    }
+  },
+  {
+    "id": "GQA-04",
+    "category": "general_qa",
+    "query": "Viết hàm Python nhận vào danh sách các tuple (item_id, score) và số nguyên k, trả về Top-K phần tử có điểm cao nhất sắp xếp giảm dần. Xử lý trường hợp k <= 0 hoặc danh sách rỗng.",
+    "expected_intent": "TASK_ASSISTED_RESPONSE",
+    "requires_pdf": false,
+    "timeout_sec": 30.0,
+    "golden_reference": {
+      "key_concepts": [
+        "Hàm Python hợp lệ cú pháp (def top_k_items(items, k): ...)",
+        "Xử lý điều kiện biên: nếu k <= 0 hoặc items rỗng -> trả về danh sách rỗng []",
+        "Sắp xếp theo score giảm dần: sử dụng key=lambda x: x[1], reverse=True hoặc heapq.nlargest",
+        "Trả về đúng k phần tử đầu tiên"
+      ],
+      "must_contain": ["def", "return", "reverse=True", "[]"]
+    }
+  }
+]

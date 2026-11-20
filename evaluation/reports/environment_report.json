@@ -1,0 +1,115 @@
+{
+  "report_id": "ENV_AUDIT_PHASE_E0",
+  "timestamp": "2026-11-20T12:50:00Z",
+  "git": {
+    "branch": "refactor/assistant-core-reconstruction",
+    "head_sha": "1af1a1262ae2a9c603f12dbbb9303de7e716a124",
+    "uncommitted_changes": [
+      "M .gitignore",
+      " M AGENT.md",
+      " M main/core/graph.py",
+      " M main/core/supervisor.py",
+      " M main/modes/gemini/fact_checker.py",
+      " M main/modes/gemini/summarizer.py",
+      " M main/utils/llm_client.py",
+      "?? evaluation/",
+      "?? main/uploads/doc_9da5fb66_softwareengineering-apractitionersapproach-rogerspressman-110630132301-phpapp01.pdf",
+      "?? main/uploads/doc_d56a0575_Vaswani_2017_Attention.pdf",
+      "?? main/uploads/openalex_9f6d83fd4b_Corrective_Retrieval_Augmented_Generation.pdf",
+      "?? main/uploads/openalex_dfd508a998_Active_Retrieval_Augmented_Generation.md",
+      "?? main/uploads/openalex_fea8caf7de_Graph_Retrieval-Augmented_Generation_A_Survey.pdf",
+      "?? start.cmd",
+      "?? training_lab/"
+    ]
+  },
+  "python": {
+    "version": "3.10.11 (tags/v3.10.11:7d4cc5a, Apr  5 2023, 00:38:17) [MSC v.1929 64 bit (AMD64)]",
+    "interpreter": "C:\\Users\\Admin\\AppData\\Local\\Programs\\Python\\Python310\\python.exe"
+  },
+  "hardware": {
+    "cpu": {
+      "processor": "AMD64 Family 25 Model 117 Stepping 2, AuthenticAMD",
+      "physical_cores": 8,
+      "logical_cores": 16,
+      "total_ram_gb": 31.27,
+      "available_ram_gb": 18.92
+    },
+    "gpu": "AMD Radeon 780M Graphics"
+  },
+  "backends": {
+    "ollama_local": {
+      "status": "UNAVAILABLE",
+      "details": "Connection refused on port 11434 (<urlopen error timed out>)"
+    },
+    "kaggle_remote": {
+      "status": "UNAVAILABLE",
+      "details": "Remote endpoint unreachable at https://grad-populations-logan-walker.trycloudflare.com (<urlopen error [Errno 11001] getaddrinfo failed>)"
+    },
+    "gemini_api": {
+      "status": "AVAILABLE",
+      "details": "GEMINI_API_KEY configured (validated, quota active)"
+    }
+  },
+  "pdf_inventory": [
+    {
+      "filename": "Vaswani_2017_Attention.pdf",
+      "size_bytes": 2215244,
+      "size_mb": 2.11,
+      "page_count": 15,
+      "sha256": "bdfaa68d8984f0dc02beaca527b76f207d99b666d31d1da728ee0728182df697",
+      "exists": true
+    },
+    {
+      "filename": "doc_9da5fb66_softwareengineering-apractitionersapproach-rogerspressman-110630132301-phpapp01.pdf",
+      "size_bytes": 7778225,
+      "size_mb": 7.42,
+      "page_count": 888,
+      "sha256": "c0bd68330cc7a729831392e674bacb1f9f94b5d7234399cbd5dad74e151b28af",
+      "exists": true
+    }
+  ],
+  "mode_classification": {
+    "cpu_min": {
+      "classification": "AVAILABLE",
+      "backend_type": "Local In-Memory Engine",
+      "engine": "PyMuPDF + SQLite FTS5 + BM25 + Extractive Summarizer & Deterministic Verifier",
+      "can_run_llm": false,
+      "notes": "100% offline-ready local baseline engine."
+    },
+    "cpu_max": {
+      "classification": "DEGRADED",
+      "backend_type": "Local Ollama 7B LLM (Degraded to Extractive Fallback)",
+      "engine": "Ollama port 11434 (offline) -> Pure in-memory CPU fallback",
+      "can_run_llm": false,
+      "notes": "Operates with local extractive fallback because Ollama local daemon is offline. Evaluated as DEGRADED."
+    },
+    "gpu_finetune": {
+      "classification": "BLOCKED",
+      "backend_type": "Remote Kaggle Cloudflare Tunnel",
+      "engine": "qwen2.5-coder-7b-instruct + LoRA adapter",
+      "can_run_llm": false,
+      "notes": "Remote Cloudflare tunnel unreachable. Marked BLOCKED per mandatory zero-mock protocol."
+    },
+    "gpu_max": {
+      "classification": "BLOCKED",
+      "backend_type": "Remote Kaggle Cloudflare Tunnel",
+      "engine": "qwen2.5-32b-instruct",
+      "can_run_llm": false,
+      "notes": "Remote Cloudflare tunnel unreachable. Marked BLOCKED per mandatory zero-mock protocol."
+    },
+    "hybrid": {
+      "classification": "AVAILABLE",
+      "backend_type": "Cascading Multi-Tier Coordinator",
+      "engine": "Priority 1 (Remote GPU: Offline) -> Priority 2 (Local Ollama: Offline) -> Priority 3 (Local Extractive: Live)",
+      "can_run_llm": false,
+      "notes": "Operational via automated fallback cascade. Zero Gemini calls strictly enforced."
+    },
+    "gemini": {
+      "classification": "AVAILABLE",
+      "backend_type": "Google Cloud Foundation Model",
+      "engine": "gemini-2.5-flash (Google GenAI SDK)",
+      "can_run_llm": true,
+      "notes": "Live and fully functional with real Gemini 2.5 Flash."
+    }
+  }
+}

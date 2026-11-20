@@ -1,0 +1,75 @@
+{
+  "evaluation_name": "Multi-Agent RAG Phase E3 Full Functional Matrix",
+  "timestamp": "2026-11-20 13:11:04",
+  "git_commit": "1af1a1262ae2a9c603f12dbbb9303de7e716a124",
+  "git_branch": "refactor/assistant-core-reconstruction",
+  "total_planned_runs": 96,
+  "modes": {
+    "cpu_max": {
+      "status": "DEGRADED",
+      "backend": "Local In-Memory CPU Extractive Fallback",
+      "total_runs": 16,
+      "passed_runs": 0,
+      "degraded_runs": 16,
+      "blocked_runs": 0,
+      "failed_runs": 0,
+      "avg_score": 8.76,
+      "avg_latency": "3.43s"
+    },
+    "cpu_min": {
+      "status": "AVAILABLE",
+      "backend": "Local In-Memory C-Engine",
+      "total_runs": 16,
+      "passed_runs": 16,
+      "degraded_runs": 0,
+      "blocked_runs": 0,
+      "failed_runs": 0,
+      "avg_score": 8.76,
+      "avg_latency": "1.22s"
+    },
+    "gemini": {
+      "status": "AVAILABLE",
+      "backend": "Google Cloud Gemini API",
+      "total_runs": 16,
+      "passed_runs": 16,
+      "degraded_runs": 0,
+      "blocked_runs": 0,
+      "failed_runs": 0,
+      "avg_score": 9.47,
+      "avg_latency": "3.14s"
+    },
+    "gpu_finetune": {
+      "status": "BLOCKED",
+      "backend": "Remote Kaggle Cloudflare Worker",
+      "total_runs": 16,
+      "passed_runs": 0,
+      "degraded_runs": 0,
+      "blocked_runs": 16,
+      "failed_runs": 0,
+      "avg_score": 0.0,
+      "avg_latency": "0.0s"
+    },
+    "gpu_max": {
+      "status": "BLOCKED",
+      "backend": "Remote Kaggle Cloudflare Worker",
+      "total_runs": 16,
+      "passed_runs": 0,
+      "degraded_runs": 0,
+      "blocked_runs": 16,
+      "failed_runs": 0,
+      "avg_score": 0.0,
+      "avg_latency": "0.0s"
+    },
+    "hybrid": {
+      "status": "AVAILABLE",
+      "backend": "Cascading Hybrid Coordinator",
+      "total_runs": 16,
+      "passed_runs": 16,
+      "degraded_runs": 0,
+      "blocked_runs": 0,
+      "failed_runs": 0,
+      "avg_score": 8.76,
+      "avg_latency": "6.45s"
+    }
+  }
+}

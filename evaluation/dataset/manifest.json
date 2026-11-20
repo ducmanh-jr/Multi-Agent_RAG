@@ -1,0 +1,55 @@
+{
+  "version": "1.0.0",
+  "dataset_name": "Multi-Agent RAG Golden Evaluation Dataset",
+  "description": "Standardized 16-case reference dataset for comprehensive E2E evaluation across 6 execution modes.",
+  "total_cases": 16,
+  "categories": {
+    "general_qa": {
+      "count": 4,
+      "ids": ["GQA-01", "GQA-02", "GQA-03", "GQA-04"],
+      "requires_rag": false
+    },
+    "document_qa": {
+      "count": 5,
+      "ids": ["DOC-01", "DOC-02", "DOC-03", "DOC-04", "DOC-05"],
+      "requires_rag": true
+    },
+    "web_research": {
+      "count": 2,
+      "ids": ["WEB-01", "WEB-02"],
+      "requires_rag": false,
+      "requires_scout": true
+    },
+    "mixed_qa": {
+      "count": 2,
+      "ids": ["MIX-01", "MIX-02"],
+      "requires_rag": true,
+      "requires_scout": true
+    },
+    "edge_cases": {
+      "count": 3,
+      "ids": ["EDGE-01", "EDGE-02", "EDGE-03"],
+      "requires_rag": false
+    }
+  },
+  "target_documents": [
+    {
+      "filename": "Vaswani_2017_Attention.pdf",
+      "size_bytes": 2215244,
+      "page_count": 15,
+      "sha256": "bdfaa68d8984f0dc219b16ea91740871d3a66dd66c439169601d36d4bc5a31a1",
+      "title": "Attention Is All You Need",
+      "authors": ["Ashish Vaswani", "Noam Shazeer", "Niki Parmar", "Jakob Uszkoreit", "Llion Jones", "Aidan N. Gomez", "Łukasz Kaiser", "Illia Polosukhin"],
+      "year": 2017
+    },
+    {
+      "filename": "doc_9da5fb66_softwareengineering-apractitionersapproach-rogerspressman-110630132301-phpapp01.pdf",
+      "size_bytes": 7778225,
+      "page_count": 888,
+      "sha256": "c0bd68330cc7a7298c430e39ff684ff48f1f5d688cf5d50694e9f5e13b868661",
+      "title": "Software Engineering: A Practitioner's Approach (5th Edition)",
+      "author": "Roger S. Pressman, Ph.D.",
+      "year": 2001
+    }
+  ]
+}

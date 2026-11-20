@@ -1,0 +1,72 @@
+{
+  "DOC-01": {
+    "target_doc": "Vaswani_2017_Attention.pdf",
+    "expected_page": 1,
+    "required_quotes": [
+      "Ashish Vaswani",
+      "Noam Shazeer",
+      "Niki Parmar",
+      "Google Brain",
+      "Google Research"
+    ]
+  },
+  "DOC-02": {
+    "target_doc": "Vaswani_2017_Attention.pdf",
+    "expected_pages": [1, 2, 3, 4, 8, 9],
+    "required_quotes": [
+      "Attention Is All You Need",
+      "The Transformer",
+      "WMT 2014"
+    ]
+  },
+  "DOC-03": {
+    "target_doc": "Vaswani_2017_Attention.pdf",
+    "expected_pages": [4, 5],
+    "required_quotes": [
+      "Attention(Q, K, V) = softmax",
+      "Multi-Head Attention",
+      "sqrt(d_k)"
+    ]
+  },
+  "DOC-04": {
+    "target_doc": "Vaswani_2017_Attention.pdf",
+    "expected_page": 9,
+    "table_id": "Table 3",
+    "required_quotes": [
+      "Table 3",
+      "base",
+      "512",
+      "2048",
+      "64"
+    ]
+  },
+  "DOC-05": {
+    "target_docs": [
+      "Vaswani_2017_Attention.pdf",
+      "doc_9da5fb66_softwareengineering-apractitionersapproach-rogerspressman-110630132301-phpapp01.pdf"
+    ],
+    "expected_pages": [1, 3],
+    "required_quotes": [
+      "Attention Is All You Need",
+      "Software Engineering",
+      "Roger S. Pressman"
+    ]
+  },
+  "MIX-01": {
+    "target_doc": "Vaswani_2017_Attention.pdf",
+    "external_source": "OpenAlex / arXiv RAG Literature",
+    "required_quotes": [
+      "Vaswani",
+      "Transformer",
+      "RAG"
+    ]
+  },
+  "MIX-02": {
+    "target_doc": "Vaswani_2017_Attention.pdf",
+    "external_source": "OpenAlex / Modern Attention papers",
+    "required_quotes": [
+      "Self-Attention",
+      "O(N^2)"
+    ]
+  }
+}

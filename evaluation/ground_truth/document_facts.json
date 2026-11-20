@@ -1,0 +1,80 @@
+{
+  "Vaswani_2017_Attention": {
+    "title": "Attention Is All You Need",
+    "authors": [
+      "Ashish Vaswani",
+      "Noam Shazeer",
+      "Niki Parmar",
+      "Jakob Uszkoreit",
+      "Llion Jones",
+      "Aidan N. Gomez",
+      "Łukasz Kaiser",
+      "Illia Polosukhin"
+    ],
+    "affiliations": ["Google Brain", "Google Research", "University of Toronto"],
+    "publication_year": 2017,
+    "conference": "31st Conference on Neural Information Processing Systems (NeurIPS 2017), Long Beach, CA, USA",
+    "architecture_name": "Transformer",
+    "formulas": {
+      "scaled_dot_product_attention": "Attention(Q, K, V) = softmax((Q * K^T) / sqrt(d_k)) * V",
+      "multi_head_attention": "MultiHead(Q, K, V) = Concat(head_1, ..., head_h) * W^O",
+      "head_i": "head_i = Attention(Q * W_i^Q, K * W_i^K, V * W_i^V)",
+      "feed_forward_network": "FFN(x) = max(0, x * W_1 + b_1) * W_2 + b_2",
+      "positional_encoding_sin": "PE(pos, 2i) = sin(pos / 10000^(2i/d_model))",
+      "positional_encoding_cos": "PE(pos, 2i+1) = cos(pos / 10000^(2i/d_model))"
+    },
+    "table_3_transformer_base_parameters": {
+      "page_no": 9,
+      "table_id": "Table 3",
+      "row": "base",
+      "N_layers": 6,
+      "d_model": 512,
+      "d_ff": 2048,
+      "h_heads": 8,
+      "d_k": 64,
+      "d_v": 64,
+      "P_drop": 0.1,
+      "epsilon_ls": 0.1,
+      "train_steps": 100000,
+      "PPL_dev": 4.92,
+      "BLEU_dev": 25.8,
+      "params_count": 65000000
+    },
+    "table_3_transformer_big_parameters": {
+      "page_no": 9,
+      "N_layers": 6,
+      "d_model": 1024,
+      "d_ff": 4096,
+      "h_heads": 16,
+      "d_k": 64,
+      "d_v": 64,
+      "P_drop": 0.3,
+      "params_count": 213000000
+    },
+    "benchmark_results": {
+      "wmt_2014_en_de": {
+        "transformer_base": 27.3,
+        "transformer_big": 28.4
+      },
+      "wmt_2014_en_fr": {
+        "transformer_base": 38.1,
+        "transformer_big": 41.8
+      }
+    }
+  },
+  "Pressman_Software_Engineering": {
+    "title": "Software Engineering: A Practitioner's Approach",
+    "edition": "Fifth Edition",
+    "author": "Roger S. Pressman, Ph.D.",
+    "publisher": "McGraw-Hill, 2001",
+    "total_pages": 888,
+    "core_subject": "Kỹ nghệ phần mềm và quản lý vòng đời phát triển phần mềm cổ điển/hiện đại",
+    "main_parts": [
+      "Part 1: The Product and the Process (Software process models, Waterfall, Incremental, RAD, Evolutionary, Component-based)",
+      "Part 2: Managing Software Projects (Project management concepts, Estimation, Risk management, Quality management)",
+      "Part 3: Conventional Methods for Software Engineering (System engineering, Analysis concepts, Requirements analysis, Design concepts, Architectural design, User interface design, Software testing techniques)",
+      "Part 4: Object-Oriented Software Engineering (OO analysis, OO design, OO testing, Technical metrics)",
+      "Part 5: Advanced Topics in Software Engineering (Formal methods, Cleanroom software engineering, Component-based development, Reengineering, Client/server software engineering)"
+    ]
+  }
+}
