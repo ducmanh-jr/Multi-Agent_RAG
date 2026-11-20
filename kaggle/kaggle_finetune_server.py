@@ -26,7 +26,7 @@ import re
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import torch
 
@@ -107,37 +107,33 @@ def load_qwen_lora_cluster():
         trust_remote_code=True,
     )
 
-    # Attach PEFT LoRA Adapters
+    # Attach PEFT LoRA Adapters with STRICT 1:1 mapping (P0-B)
     try:
         from peft import PeftModel
 
-        router_path = find_weight_path("01_agent1_router")
-        gen_path = find_weight_path("03_agent3_summarizer/generator_qlora")
-        critic_path = find_weight_path("03_agent3_summarizer/critic_qlora")
-        writer_path = find_weight_path("05_agent5_writer")
+        # Authoritative adapter paths strictly defined by manifest
+        adapter_specs = [
+            ("generator", find_weight_path("03_agent3_summarizer/generator_qlora")),
+            ("router", find_weight_path("01_agent1_router")),
+            ("critic", find_weight_path("03_agent3_summarizer/critic_qlora")),
+            ("writer", find_weight_path("05_agent5_writer")),
+        ]
 
-        # 1. Initial PeftModel wrap
-        primary_path = gen_path or router_path or critic_path or writer_path
-        if primary_path and os.path.exists(primary_path):
-            model = PeftModel.from_pretrained(model, primary_path, adapter_name="generator")
-            _loaded_adapters.append("generator")
-            print(f"[Worker] Attached adapter 'generator' from {primary_path}")
-
-            # 2. Attach additional adapters
-            if router_path and os.path.exists(router_path):
-                model.load_adapter(router_path, adapter_name="router")
-                _loaded_adapters.append("router")
-                print(f"[Worker] Attached adapter 'router' from {router_path}")
-
-            if critic_path and os.path.exists(critic_path):
-                model.load_adapter(critic_path, adapter_name="critic")
-                _loaded_adapters.append("critic")
-                print(f"[Worker] Attached adapter 'critic' from {critic_path}")
-
-            if writer_path and os.path.exists(writer_path):
-                model.load_adapter(writer_path, adapter_name="writer")
-                _loaded_adapters.append("writer")
-                print(f"[Worker] Attached adapter 'writer' from {writer_path}")
+        first_attached = False
+        for name, path in adapter_specs:
+            if path and os.path.exists(path):
+                if not first_attached:
+                    # Wrap base model with its TRUE adapter name - NEVER alias another adapter!
+                    model = PeftModel.from_pretrained(model, path, adapter_name=name)
+                    _loaded_adapters.append(name)
+                    first_attached = True
+                    print(f"[Worker] Attached primary adapter '{name}' from {path}")
+                else:
+                    model.load_adapter(path, adapter_name=name)
+                    _loaded_adapters.append(name)
+                    print(f"[Worker] Attached additional adapter '{name}' from {path}")
+            else:
+                print(f"[Worker WARNING] Checkpoint for adapter '{name}' not found at expected path.")
 
     except Exception as e:
         print(f"[Worker WARNING] Failed to attach LoRA adapters: {e}")
@@ -150,14 +146,18 @@ def load_qwen_lora_cluster():
 def generate_with_qwen(prompt: str, adapter: str = "generator", max_new_tokens: int = 1536, temperature: float = 0.2) -> str:
     model, tokenizer = load_qwen_lora_cluster()
     if model is None or tokenizer is None:
-        return json.dumps({"error": "Model not loaded on GPU"})
+        raise HTTPException(status_code=503, detail="Qwen cluster base model not loaded on GPU.")
+
+    if adapter not in _loaded_adapters:
+        raise HTTPException(status_code=503, detail=f"Adapter '{adapter}' is not loaded on this worker.")
 
     # Switch active adapter if loaded
     try:
-        if adapter in _loaded_adapters and hasattr(model, "set_adapter"):
+        if hasattr(model, "set_adapter"):
             model.set_adapter(adapter)
     except Exception as e:
         print(f"[Worker] Adapter switch to {adapter} warning: {e}")
+        raise HTTPException(status_code=503, detail=f"Failed to activate adapter '{adapter}': {e}")
 
     messages = [{"role": "user", "content": prompt}]
     text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
@@ -363,23 +363,29 @@ def summarize_critic(req: CriticRequest):
     try:
         m = re.search(r"\{.*\}", raw, re.DOTALL)
         if m:
-            return json.loads(m.group(0))
+            parsed = json.loads(m.group(0))
+            if isinstance(parsed, dict) and "action" in parsed:
+                return parsed
     except Exception:
         pass
-    return {"critique": raw, "action": "accept", "issues_found": []}
+    # CRITICAL FAIL-CLOSED: Malformed JSON must NEVER default to 'accept'!
+    return {
+        "critique": f"Không thể phân tích phản hồi JSON từ Critic: {raw}",
+        "action": "rewrite",
+        "issues_found": ["critic_malformed_json_response"],
+    }
 
 
 @app.post("/api/factcheck")
 def factcheck_endpoint(req: FactCheckRequest):
     model, tokenizer = load_factcheck_model()
-    evaluations = []
-
     if model is None or tokenizer is None:
-        # Fallback heuristic
-        for c in req.claims:
-            evaluations.append({"claim": c, "verdict": "SUPPORT", "confidence": 0.95, "reason": "GPU1 NLI head loading fallback"})
-        return {"evaluations": evaluations}
+        raise HTTPException(
+            status_code=503,
+            detail="Fact-Checker NLI model is not loaded on GPU. Cannot verify claims."
+        )
 
+    evaluations = []
     labels = ["SUPPORT", "CONTRADICT", "NOT_ENOUGH_INFO"]
     for c in req.claims:
         inputs = tokenizer(req.context[:1800], c, truncation=True, max_length=512, return_tensors="pt").to(model.device)
@@ -387,7 +393,7 @@ def factcheck_endpoint(req: FactCheckRequest):
             logits = model(**inputs).logits
             probs = torch.softmax(logits, dim=-1).squeeze().tolist()
             pred_idx = int(torch.argmax(logits, dim=-1).item())
-            pred_label = labels[pred_idx] if pred_idx < len(labels) else "SUPPORT"
+            pred_label = labels[pred_idx] if pred_idx < len(labels) else "NOT_ENOUGH_INFO"
             evaluations.append({
                 "claim": c,
                 "verdict": pred_label,

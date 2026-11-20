@@ -605,10 +605,11 @@ class WorkerManager:
                             mandatory_adapters = ["router", "generator", "critic", "writer"]
                             adapters_ok = all(ad in loaded_adapters for ad in mandatory_adapters)
                             active_models = data.get("active_models", [])
-                            models_ok = ("factcheck" in active_models) if active_models else True
+                            models_ok = ("factcheck" in active_models) and ("qwen_cluster" in active_models)
                             mandatory_ready = data.get("mandatory_ready", False)
 
-                            if status_ok and (adapters_ok or mandatory_ready):
+                            # P1-1: models_ok strictly included in readiness decision
+                            if status_ok and models_ok and adapters_ok and (mandatory_ready or data.get("ready") is True):
                                 # Test live request to mandatory endpoint to verify execution capability
                                 try:
                                     test_resp = await client.post(
@@ -785,20 +786,41 @@ class WorkerManager:
             }
 
         except Exception as exc:
-            # P0-3: Startup failure handling: clean up spawned process and reclaim VRAM immediately
+            # P0-3 & P0-A: Startup failure handling: clean up spawned process and reclaim VRAM immediately
             print(f"[WorkerManager CRITICAL] Khởi động {target_worker} thất bại: {exc}. Dọn dẹp ngay tiến trình con và VRAM...")
+            cleanup_ok = False
+            cleanup_err_msg = ""
             try:
                 await self._terminate_current_worker()
-            except Exception as cleanup_err:
-                print(f"[WorkerManager ERROR] Lỗi dọn dẹp tiến trình hỏng: {cleanup_err}")
+                cleanup_ok = True
+            except (WorkerTerminationError, VRAMReclaimError, Exception) as cleanup_err:
+                cleanup_err_msg = str(cleanup_err)
+                print(f"[WorkerManager CRITICAL] Lỗi dọn dẹp tiến trình hỏng: {cleanup_err}")
 
+            if not cleanup_ok:
+                self.transition_state = "error"
+                self.active_worker = None
+                self.transition_message = (
+                    f"Khởi động {target_worker} thất bại ({exc}), và dọn dẹp (cleanup) cũng thất bại: {cleanup_err_msg}. "
+                    "Giữ nguyên trạng thái lỗi, tuyệt đối không khởi động Worker khác để bảo vệ GPU."
+                )
+                print(f"[WorkerManager CRITICAL] {self.transition_message}")
+                return {
+                    "status": "error",
+                    "transition_id": trans_id,
+                    "selected_mode": self.selected_mode,
+                    "active_worker": None,
+                    "message": self.transition_message,
+                }
+
+            # Cleanup succeeded: process group is verified dead and VRAM is reclaimed
             self.transition_state = "error"
             self.transition_message = f"Lỗi khởi động {target_worker}: {exc}. Đã giải phóng hoàn toàn tiến trình và VRAM."
 
-            # Attempt rollback/recovery to previous worker if viable
+            # Attempt rollback/recovery to previous worker ONLY if cleanup succeeded
             recovered = False
             if previous_worker and previous_worker != target_worker:
-                print(f"[WorkerManager] Thử khôi phục worker trước đó ({previous_worker})...")
+                print(f"[WorkerManager] Cleanup thành công. Thử khôi phục worker trước đó ({previous_worker})...")
                 try:
                     v_ok, _ = GPUVRAMProbe.check_vram_against_profile(previous_worker, self.manifest)
                     if v_ok:
@@ -830,6 +852,7 @@ class WorkerManager:
                         if p_online:
                             recovered = True
                             self.active_worker = previous_worker
+                            self.selected_mode = previous_mode  # P1-2: Synchronize selected_mode on recovery!
                             self.target_worker = None
                             self.transition_state = "ready"
                             self.transition_message = (

@@ -357,6 +357,7 @@ def test_startup_failure_attempts_recovery_to_previous_worker(worker_manager):
     """Verify auto-recovery attempts to restart previous worker if target startup fails."""
     async def _test():
         worker_manager.active_worker = "gpu_finetune"
+        worker_manager.selected_mode = "gpu_finetune"
         mock_proc = MagicMock()
 
         # Simulate first poll (gpu_max) fails, but second poll (recovering gpu_finetune) succeeds
@@ -372,8 +373,55 @@ def test_startup_failure_attempts_recovery_to_previous_worker(worker_manager):
 
             assert res["status"] == "recovered_previous"
             assert worker_manager.active_worker == "gpu_finetune"
+            # P1-2: Verify selected_mode is restored to previous_mode!
+            assert worker_manager.selected_mode == "gpu_finetune"
             assert worker_manager.transition_state == "ready"
             assert "đã khôi phục thành công worker trước đó" in res["message"]
+
+    asyncio.run(_test())
+
+
+def test_cleanup_failure_blocks_recovery_and_preserves_error_state(worker_manager):
+    """
+    CRITICAL P0-A: If target worker startup fails AND cleanup of the broken process fails,
+    verify that recovery to previous worker is STRICTLY BLOCKED, state remains in error,
+    and no false claim of VRAM reclamation is made.
+    """
+    async def _test():
+        worker_manager.active_worker = "gpu_finetune"
+        worker_manager.selected_mode = "gpu_finetune"
+        mock_proc = MagicMock()
+        mock_proc.pid = 66666
+
+        # _terminate_current_worker succeeds during pre-switch termination,
+        # but FAILS during post-startup failure cleanup (PGID lingers or VRAM not freed)
+        term_calls = 0
+        async def mock_terminate(*args, **kwargs):
+            nonlocal term_calls
+            term_calls += 1
+            if term_calls > 1:
+                # Cleanup of failed worker fails!
+                raise WorkerTerminationError("Process group 66666 is unkillable")
+            return None
+
+        with patch.object(worker_manager, "_drain_in_flight_requests", new_callable=AsyncMock), \
+             patch.object(worker_manager, "_terminate_current_worker", side_effect=mock_terminate), \
+             patch.object(GPUVRAMProbe, "check_vram_against_profile", return_value=(True, "OK")), \
+             patch.object(worker_manager, "_spawn_process", return_value=mock_proc) as mock_spawn, \
+             patch.object(worker_manager, "_poll_worker_ready", return_value=False):
+
+            res = await worker_manager._execute_transition("gpu_max", trans_id="cleanup_fail_test")
+
+            # Must return error, NOT recovered_previous
+            assert res["status"] == "error"
+            assert worker_manager.transition_state == "error"
+            assert worker_manager.active_worker is None
+            # Truthful messaging
+            assert "dọn dẹp (cleanup) cũng thất bại" in res["message"]
+            assert "Process group 66666 is unkillable" in res["message"]
+            assert "Đã giải phóng hoàn toàn tiến trình và VRAM" not in res["message"]
+            # Only 1 spawn occurred (the initial target worker), NO second spawn for recovery!
+            assert mock_spawn.call_count == 1
 
     asyncio.run(_test())
 
@@ -392,6 +440,33 @@ def test_healthcheck_rejects_finetune_if_mandatory_adapters_missing(worker_manag
             "mandatory_ready": False,
             "loaded_adapters": ["router", "critic"],
             "active_models": ["qwen_cluster", "factcheck"],
+        }
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = mock_health_data
+
+        with patch("httpx.AsyncClient.get", return_value=mock_resp), \
+             patch("asyncio.sleep", new_callable=AsyncMock):
+
+            is_ready = await worker_manager._poll_worker_ready("gpu_finetune", "http://127.0.0.1:8001", timeout_seconds=1)
+            assert is_ready is False
+
+    asyncio.run(_test())
+
+
+def test_readiness_poll_requires_models_ok(worker_manager):
+    """
+    CRITICAL P1-1: Verify _poll_worker_ready rejects Finetune worker if active_models
+    is missing 'factcheck' even if all 4 LoRA adapters are present.
+    """
+    async def _test():
+        # Server returns status 200, online, all adapters present, but missing 'factcheck' model
+        mock_health_data = {
+            "status": "online",
+            "ready": False,
+            "mandatory_ready": False,
+            "loaded_adapters": ["router", "generator", "critic", "writer"],
+            "active_models": ["qwen_cluster"],  # missing factcheck!
         }
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -594,3 +669,85 @@ def test_multiround_mode_cycling(worker_manager):
                 assert status["transition_state"] in ("ready", "idle")
 
     asyncio.run(_test())
+
+
+# =====================================================================
+# 9. Truthful Model Loading & Fail-Closed Endpoint Tests
+# =====================================================================
+
+def test_finetune_server_health_requires_mandatory_models_and_adapters():
+    """
+    Verify healthcheck() reports ready=False if ANY mandatory adapter or model is missing.
+    """
+    from kaggle import kaggle_finetune_server as srv
+
+    with patch.object(srv, "_loaded_adapters", ["router", "critic", "writer"]), \
+         patch.object(srv, "_models", {"qwen_cluster": MagicMock(), "factcheck": MagicMock()}), \
+         patch("torch.cuda.is_available", return_value=False):
+
+        # Missing 'generator'
+        h = srv.healthcheck()
+        assert h["ready"] is False
+        assert h["mandatory_ready"] is False
+        assert h["status"] == "degraded"
+        assert "generator" in h["missing_adapters"]
+
+    with patch.object(srv, "_loaded_adapters", ["router", "generator", "critic", "writer"]), \
+         patch.object(srv, "_models", {"qwen_cluster": MagicMock()}), \
+         patch("torch.cuda.is_available", return_value=False):
+
+        # Missing 'factcheck'
+        h = srv.healthcheck()
+        assert h["ready"] is False
+        assert h["mandatory_ready"] is False
+        assert h["status"] == "degraded"
+        assert "factcheck" in h["missing_models"]
+
+    with patch.object(srv, "_loaded_adapters", ["router", "generator", "critic", "writer"]), \
+         patch.object(srv, "_models", {"qwen_cluster": MagicMock(), "factcheck": MagicMock()}), \
+         patch("torch.cuda.is_available", return_value=False):
+
+        # All present
+        h = srv.healthcheck()
+        assert h["ready"] is True
+        assert h["mandatory_ready"] is True
+        assert h["status"] == "online"
+        assert len(h["missing_adapters"]) == 0
+        assert len(h["missing_models"]) == 0
+
+
+def test_finetune_factcheck_endpoint_fails_closed_when_model_missing():
+    """
+    CRITICAL Section 3: If Fact-Checker NLI model is missing, /api/factcheck
+    MUST raise HTTP 503 and NEVER return fake 'SUPPORT' verdicts with 0.95 confidence.
+    """
+    from kaggle import kaggle_finetune_server as srv
+    from fastapi import HTTPException
+
+    with patch.object(srv, "load_factcheck_model", return_value=(None, None)):
+        req = srv.FactCheckRequest(claims=["The moon is made of green cheese."])
+        with pytest.raises(HTTPException) as exc_info:
+            srv.factcheck_endpoint(req)
+        assert exc_info.value.status_code == 503
+        assert "Fact-Checker NLI model is not loaded" in exc_info.value.detail
+
+
+def test_finetune_critic_endpoint_fails_closed_on_malformed_json():
+    """
+    CRITICAL Section 3: If Critic output cannot be parsed as JSON,
+    it MUST return action='rewrite' and NEVER default to action='accept'.
+    """
+    from kaggle import kaggle_finetune_server as srv
+
+    with patch.object(srv, "generate_with_qwen", return_value="I am the critic and I had an internal error: <corrupted>"):
+        req = srv.CriticRequest(
+            query="What is transformer?",
+            answer="A machine learning model.",
+            context="Transformers were introduced in 2017.",
+            claims=["Transformers introduced in 2017."]
+        )
+        res = srv.summarize_critic(req)
+        assert res["action"] == "rewrite"
+        assert "critic_malformed_json_response" in res["issues_found"]
+        assert "Không thể phân tích phản hồi JSON" in res["critique"]
+
