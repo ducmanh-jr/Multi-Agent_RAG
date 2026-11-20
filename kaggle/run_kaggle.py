@@ -50,6 +50,7 @@ def cleanup_cluster(server_process, repo_dir):
                 pass
             if server_process.poll() is None:
                 all_clean = False
+                print("    🛑 LỖI P0: Tiến trình Supervisor vẫn còn sống sau SIGKILL!")
 
     # Ensure worker process group is definitely not orphaned
     pgid_file = os.path.join(repo_dir, "kaggle", "worker.pgid")
@@ -81,18 +82,17 @@ def cleanup_cluster(server_process, repo_dir):
                         os.remove(pgid_file)
                         print(f"    ✔ Đã xác minh Worker Process Group {worker_pgid} đã chết hoàn toàn và dọn dẹp worker.pgid.")
                     except Exception as e:
-                        print(f"    ⚠️ Lỗi khi xóa worker.pgid: {e}")
+                        all_clean = False
+                        print(f"    🛑 LỖI P0: Không thể xóa {pgid_file} ({e})! Đánh dấu cleanup chưa hoàn tất.")
                 else:
                     all_clean = False
                     print(f"    🛑 LỖI P0: Worker Process Group {worker_pgid} VẪN CÒN SỐNG sau SIGKILL! Giữ lại {pgid_file} để cách ly và điều tra.")
             else:
-                try:
-                    os.remove(pgid_file)
-                except Exception:
-                    pass
+                all_clean = False
+                print(f"    🛑 LỖI P0: File {pgid_file} rỗng hoặc định dạng không hợp lệ ({raw_pid!r})! Giữ lại file để điều tra, không thể xác minh worker.")
         except Exception as e:
             all_clean = False
-            print(f"    ⚠️ Cảnh báo dọn dẹp worker.pgid: {e}")
+            print(f"    🛑 LỖI P0: Ngoại lệ khi dọn dẹp worker.pgid ({e})! Giữ lại trạng thái lỗi.")
 
     if all_clean:
         print("    ✔ Hoàn tất dọn dẹp cụm tiến trình thành công.")

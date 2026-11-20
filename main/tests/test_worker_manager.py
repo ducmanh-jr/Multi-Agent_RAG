@@ -1011,6 +1011,90 @@ def test_cleanup_cluster_retains_pgid_file_if_worker_remains_alive_after_sigkill
                 assert f.read().strip() == "99999"
 
 
+def test_cleanup_cluster_corrupt_or_empty_pgid_fails_and_preserves_file():
+    """
+    CRITICAL P0: If worker.pgid exists but is empty or non-numeric, cleanup_cluster MUST fail
+    and retain the file for investigation rather than blindly assuming clean.
+    """
+    import tempfile
+    from kaggle.run_kaggle import cleanup_cluster
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        kaggle_dir = os.path.join(tmp_dir, "kaggle")
+        os.makedirs(kaggle_dir, exist_ok=True)
+        pgid_file = os.path.join(kaggle_dir, "worker.pgid")
+        with open(pgid_file, "w") as f:
+            f.write("   corrupt_non_digit_data   ")
+
+        mock_server = MagicMock()
+        mock_server.poll.return_value = 0  # Server exited
+
+        res = cleanup_cluster(mock_server, tmp_dir)
+        assert res is False
+        assert os.path.exists(pgid_file)
+        with open(pgid_file, "r") as f:
+            assert "corrupt_non_digit_data" in f.read()
+
+
+def test_cleanup_cluster_marks_failure_if_pgid_unlink_fails():
+    """
+    CRITICAL P0: If worker process died but unlinking worker.pgid fails (e.g. OS error),
+    cleanup_cluster MUST return False.
+    """
+    import tempfile
+    from kaggle.run_kaggle import cleanup_cluster
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        kaggle_dir = os.path.join(tmp_dir, "kaggle")
+        os.makedirs(kaggle_dir, exist_ok=True)
+        pgid_file = os.path.join(kaggle_dir, "worker.pgid")
+        with open(pgid_file, "w") as f:
+            f.write("77777")
+
+        mock_server = MagicMock()
+        mock_server.poll.return_value = 0
+
+        with patch("kaggle.worker_manager.is_process_group_alive", return_value=False), \
+             patch("os.remove", side_effect=PermissionError("File locked by OS")):
+            res = cleanup_cluster(mock_server, tmp_dir)
+            assert res is False
+
+
+def test_cleanup_cluster_marks_failure_if_supervisor_lingers_after_sigkill():
+    """
+    CRITICAL P0: If Supervisor process remains alive (poll() is None) after SIGKILL,
+    cleanup_cluster MUST mark all_clean as False.
+    """
+    import tempfile
+    from kaggle.run_kaggle import cleanup_cluster
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        mock_server = MagicMock()
+        mock_server.poll.return_value = None  # Never exits
+        mock_server.wait.side_effect = subprocess.TimeoutExpired(cmd="server", timeout=40)
+
+        res = cleanup_cluster(mock_server, tmp_dir)
+        assert res is False
+        mock_server.kill.assert_called_once()
+
+
+def test_cleanup_cluster_ensures_repo_dir_in_sys_path():
+    """
+    Verify cleanup_cluster ensures repo_dir is in sys.path.
+    """
+    import tempfile
+    from kaggle.run_kaggle import cleanup_cluster
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        fake_repo = os.path.join(tmp_dir, "custom_unique_repo_dir")
+        if fake_repo in sys.path:
+            sys.path.remove(fake_repo)
+
+        cleanup_cluster(None, fake_repo)
+        assert fake_repo in sys.path
+        sys.path.remove(fake_repo)
+
+
 def test_truthful_capabilities_reporting_excludes_unloaded_models(worker_manager):
     """
     CRITICAL P1: Verify get_status_payload truthfully marks unloaded capabilities as False.
