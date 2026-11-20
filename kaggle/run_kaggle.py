@@ -86,9 +86,9 @@ def run():
     print("    ✔ Toàn bộ thư viện cần thiết đã sẵn sàng!")
 
     # -------------------------------------------------------------------------
-    # 3. Synchronize 7-Model SOTA Weights from Google Drive with % Progress
+    # 3. Synchronize Checkpoints via Authoritative Manifest from Google Drive
     # -------------------------------------------------------------------------
-    print("\n📥 [BƯỚC 3/4] ĐỒNG BỘ TRỌNG SỐ 7 MÔ HÌNH SOTA TỪ GOOGLE DRIVE:")
+    print("\n📥 [BƯỚC 3/4] ĐỒNG BỘ TRỌNG SỐ MÔ HÌNH QUA WEIGHTS MANIFEST:")
     from tqdm.auto import tqdm
     import gdown
 
@@ -96,24 +96,33 @@ def run():
     weights_dir = os.path.join(repo_dir, "training_lab", "final_weights")
     os.makedirs(weights_dir, exist_ok=True)
 
-    expected_models = [
-        "01_agent1_router",
-        "02_agent2_generator",
-        "03_agent3_critic",
-        "04_agent4_writer",
-        "05_bge_nli_verifier",
-        "06_layoutlmv3_doc_agent",
-        "07_coreb_retrieval_agent"
-    ]
+    manifest_path = os.path.join(repo_dir, "kaggle", "weights_manifest.json")
+    manifest_checkpoints = []
+    if os.path.exists(manifest_path):
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as mf:
+                m_data = json.load(mf)
+                manifest_checkpoints = m_data.get("checkpoints", [])
+        except Exception as e:
+            print(f"    ⚠️ Lỗi đọc weights_manifest.json: {e}")
 
-    has_all_weights = all(os.path.exists(os.path.join(weights_dir, m)) for m in expected_models[:3])
+    # Check which checkpoints exist and have all required files
+    missing_mandatory = []
+    for cp in manifest_checkpoints:
+        sub_path = cp.get("sub_path", "")
+        cp_path = os.path.join(weights_dir, sub_path)
+        req_files = cp.get("required_files", [])
+        is_complete = os.path.exists(cp_path) and all(os.path.exists(os.path.join(cp_path, f)) for f in req_files)
+        if not is_complete and cp.get("is_mandatory", False):
+            missing_mandatory.append(cp.get("id"))
 
-    if not has_all_weights:
+    if missing_mandatory:
         working_dir = "/kaggle/working" if os.path.exists("/kaggle/working") else os.path.abspath(".")
         download_dir = os.path.join(working_dir, "drive_download")
         os.makedirs(download_dir, exist_ok=True)
         drive_folder_id = "1UPF13BNjxFFhd8YFv5PpuyfOR4G-VNte"
 
+        print(f"    🌐 Phát hiện {len(missing_mandatory)} checkpoint bắt buộc chưa có sẵn ({', '.join(missing_mandatory)}).")
         print("    🌐 Đang kết nối Google Drive tải gói 'final_weights_bundle.zip' (2.85 GB)...")
         print("    📊 Tiến độ tải thực tế:")
         try:
@@ -135,16 +144,21 @@ def run():
                     members = zf.infolist()
                     for member in tqdm(members, desc="    ⏳ Giải nén mô hình", unit="file"):
                         zf.extract(member, weights_dir)
-                print("    ✔ Giải nén trọn bộ 7 mô hình hoàn tất thành công!")
+                print("    ✔ Giải nén trọn bộ mô hình hoàn tất thành công!")
             else:
                 print("    ⚠️ Không tìm thấy tệp zip trong thư mục Drive đã tải.")
         except Exception as e:
             print(f"    ⚠️ Lỗi trong quá trình tải Drive: {e}")
     else:
-        print("    ✔ Toàn bộ trọng số 7 mô hình SOTA đã có sẵn trong training_lab/final_weights/:")
-        for m in expected_models:
-            status = "✔" if os.path.exists(os.path.join(weights_dir, m)) else "⏳"
-            print(f"      {status} {m}")
+        print("    ✔ Toàn bộ trọng số mô hình đã có sẵn và khớp với weights_manifest.json:")
+
+    for cp in manifest_checkpoints:
+        sub_path = cp.get("sub_path", "")
+        cp_path = os.path.join(weights_dir, sub_path)
+        req_files = cp.get("required_files", [])
+        is_complete = os.path.exists(cp_path) and all(os.path.exists(os.path.join(cp_path, f)) for f in req_files)
+        status = "✔" if is_complete else ("⚠️ THIẾU" if cp.get("is_mandatory", False) else "ℹ️ TÙY CHỌN")
+        print(f"      {status} [{cp.get('id')}] - {cp.get('description', '')}")
 
     # -------------------------------------------------------------------------
     # 4. Start Master Supervisor Gateway & Load Dual GPU VRAM
@@ -175,7 +189,9 @@ def run():
                 if res.status == 200:
                     payload = json.loads(res.read().decode())
                     wh = payload.get("worker_health", {})
-                    if wh.get("status") == "online":
+                    runtime_st = payload.get("runtime_status")
+                    trans_st = payload.get("transition_state")
+                    if wh.get("status") == "online" or (runtime_st == "running" and trans_st == "ready"):
                         is_ready = True
                         pbar.update(total_seconds - s - 1)
                         break
@@ -198,9 +214,15 @@ def run():
     try:
         res = urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=3)
         data = json.loads(res.read().decode())
+        vram_alloc = data.get("vram_allocation", {})
         wh = data.get("worker_health", {})
         gpus = wh.get("gpus", {})
-        if isinstance(gpus, dict) and gpus:
+        if isinstance(vram_alloc, dict) and vram_alloc:
+            for k, v in vram_alloc.items():
+                print(f"  🔥 {k.upper()}:")
+                print(f"     ├── VRAM đã cấp phát: {v.get('used_gb', 0)} / {v.get('total_gb', 16.0)} GB")
+                print(f"     └── VRAM còn trống:   {v.get('free_gb', 16.0)} GB (Headroom an toàn)")
+        elif isinstance(gpus, dict) and gpus:
             for k, v in gpus.items():
                 v_used = v.get('vram_used_gb', 0)
                 v_tot = v.get('vram_total_gb', 16.0)

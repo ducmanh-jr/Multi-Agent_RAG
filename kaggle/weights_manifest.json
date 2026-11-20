@@ -1,0 +1,206 @@
+{
+  "manifest_version": "2.1.0",
+  "bundle_name": "Multi-Agent RAG Authoritative Weights Specification",
+  "description": "Cryptographically verified manifest defining artifact types, capabilities, target GPUs, and exact file checksums for Kaggle Dual-T4 deployment.",
+  "base_models": {
+    "qwen_7b_base": {
+      "model_id": "Qwen/Qwen2.5-7B-Instruct",
+      "quantization": "bitsandbytes_4bit_nf4",
+      "dtype": "float16",
+      "target_gpu": 0,
+      "min_vram_mb": 4800.0,
+      "source": "huggingface:Qwen/Qwen2.5-7B-Instruct",
+      "revision": "main"
+    },
+    "qwen_32b_awq": {
+      "model_id": "Qwen/Qwen2.5-32B-Instruct-AWQ",
+      "quantization": "awq",
+      "dtype": "float16",
+      "tensor_parallel_size": 2,
+      "max_model_len": 4096,
+      "gpu_memory_utilization": 0.88,
+      "min_vram_per_gpu_mb": 13500.0,
+      "source": "huggingface:Qwen/Qwen2.5-32B-Instruct-AWQ",
+      "revision": "main"
+    }
+  },
+  "checkpoints": [
+    {
+      "id": "01_agent1_router",
+      "role": "router",
+      "capability": "router",
+      "artifact_type": "peft_adapter",
+      "base_model": "qwen_7b_base",
+      "sub_path": "01_agent1_router",
+      "target_gpu": 0,
+      "target_endpoint": "/api/router",
+      "is_mandatory": true,
+      "required_files": [
+        "adapter_config.json",
+        "adapter_model.safetensors",
+        "tokenizer.json",
+        "tokenizer_config.json"
+      ],
+      "primary_file": {
+        "filename": "adapter_model.safetensors",
+        "size_bytes": 80792456,
+        "sha256": "e6df1df19fc3f12557afe9310370c148a1c41150c4ac781744b90f60ccfa3bbc"
+      },
+      "description": "Agent 1 Router: Query decomposition & academic routing LoRA adapter"
+    },
+    {
+      "id": "02_agent2_reader",
+      "role": "layout_reader",
+      "capability": "layout_reader",
+      "artifact_type": "document_layout_model",
+      "base_model": "microsoft/layoutlmv3-base",
+      "sub_path": "02_agent2_reader",
+      "target_gpu": 1,
+      "target_endpoint": "/api/reader/layout",
+      "is_mandatory": false,
+      "required_files": [
+        "config.json",
+        "model.safetensors",
+        "processor_config.json",
+        "tokenizer.json"
+      ],
+      "primary_file": {
+        "filename": "model.safetensors",
+        "size_bytes": 503730436,
+        "sha256": "69e08c29275a6335f893de4f6a9a3a1be9527755e289022ececb28d0a52113c1"
+      },
+      "description": "Agent 2 Reader: LayoutLMv3 Base 11-Class Document Layout & Table Analyzer"
+    },
+    {
+      "id": "03_agent3_generator",
+      "role": "generator",
+      "capability": "generator",
+      "artifact_type": "peft_adapter",
+      "base_model": "qwen_7b_base",
+      "sub_path": "03_agent3_summarizer/generator_qlora",
+      "target_gpu": 0,
+      "target_endpoint": "/api/summarize/generator",
+      "is_mandatory": true,
+      "required_files": [
+        "adapter_config.json",
+        "adapter_model.safetensors"
+      ],
+      "primary_file": {
+        "filename": "adapter_model.safetensors",
+        "size_bytes": 323014136,
+        "sha256": "aabdde835ac1349e26ede11cb27bcc26cc5615fda47781dd6264b179516d6fe2"
+      },
+      "description": "Agent 3 Generator: Scientific Synthesis QLoRA adapter"
+    },
+    {
+      "id": "03_agent3_critic",
+      "role": "critic",
+      "capability": "critic",
+      "artifact_type": "peft_adapter",
+      "base_model": "qwen_7b_base",
+      "sub_path": "03_agent3_summarizer/critic_qlora",
+      "target_gpu": 0,
+      "target_endpoint": "/api/summarize/critic",
+      "is_mandatory": true,
+      "required_files": [
+        "adapter_config.json",
+        "adapter_model.safetensors"
+      ],
+      "primary_file": {
+        "filename": "adapter_model.safetensors",
+        "size_bytes": 161533168,
+        "sha256": "a3e5e759e7b9eae9812ea49eb2ea0288003410821a6c1fe8797ddcf94b57bfc0"
+      },
+      "description": "Agent 3 Critic: Inner Verifier & Gap Analysis Critic QLoRA adapter"
+    },
+    {
+      "id": "04_agent4_fact_checker",
+      "role": "fact_checker_nli",
+      "capability": "fact_checker_nli",
+      "artifact_type": "sequence_classifier",
+      "base_model": "BAAI/bge-reranker-v2-m3",
+      "sub_path": "04_agent4_fact_checker",
+      "target_gpu": 1,
+      "target_endpoint": "/api/factcheck",
+      "is_mandatory": true,
+      "required_files": [
+        "config.json",
+        "model.safetensors",
+        "tokenizer.json",
+        "sentencepiece.bpe.model"
+      ],
+      "primary_file": {
+        "filename": "model.safetensors",
+        "size_bytes": 2271080052,
+        "sha256": "a0ac28e23ef42aaab61914bf524bbcbf1ba4725cbf9a14028ed6a52084075a40"
+      },
+      "description": "Agent 4 Fact-Checker: BGE-Reranker-v2-m3 NLI Head for strict claim validation"
+    },
+    {
+      "id": "05_agent5_writer",
+      "role": "writer",
+      "capability": "writer",
+      "artifact_type": "peft_adapter",
+      "base_model": "qwen_7b_base",
+      "sub_path": "05_agent5_writer",
+      "target_gpu": 0,
+      "target_endpoint": "/api/writer",
+      "is_mandatory": true,
+      "required_files": [
+        "adapter_config.json",
+        "adapter_model.safetensors",
+        "tokenizer.json"
+      ],
+      "primary_file": {
+        "filename": "adapter_model.safetensors",
+        "size_bytes": 161533560,
+        "sha256": "2f7c765d4e5d84c2e2a0f6362ba3ee22000e2b767a9bc104a0d149daee25e15c"
+      },
+      "description": "Agent 5 Writer: Publication-grade report generation DoRA+rsLoRA adapter"
+    },
+    {
+      "id": "06_embedding_bge_m3",
+      "role": "embedding",
+      "capability": "embedding",
+      "artifact_type": "embedding_model",
+      "base_model": "BAAI/bge-m3",
+      "sub_path": "06_embedding_bge_m3",
+      "target_gpu": 1,
+      "target_endpoint": "/api/embed",
+      "is_mandatory": false,
+      "required_files": [
+        "adapter_config.json",
+        "adapter_model.safetensors",
+        "config_sentence_transformers.json"
+      ],
+      "primary_file": {
+        "filename": "adapter_model.safetensors",
+        "size_bytes": 56925120,
+        "sha256": "4343d82e8516205086a007227aa8035ea247f5d110e23f2d3cd483dabc0c9171"
+      },
+      "description": "MoAI Dense-Sparse Embedding BGE-M3 adapter"
+    },
+    {
+      "id": "07_reranker_bge_large",
+      "role": "reranker",
+      "capability": "reranker",
+      "artifact_type": "reranker_model",
+      "base_model": "BAAI/bge-reranker-large",
+      "sub_path": "07_reranker_bge_large",
+      "target_gpu": 1,
+      "target_endpoint": "/api/rerank",
+      "is_mandatory": false,
+      "required_files": [
+        "adapter_config.json",
+        "adapter_model.safetensors",
+        "sentencepiece.bpe.model"
+      ],
+      "primary_file": {
+        "filename": "adapter_model.safetensors",
+        "size_bytes": 32950428,
+        "sha256": "d42c8b9d06054a815d3b3bee9a067754eb64875ddb69d6e8480814902d222e30"
+      },
+      "description": "CoREB Cross-Encoder Reranker Large adapter"
+    }
+  ]
+}
