@@ -1,10 +1,12 @@
 """
-Agentic Supervisor & Multi-Hop Query Planner (L3-L4).
+Agentic Supervisor, General-Purpose Intent Router & Multi-Hop Query Planner.
 Provides:
-  1. Intent, Complexity (LOW / MEDIUM / HIGH), and Entity/Numeric analysis.
-  2. Multi-Hop Sub-Query DAG Decomposition (rule-accelerated + optional LLM refinement).
-  3. Gap-Driven Query Rewriter when Inner Critic or Outer Fact-Checker requests more context.
-  4. Real-time Backend Capability Probing for Hybrid Mode (Cross-Model Routing).
+  1. General-Purpose 9-Intent Classification (AGENT.md Sections 7, 8, 13):
+       DOCUMENT_QA, GENERAL_QA, WEB_RESEARCH, MIXED_QA, TASK_ASSISTED_RESPONSE,
+       TASK_EXECUTION, CLARIFICATION_REQUIRED, SAFETY_RESTRICTED, UNSUPPORTED_CAPABILITY.
+  2. Legacy RAG sub-intent, Complexity (LOW / MEDIUM / HIGH), and Entity/Numeric analysis.
+  3. Multi-Hop Sub-Query DAG Decomposition (rule-accelerated).
+  4. Gap-Driven Query Rewriter when Inner Critic or Outer Fact-Checker requests more context.
 """
 
 from __future__ import annotations
@@ -13,7 +15,12 @@ import re
 from typing import Any, Optional
 
 from core.config import settings
-from core.schemas import RouterPlanOutput
+from core.schemas import (
+    InputStatus,
+    PrimaryIntentType,
+    QueryResolutionStatus,
+    RouterPlanOutput,
+)
 from utils.logger import logger
 
 
@@ -29,22 +36,166 @@ _STOP_WORDS_VI_EN = {
 }
 
 
+_SAFETY_PATTERNS = [
+    r"\b(chế\s+tạo\s+bom|làm\s+bom|chất\s+nổ|vũ\s+khí\s+sinh\s+học|tự\s+tử)\b",
+    r"\b(hack\s+mật\s+khẩu|ddos|ransomware|keylogger|exploit\s+zero-day)\b",
+    r"\b(tiết\s+lộ|in\s+ra|show\s+me|dump|reveal)\b.{0,40}\b(api[_\s]?key|gemini_api_key|secret|password|token|\.env)\b",
+    r"\b(ignore\s+(?:all\s+)?previous\s+instructions|bỏ\s+qua\s+mọi\s+quy\s+tắc)\b",
+]
+
+_AMBIGUOUS_EXACT = {
+    "ai",
+    "ml",
+    "cat",
+    "?",
+    "???",
+    "trí tuệ nhân tạo",
+    "tri tue nhan tao",
+    "kết quả thế nào",
+    "kết quả thế nào?",
+    "ket qua the nao",
+    "cấu hình ra sao",
+    "cấu hình ra sao?",
+    "ưu điểm là gì",
+    "ưu điểm là gì?",
+    "tốt không",
+    "tốt không?",
+}
+
+_TASK_EXECUTION_PATTERNS = [
+    r"\b(chạy\s+code|thực\s+thi\s+(?:lệnh|script|tool|công\s+cụ)|run\s+(?:python|code|script|command|tool)|execute\s+(?:code|command|tool))\b",
+    r"\b(xóa\s+file|tạo\s+file|chỉnh\s+sửa\s+file|gửi\s+email|triển\s+khai\s+server|deploy)\b",
+    r"\b(tính\s+bằng\s+công\s+cụ|dùng\s+tool|gọi\s+tool|call\s+tool)\b",
+]
+
+_TASK_ASSISTED_PATTERNS = [
+    r"\b(viết\s+(?:code|hàm|chương\s+trình|script|sql|regex|class|api)|lập\s+trình|code\s+python|write\s+(?:a\s+)?(?:python|code|script|function|sql))\b",
+    r"\b(hướng\s+dẫn\s+(?:cấu\s+hình|cài\s+đặt|triển\s+khai)|how\s+to\s+(?:configure|install|implement|build))\b",
+    r"\b(dịch\s+(?:đoạn|câu|văn\s+bản|sang\s+tiếng)|translate\s+(?:this|to|into))\b",
+    r"\b(đề\s+xuất\s+(?:phương\s+án|kiến\s+trúc|giải\s+pháp)|refactor\s+đoạn\s+code|debug\s+đoạn\s+code)\b",
+]
+
+_WEB_RESEARCH_PATTERNS = [
+    r"\b(tìm\s+(?:bài\s+báo|tài\s+liệu|nghiên\s+cứu|công\s+trình)|search\s+papers?|find\s+papers?)\b",
+    r"\b(nghiên\s+cứu\s+mới(?:\s+nhất)?|bài\s+báo\s+mới(?:\s+nhất)?|recent\s+(?:papers?|research)|latest\s+(?:papers?|research|release|version))\b",
+    r"\b(phiên\s+bản\s+mới\s+nhất|tin\s+tức\s+mới\s+nhất|cập\s+nhật\s+mới\s+nhất|arxiv|openalex)\b",
+]
+
+_EXPLICIT_DOCUMENT_PATTERNS = [
+    r"\b(tài\s+liệu(?:\s+này|\s+trên)?|trong\s+tài\s+liệu|theo\s+tài\s+liệu)\b",
+    r"\b(pdf(?:\s+này)?|file\s+pdf|trong\s+pdf|tệp\s+này|file\s+này)\b",
+    r"\b(bài\s+báo\s+này|trong\s+bài\s+báo|theo\s+bài\s+báo|this\s+paper|the\s+paper|the\s+document|this\s+document|in\s+the\s+pdf)\b",
+    r"\b(trang\s+\d+|page\s+\d+|bảng\s+\d+|table\s+\d+|hình\s+\d+|figure\s+\d+)\b",
+    r"^/(?:tom-tat|tomtat|so-sanh|dong-gop)\b",
+    r"\b(tóm\s+tắt\s+(?:pdf|tài\s+liệu|bài\s+báo)|summarize\s+(?:this\s+)?(?:pdf|paper|document))\b",
+]
+
+_GENERAL_QA_PATTERNS = [
+    r"^(?:[\wÀ-ỹ\s]{2,40})\s+là\s+gì\s*\??$",
+    r"^(?:what\s+is|define|explain|giải\s+thích|khái\s+niệm|định\s+nghĩa)\b",
+    r"^(?:xin\s+chào|chào\s+bạn|hello|hi|hey)\b",
+]
+
+
 class AgenticSupervisorPlanner:
     """
-    Unified Supervisor & Query Planner used by all 6 modes.
-    Can run deterministically in < 2ms (for CPU Min / Hybrid fast-path) or refine via LLM.
+    Unified Supervisor, General-Purpose Intent Router & Query Planner used by all 6 official modes.
+    Runs deterministically in < 2ms with zero external API calls.
     """
+
+    def classify_primary_intent(
+        self,
+        query: str,
+        has_pdf: bool = False,
+        auto_scout: bool = False,
+        requested_tool: Optional[str] = None,
+    ) -> tuple[PrimaryIntentType, str, QueryResolutionStatus, InputStatus, bool, bool]:
+        """
+        Classifies user input into the 9 General-Purpose Assistant intents (AGENT.md Sections 7 & 8).
+        Returns: (primary_intent, sub_intent, query_resolution, input_status, needs_scout, needs_retrieval).
+        """
+        clean_q = (query or "").strip()
+        q_lower = clean_q.lower()
+
+        # 0. Pre-check: Empty or ultra-ambiguous query -> CLARIFICATION_REQUIRED
+        if not clean_q or q_lower in _AMBIGUOUS_EXACT:
+            return ("CLARIFICATION_REQUIRED", "Ambiguous", "CLARIFICATION_REQUIRED", "OK", False, False)
+
+        # 1. Pre-check: Safety & security boundary (P0)
+        if any(re.search(pat, q_lower, re.IGNORECASE) for pat in _SAFETY_PATTERNS):
+            return ("SAFETY_RESTRICTED", "Safety", "CLEAR", "OK", False, False)
+
+        has_doc_ref = any(re.search(pat, q_lower, re.IGNORECASE) for pat in _EXPLICIT_DOCUMENT_PATTERNS)
+        has_web_ref = any(re.search(pat, q_lower, re.IGNORECASE) for pat in _WEB_RESEARCH_PATTERNS)
+        is_task_exec = bool(requested_tool) or any(
+            re.search(pat, q_lower, re.IGNORECASE) for pat in _TASK_EXECUTION_PATTERNS
+        )
+        is_task_assisted = any(re.search(pat, q_lower, re.IGNORECASE) for pat in _TASK_ASSISTED_PATTERNS)
+        is_general_pattern = any(re.search(pat, q_lower, re.IGNORECASE) for pat in _GENERAL_QA_PATTERNS)
+
+        # 2. TASK_EXECUTION: Explicit tool/action execution request
+        if is_task_exec and not has_doc_ref:
+            tool_hint = (requested_tool or "").strip().lower()
+            return ("TASK_EXECUTION", tool_hint or "Tool_Operation", "CLEAR", "OK", False, False)
+
+        # 3. MIXED_QA: Combines document content AND external/recent research
+        if (has_doc_ref or has_pdf) and has_web_ref:
+            if not has_pdf and not auto_scout:
+                return ("MIXED_QA", "Document_And_Research", "CLEAR", "NO_DOCUMENT_SELECTED", False, False)
+            return ("MIXED_QA", "Document_And_Research", "CLEAR", "OK", bool(auto_scout), True)
+
+        # 4. WEB_RESEARCH: External search / finding papers / latest versions (Scout only if enabled)
+        if has_web_ref and not has_doc_ref:
+            return ("WEB_RESEARCH", "Literature_Discovery", "CLEAR", "OK", bool(auto_scout), bool(auto_scout))
+
+        # 5. TASK_ASSISTED_RESPONSE: Coding / config guidance / translation / drafting (no PDF required)
+        if is_task_assisted and not has_doc_ref:
+            sub = "Translation" if re.search(r"\b(dịch|translate)\b", q_lower) else "Coding_Or_Guidance"
+            return ("TASK_ASSISTED_RESPONSE", sub, "CLEAR", "OK", False, False)
+
+        # 6. DOCUMENT_QA: Explicit document reference
+        if has_doc_ref:
+            if has_pdf:
+                return ("DOCUMENT_QA", "Document_Analysis", "CLEAR", "OK", False, True)
+            if auto_scout:
+                return ("DOCUMENT_QA", "Auto_Scout_Document", "CLEAR", "OK", True, True)
+            return ("DOCUMENT_QA", "Document_Analysis", "CLEAR", "NO_DOCUMENT_SELECTED", False, False)
+
+        # 7. Pure general-knowledge / explanation query (even if a PDF happens to be selected)
+        if is_general_pattern:
+            return ("GENERAL_QA", "Knowledge", "CLEAR", "OK", False, False)
+
+        # 8. If user has selected a PDF and asks a non-general domain question -> DOCUMENT_QA
+        if has_pdf:
+            return ("DOCUMENT_QA", "Document_Analysis", "CLEAR", "OK", False, True)
+
+        # 9. Default without PDF: GENERAL_QA (RAG is NOT the mandatory default!)
+        return ("GENERAL_QA", "Knowledge", "CLEAR", "OK", False, False)
 
     def plan_query(
         self,
         query: str,
         evidence_gaps: Optional[list[dict[str, Any]]] = None,
         retry_count: int = 0,
+        pdf_path: Optional[str] = None,
+        pdf_paths: Optional[list[str]] = None,
+        auto_scout: bool = False,
+        requested_tool: Optional[str] = None,
     ) -> RouterPlanOutput:
         clean_q = (query or "").strip()
         q_lower = clean_q.lower()
+        has_pdf = bool(pdf_path or (pdf_paths and any(pdf_paths)))
 
-        # 1. Detect Numeric, Comparative, Methodology, Summary, Limitation intents
+        primary_intent, sub_intent, query_resolution, input_status, needs_scout, needs_retrieval = (
+            self.classify_primary_intent(
+                query=clean_q,
+                has_pdf=has_pdf,
+                auto_scout=auto_scout,
+                requested_tool=requested_tool,
+            )
+        )
+
+        # 1. Detect Legacy Numeric, Comparative, Methodology, Summary, Limitation sub-intents
         is_numeric = any(
             kw in q_lower
             for kw in [
@@ -90,6 +241,10 @@ class AgenticSupervisorPlanner:
             intent = "limitation"
         elif is_summary:
             intent = "summarize"
+        elif primary_intent in ("TASK_ASSISTED_RESPONSE", "TASK_EXECUTION"):
+            intent = "code_request"
+        elif primary_intent == "GENERAL_QA":
+            intent = "general_question"
         else:
             intent = "academic_research"
 
@@ -189,10 +344,16 @@ class AgenticSupervisorPlanner:
             alpha=alpha,
             top_k=top_k,
             reasoning=(
-                f"Intent={intent}, Complexity={complexity}, "
-                f"SubQueries={len(dedup_subs)}, Entities={required_entities[:4]}, "
-                f"alpha={alpha}, top_k={top_k}"
+                f"PrimaryIntent={primary_intent}, Intent={intent}, Complexity={complexity}, "
+                f"Resolution={query_resolution}, InputStatus={input_status}, "
+                f"Scout={needs_scout}, Retrieval={needs_retrieval}"
             ),
+            primary_intent=primary_intent,
+            sub_intent=sub_intent,
+            query_resolution=query_resolution,
+            input_status=input_status,
+            needs_scout=needs_scout,
+            needs_retrieval=needs_retrieval,
         )
 
     def build_gap_requeries(

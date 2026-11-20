@@ -19,7 +19,7 @@ from agents.agent0_scout.query_expander import (
 from agents.agent0_scout.arxiv_client import search_arxiv_papers
 from agents.agent0_scout.paper_ranker import rank_and_select_papers
 from agents.agent0_scout.downloader import download_and_register_paper
-from agents.agent0_scout.gemini_scout import search_gemini_academic_papers
+from agents.agent0_scout.openalex_scout import search_openalex_academic_papers
 from utils.logger import logger
 
 
@@ -53,8 +53,8 @@ class ScoutAgent(BaseAgent):
 
         # 2. Analyze Intent (3-Way: SEARCH / CLARIFY / REJECT)
         intent = analyze_intent(user_query)
-        decision = intent.get("decision", "search")
-        domain = intent.get("domain", "STEM")
+        decision = str(intent.get("decision", "search")).strip().lower()
+        domain = str(intent.get("domain", "STEM")).strip().upper()
         
         if decision == "reject":
             self.logger.warning(f"[LiteratureScout] Query rejected: {intent.get('reason')} - {intent.get('message')}")
@@ -86,12 +86,12 @@ class ScoutAgent(BaseAgent):
         perspectives = generate_search_perspectives(user_query)
         academic_query = translate_to_academic_english(user_query)
 
-        # 3. NON-STEM ROUTE: Route directly to Gemini Academic Explorer
+        # 3. NON-STEM ROUTE: Route directly to OpenAlex Academic Explorer
         if domain == "NON_STEM":
-            self.logger.info(f"[LiteratureScout] Non-STEM humanities/history topic: '{user_query}'. Routing to Gemini Academic Explorer...")
-            gemini_papers = search_gemini_academic_papers(user_query, max_results=3)
-            if gemini_papers:
-                primary = gemini_papers[0]
+            self.logger.info(f"[LiteratureScout] Non-STEM humanities/history topic: '{user_query}'. Routing to OpenAlex Academic Explorer...")
+            openalex_papers = search_openalex_academic_papers(user_query, max_results=3)
+            if openalex_papers:
+                primary = openalex_papers[0]
                 local_path = primary.get("local_pdf_path") or primary.get("path") or primary.get("pdf_path")
                 doc_record = {
                     "id": primary.get("id"),
@@ -107,10 +107,10 @@ class ScoutAgent(BaseAgent):
                 trace = self.log_action(
                     "paper_discovered_and_ingested",
                     {
-                        "provider": "Gemini Academic Explorer",
+                        "provider": "OpenAlex Academic Explorer",
                         "title": primary.get("title"),
                         "path": local_path,
-                        "candidates_count": len(gemini_papers),
+                        "candidates_count": len(openalex_papers),
                     }
                 )
                 return {
@@ -143,12 +143,12 @@ class ScoutAgent(BaseAgent):
                 min_threshold=2.0
             )
 
-        # If STEM ArXiv search yielded 0 relevant papers, fallback to Gemini Academic Explorer
+        # If STEM ArXiv search yielded 0 relevant papers, fallback to OpenAlex Academic Explorer
         if not top_papers:
-            self.logger.info(f"[LiteratureScout] ArXiv yielded 0 papers for '{user_query}'. Activating Gemini Academic Explorer fallback...")
-            gemini_papers = search_gemini_academic_papers(user_query, max_results=3)
-            if gemini_papers:
-                primary = gemini_papers[0]
+            self.logger.info(f"[LiteratureScout] ArXiv yielded 0 papers for '{user_query}'. Activating OpenAlex Academic Explorer fallback...")
+            openalex_papers = search_openalex_academic_papers(user_query, max_results=3)
+            if openalex_papers:
+                primary = openalex_papers[0]
                 local_path = primary.get("local_pdf_path") or primary.get("path") or primary.get("pdf_path")
                 doc_record = {
                     "id": primary.get("id"),
@@ -164,10 +164,10 @@ class ScoutAgent(BaseAgent):
                 trace = self.log_action(
                     "paper_discovered_and_ingested",
                     {
-                        "provider": "Gemini Academic Explorer (Fallback)",
+                        "provider": "OpenAlex Academic Explorer (Fallback)",
                         "title": primary.get("title"),
                         "path": local_path,
-                        "candidates_count": len(gemini_papers),
+                        "candidates_count": len(openalex_papers),
                     }
                 )
                 return {
