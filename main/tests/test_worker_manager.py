@@ -1127,34 +1127,66 @@ def test_cleanup_cluster_rejects_unsafe_numeric_pgids():
 
 def test_kill_process_group_and_is_alive_strictly_guard_against_pgid_le_1():
     """
-    CRITICAL P0: Verify kill_process_group and is_process_group_alive never signal pgid <= 1.
+    CRITICAL P0: Verify kill_process_group and is_process_group_alive raise ValueError for pgid <= 1
+    to prevent conflating invalid input with a dead process group.
     """
     from kaggle.worker_manager import kill_process_group, is_process_group_alive
 
-    for bad_pgid in [0, 1, -1, 5000000]:
-        assert is_process_group_alive(bad_pgid) is False
-        with patch("os.killpg", create=True) as mock_killpg, \
-             patch("subprocess.run") as mock_sub:
+    for bad_pgid in [0, 1, -1, 5000000, "invalid", None]:
+        with pytest.raises(ValueError):
+            is_process_group_alive(bad_pgid)
+        with pytest.raises(ValueError):
             kill_process_group(bad_pgid, 15)
-            mock_killpg.assert_not_called()
-            mock_sub.assert_not_called()
+
+
+def test_spawn_process_fail_closed_on_pgid_write_error(worker_manager):
+    """
+    CRITICAL P0: If writing worker.pgid fails, _spawn_process MUST immediately kill
+    the spawned process group, close log file, and raise RuntimeError (Fail-Closed).
+    """
+    import tempfile
+    from kaggle.worker_manager import SIGKILL
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        with patch.object(worker_manager, "project_dir", tmp_dir):
+            kaggle_dir = os.path.join(tmp_dir, "kaggle")
+            os.makedirs(kaggle_dir, exist_ok=True)
+
+            mock_proc = MagicMock(pid=12345)
+            mock_proc.poll.return_value = None
+
+            with patch("subprocess.Popen", return_value=mock_proc), \
+                 patch("kaggle.worker_manager.kill_process_group") as mock_kill, \
+                 patch("os.replace", side_effect=OSError("Disk full")):
+                with pytest.raises(RuntimeError) as exc_info:
+                    worker_manager._spawn_process(["python", "-c", "pass"], "test.log")
+
+                assert "Ghi worker.pgid thất bại" in str(exc_info.value)
+                # Verify that the spawned process group was immediately killed
+                mock_kill.assert_called_with(12345, SIGKILL)
+                mock_proc.wait.assert_called_with(timeout=3.0)
+                # State must be cleanly reset
+                assert worker_manager._proc is None
+                assert worker_manager._pgid is None
+                # worker.pgid must not exist
+                assert not os.path.exists(os.path.join(kaggle_dir, "worker.pgid"))
 
 
 def test_sig_handler_and_keyboard_interrupt_exit_codes():
     """
-    CRITICAL P1: Verify that cleanup failure causes exit code 1, and success causes exit code 0.
+    CRITICAL P1: Verify handle_runner_interrupt calls sys.exit(0) when cleanup succeeds,
+    and sys.exit(1) when cleanup fails.
     """
     import kaggle.run_kaggle as rk
 
-    with patch.object(rk, "cleanup_cluster", return_value=True):
-        clean = rk.cleanup_cluster(None, "")
-        exit_code = 0 if clean else 1
-        assert exit_code == 0
+    with patch.object(rk, "cleanup_cluster", return_value=True), \
+         patch("sys.exit") as mock_exit:
+        rk.handle_runner_interrupt(None, "", sig=signal.SIGINT)
+        mock_exit.assert_called_once_with(0)
 
-    with patch.object(rk, "cleanup_cluster", return_value=False):
-        clean = rk.cleanup_cluster(None, "")
-        exit_code = 0 if clean else 1
-        assert exit_code == 1
+    with patch.object(rk, "cleanup_cluster", return_value=False), \
+         patch("sys.exit") as mock_exit:
+        rk.handle_runner_interrupt(None, "", sig="KeyboardInterrupt")
+        mock_exit.assert_called_once_with(1)
 
 
 def test_truthful_capabilities_reporting_excludes_unloaded_models(worker_manager):

@@ -210,10 +210,12 @@ SIGTERM = getattr(signal, "SIGTERM", 15)
 
 
 def kill_process_group(pgid: int, sig: int) -> None:
-    """Sends signal to entire process group across POSIX/Windows. Strictly guards against pgid <= 1."""
+    """
+    Sends signal to entire process group across POSIX/Windows.
+    Strictly guards against pgid <= 1 or invalid values by raising ValueError.
+    """
     if not isinstance(pgid, int) or pgid <= 1 or pgid > 4194304:
-        print(f"[WorkerManager WARNING] Từ chối gửi tín hiệu đến PGID không an toàn: {pgid}")
-        return
+        raise ValueError(f"Từ chối gửi tín hiệu đến PGID không an toàn hoặc không hợp lệ: {pgid}")
 
     if hasattr(os, "killpg"):
         try:
@@ -237,9 +239,13 @@ def kill_process_group(pgid: int, sig: int) -> None:
 
 
 def is_process_group_alive(pgid: int) -> bool:
-    """Checks whether any processes in the process group are still running. Strictly guards against pgid <= 1."""
+    """
+    Checks whether any processes in the process group are still running.
+    Strictly validates input: raises ValueError for invalid PGID (<= 1 or > 4194304)
+    so callers never conflate invalid input with a dead process group.
+    """
     if not isinstance(pgid, int) or pgid <= 1 or pgid > 4194304:
-        return False
+        raise ValueError(f"PGID không hợp lệ hoặc không an toàn ({pgid}). PGID phải là số nguyên trong khoảng [2, 4194304].")
 
     if hasattr(os, "killpg"):
         try:
@@ -583,12 +589,41 @@ class WorkerManager:
         )
         self._pgid = proc.pid
 
-        # Persist PGID to disk so runner can reap if supervisor is killed prematurely
+        # Persist PGID to disk atomically so runner can reap if supervisor is killed prematurely (Fail-Closed P0)
+        pgid_file = log_dir / "worker.pgid"
+        pgid_tmp = log_dir / f"worker.pgid.{proc.pid}.tmp"
         try:
-            with open(log_dir / "worker.pgid", "w", encoding="utf-8") as f:
+            with open(pgid_tmp, "w", encoding="utf-8") as f:
                 f.write(str(proc.pid))
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(pgid_tmp, pgid_file)
         except Exception as e:
-            print(f"[WorkerManager WARNING] Ghi worker.pgid thất bại: {e}")
+            # Atomic PGID persistence failed -> fail-closed immediately!
+            err_msg = f"[WorkerManager CRITICAL] Ghi worker.pgid thất bại ({e}). Cưỡng chế hủy tiến trình {proc.pid} để tránh zombie worker."
+            print(err_msg)
+            try:
+                if pgid_tmp.exists():
+                    pgid_tmp.unlink()
+            except Exception:
+                pass
+            try:
+                kill_process_group(proc.pid, SIGKILL)
+            except Exception:
+                pass
+            try:
+                proc.wait(timeout=3.0)
+            except Exception:
+                pass
+            if hasattr(self, "_log_file") and self._log_file:
+                try:
+                    self._log_file.close()
+                except Exception:
+                    pass
+                self._log_file = None
+            self._proc = None
+            self._pgid = None
+            raise RuntimeError(err_msg)
 
         return proc
 

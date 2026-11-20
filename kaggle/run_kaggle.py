@@ -105,6 +105,17 @@ def cleanup_cluster(server_process, repo_dir):
     return all_clean
 
 
+def handle_runner_interrupt(server_process, repo_dir, sig=None):
+    """
+    Unified interrupt handler for SIGINT, SIGTERM, and KeyboardInterrupt.
+    Guarantees cluster cleanup and exits with 0 (clean) or 1 (unclean).
+    """
+    sig_str = f" ({sig})" if sig is not None else ""
+    print(f"\n    🛑 Nhận tín hiệu ngắt{sig_str}, bắt đầu dọn dẹp cụm...")
+    clean = cleanup_cluster(server_process, repo_dir)
+    sys.exit(0 if clean else 1)
+
+
 def verify_checkpoint_integrity(cp, base_dir, verify_sha256=True):
     sub_path = cp.get("sub_path", "")
     cp_path = os.path.join(base_dir, sub_path)
@@ -332,9 +343,7 @@ def run():
 
     # Register signal handlers for clean interrupt
     def sig_handler(sig, frame):
-        print(f"\n    🛑 Nhận tín hiệu ngắt ({sig}), bắt đầu dọn dẹp cụm...")
-        clean = cleanup_cluster(server_process, repo_dir)
-        sys.exit(0 if clean else 1)
+        handle_runner_interrupt(server_process, repo_dir, sig=sig)
 
     try:
         signal.signal(signal.SIGINT, sig_handler)
@@ -438,9 +447,7 @@ def run():
     try:
         server_process.wait()
     except KeyboardInterrupt:
-        print("\n🛑 Nhận tín hiệu ngắt (KeyboardInterrupt), bắt đầu dọn dẹp cụm...")
-        clean = cleanup_cluster(server_process, repo_dir)
-        sys.exit(0 if clean else 1)
+        handle_runner_interrupt(server_process, repo_dir, sig="KeyboardInterrupt")
 
 if __name__ == "__main__":
     run()
