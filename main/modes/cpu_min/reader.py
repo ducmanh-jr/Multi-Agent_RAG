@@ -13,7 +13,7 @@ import re
 from typing import Any
 
 from core.base_agent import BaseAgent
-from core.state import AgentState, SourceUnit
+from core.state import AgentState, SourceUnit, deduplicate_and_merge_source_units
 from core.tools import extract_table_or_equations_tool, load_or_parse_selected_pdf
 
 
@@ -91,6 +91,8 @@ class CPUMinReaderAgent(BaseAgent):
                     source_units.append(unit.to_dict())
                     curr_offset = unit_offset + len(clean_text) + 1
 
+        source_units = deduplicate_and_merge_source_units(source_units)
+
         document_schema = {
             "doc_id": source_units[0]["doc_id"] if source_units else "unknown",
             "pages_covered": sorted(list(pages_covered)),
@@ -110,5 +112,6 @@ class CPUMinReaderAgent(BaseAgent):
         return {
             "document_schema": document_schema,
             "source_units": source_units,
+            "processing_status": "SUCCESS",
             "reasoning_trace": [trace],
         }

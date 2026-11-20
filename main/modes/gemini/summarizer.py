@@ -10,7 +10,11 @@ import json
 import re
 from typing import Any
 
-from agents.agent3_summarizer.components.generator import pack_context_by_token_budget
+from agents.agent3_summarizer.components.critic import (
+    build_verification_failed_state,
+    evaluate_critic_contract,
+)
+from agents.agent3_summarizer.components.generator import pack_context_with_coverage
 from core.base_agent import BaseAgent
 from core.schemas import SummarizerCriticOutput
 from core.state import AgentState, AtomicClaim, EvidenceSpan
@@ -41,7 +45,7 @@ class GeminiSummarizerAgent(BaseAgent):
 
         self.logger.info(f"[Gemini Summarizer] Calling Gemini Flash for: '{query[:65]}' ({len(source_units)} units)")
 
-        context_str, _ = pack_context_by_token_budget(source_units, max_tokens=6000)
+        context_str, _, context_coverage = pack_context_with_coverage(source_units, max_tokens=6000)
 
         chat_context = ""
         chat_history = state.get("chat_history") or []
@@ -146,46 +150,47 @@ YÊU CẦU TRẢ VỀ ĐÚNG ĐỊNH DẠNG JSON HỢP LỆ (không kèm markdow
         if response_text:
             clean_json = re.sub(r"^```(?:json)?|```$", "", response_text.strip(), flags=re.MULTILINE).strip()
             try:
-                # Fix unescaped LaTeX backslashes before json.loads
                 sanitized_json = re.sub(r'\\(?![/"\\bfnrtu])', r"\\\\", clean_json)
                 data = json.loads(sanitized_json)
-                answer = str(data.get("answer", "")).strip()
-                raw_spans = data.get("evidence_spans", []) or []
-                raw_claims = data.get("claims", []) or []
-                critic_out = SummarizerCriticOutput.from_dict(
-                    {
-                        "is_supported": data.get("is_supported", True),
-                        "missing_key_points": data.get("missing_key_points", []),
-                        "action": data.get("critic_action", "approve"),
-                    }
+            except Exception as exc:
+                reason = f"Gemini returned malformed JSON (fail-closed): {exc}"
+                self.logger.error(f"[Gemini Summarizer] {reason}")
+                fail_trace = self.log_action("gemini_critic_json_invalid", {"error": reason})
+                return build_verification_failed_state(
+                    answer=clean_json,
+                    reason=reason,
+                    context_coverage=context_coverage,
+                    model_family="gemini_flash",
+                    trace=fail_trace,
                 )
-            except Exception:
-                # Robust fallback for unescaped inline quotes or truncated JSON
-                m_ans = re.search(r'"answer"\s*:\s*"(.*?)(?:"\s*,\s*"(?:evidence_spans|claims|is_supported|missing_key_points|critic_action)"|\s*"\}|\s*$)', clean_json, flags=re.DOTALL)
-                if m_ans:
-                    answer = m_ans.group(1).replace('\\"', '"').replace("\\n", "\n").strip()
-                else:
-                    m_ans_alt = re.search(r'"answer"\s*:\s*"((?:[^"\\]|\\.)*)', clean_json, flags=re.DOTALL)
-                    if m_ans_alt:
-                        answer = m_ans_alt.group(1).replace('\\"', '"').replace("\\n", "\n").strip()
-                    else:
-                        answer = re.sub(r'^\s*\{\s*"answer"\s*:\s*"?', "", clean_json).strip()
 
-                # Attempt to rescue evidence_spans from clean_json
-                m_spans = re.search(r'"evidence_spans"\s*:\s*(\[.*?\])', clean_json, flags=re.DOTALL)
-                if m_spans:
-                    try:
-                        raw_spans = json.loads(m_spans.group(1))
-                    except Exception:
-                        pass
+            ans_candidate = (
+                str(data.get("answer") or "").strip()
+                if isinstance(data, dict)
+                else ""
+            )
+            critic_res = evaluate_critic_contract(
+                ans_candidate,
+                list(data.get("claims") or []) if isinstance(data, dict) else [],
+                list(data.get("evidence_spans") or []) if isinstance(data, dict) else [],
+                precomputed_critic_data=data if (isinstance(data, dict) and ans_candidate) else {"error": "invalid_gemini_schema"},
+            )
+            if critic_res["processing_status"] == "VERIFICATION_FAILED":
+                reason = critic_res["error_message"] or f"Gemini response violated Critic schema (fail-closed): {data!r}"
+                self.logger.error(f"[Gemini Summarizer] {reason}")
+                fail_trace = self.log_action("gemini_critic_schema_invalid", {"error": reason})
+                return build_verification_failed_state(
+                    answer=ans_candidate or clean_json,
+                    reason=reason,
+                    context_coverage=context_coverage,
+                    model_family="gemini_flash",
+                    trace=fail_trace,
+                )
 
-                # Attempt to rescue claims from clean_json
-                m_claims = re.search(r'"claims"\s*:\s*(\[.*?\])', clean_json, flags=re.DOTALL)
-                if m_claims:
-                    try:
-                        raw_claims = json.loads(m_claims.group(1))
-                    except Exception:
-                        pass
+            answer = ans_candidate
+            raw_spans = data.get("evidence_spans", []) or []
+            raw_claims = data.get("claims", []) or []
+            critic_out = SummarizerCriticOutput.from_dict(critic_res["critic_feedback"])
 
         # Clean trailing unclosed brackets or punctuation cut-offs
         if answer:
@@ -256,6 +261,8 @@ YÊU CẦU TRẢ VỀ ĐÚNG ĐỊNH DẠNG JSON HỢP LỆ (không kèm markdow
             "evidence_spans": evidence_spans,
             "critic_action": critic_out.action,
             "critic_feedback": critic_out.to_dict(),
+            "processing_status": "SUCCESS",
+            "context_coverage": context_coverage,
             "generator_model_family": "gemini_flash",
             "reasoning_trace": [trace],
         }

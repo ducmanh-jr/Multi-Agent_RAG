@@ -15,13 +15,14 @@ from core.state import AgentState, ClaimCheckResult, EvidenceGap
 from core.verifier import (
     check_numerical_and_date_consistency,
     deterministic_verify_claims,
+    finalize_fact_check_contract,
     split_answer_into_atomic_claims,
 )
 from utils.llm_client import llm_client
 
 
 class GPUMaxFactCheckerAgent(BaseAgent):
-    """Fact Checker Agent utilizing Kaggle Dual T4 32B Batch CoT Judge + Numeric Guard."""
+    """Fact Checker Agent utilizing Kaggle Dual T4 32B Batch CoT Judge + Numeric/Provenance Guard."""
 
     def __init__(self, max_internal_retry: int = 2):
         super().__init__(name="GPUMaxFactCheckerAgent", max_internal_retry=max_internal_retry)
@@ -30,15 +31,19 @@ class GPUMaxFactCheckerAgent(BaseAgent):
         query = state.get("query") or state.get("question", "")
         answer = state.get("answer", "")
         raw_claims = state.get("claims", []) or []
+        evidence_spans = state.get("evidence_spans", []) or []
         source_units = state.get("source_units", []) or []
         retrieved_docs = state.get("retrieved_docs", []) or []
 
         if not answer.strip():
             return {
+                "evidence_status": "NOT_FOUND",
+                "processing_status": "SUCCESS",
                 "fact_check_label": "not_enough_info",
                 "verified_claims": [],
                 "rejected_claims": [],
                 "evidence_gaps": [EvidenceGap(missing_aspect=query, suggested_query=query).to_dict()],
+                "verifier_model_family": "qwen3_32b_awq",
                 "reasoning_trace": [self.log_action("aborted", {"reason": "empty_answer"})],
             }
 
@@ -61,10 +66,13 @@ class GPUMaxFactCheckerAgent(BaseAgent):
                 ).to_dict()
             ]
             return {
+                "evidence_status": "NOT_FOUND",
+                "processing_status": "SUCCESS",
                 "fact_check_label": "support",
                 "verified_claims": verified,
                 "rejected_claims": [],
                 "evidence_gaps": [],
+                "verifier_model_family": "qwen3_32b_awq",
                 "reasoning_trace": [self.log_action("honest_refusal_approved", {"status": "SUPPORT"})],
             }
 
@@ -79,7 +87,7 @@ class GPUMaxFactCheckerAgent(BaseAgent):
         gaps: list[dict[str, Any]] = []
         pending_claims: list[dict[str, Any]] = []
 
-        # 1. Deterministic Numerical & Date Guard
+        # 1. Deterministic Numerical & Date Guard (missing numbers -> NOT_ENOUGH_INFO)
         for c in claims[:8]:
             c_text = str(c.get("claim_text") or c.get("text") or "").strip()
             c_id = str(c.get("id") or "claim")
@@ -89,7 +97,7 @@ class GPUMaxFactCheckerAgent(BaseAgent):
                     ClaimCheckResult(
                         claim_id=c_id,
                         claim_text=c_text,
-                        status="CONTRADICT",
+                        status="NOT_ENOUGH_INFO",
                         reason=f"Sai lệch số liệu/thời gian không có trong ngữ cảnh: {', '.join(missing_nums)}",
                         numerical_passed=num_ok,
                         dates_passed=date_ok,
@@ -117,7 +125,7 @@ class GPUMaxFactCheckerAgent(BaseAgent):
             try:
                 res_32b = llm_client.call_gpu_max_32b(
                     prompt=batch_prompt,
-                    enable_thinking=False,  # Fast batch judgment
+                    enable_thinking=False,
                     temperature=0.1,
                     max_tokens=1024,
                     json_mode=True,
@@ -133,8 +141,11 @@ class GPUMaxFactCheckerAgent(BaseAgent):
                         rat = str(item.get("rationale", "Verified by Qwen3-32B-AWQ Judge"))
                         if "SUPPORT" in st:
                             verified.append(ClaimCheckResult(claim_id=cid, claim_text=ctext, status="SUPPORT", reason=rat).to_dict())
-                        else:
+                        elif "CONTRA" in st:
                             rejected.append(ClaimCheckResult(claim_id=cid, claim_text=ctext, status="CONTRADICT", reason=rat).to_dict())
+                            gaps.append(EvidenceGap(missing_aspect=ctext[:90], suggested_query=f"{query} {ctext[:45]}").to_dict())
+                        else:
+                            rejected.append(ClaimCheckResult(claim_id=cid, claim_text=ctext, status="NOT_ENOUGH_INFO", reason=rat).to_dict())
                             gaps.append(EvidenceGap(missing_aspect=ctext[:90], suggested_query=f"{query} {ctext[:45]}").to_dict())
                 else:
                     det_v, det_r, det_g = deterministic_verify_claims(pending_claims, combined_units, query=query)
@@ -152,25 +163,29 @@ class GPUMaxFactCheckerAgent(BaseAgent):
             rejected.extend(det_r)
             gaps.extend(det_g)
 
-        label = "support" if len(verified) >= len(rejected) and verified else "not_enough_info"
+        res = finalize_fact_check_contract(
+            query=query,
+            verified_claims=verified,
+            rejected_claims=rejected,
+            evidence_gaps=gaps,
+            evidence_spans=evidence_spans,
+            source_units=combined_units,
+            full_context_text=full_context,
+            context_coverage=state.get("context_coverage"),
+            verifier_model_family="qwen3_32b_awq",
+        )
 
         trace = self.log_action(
             "gpu_max_fact_check_completed",
             {
-                "verified_count": len(verified),
-                "rejected_count": len(rejected),
+                "verified_count": len(res["verified_claims"]),
+                "rejected_count": len(res["rejected_claims"]),
                 "gpu": "Dual_T4_32B_TP2",
-                "label": label,
+                "evidence_status": res["evidence_status"],
+                "label": res["fact_check_label"],
             },
         )
-
-        return {
-            "fact_check_label": label,
-            "verified_claims": verified,
-            "rejected_claims": rejected,
-            "evidence_gaps": gaps,
-            "verifier_model_family": "qwen3_32b_awq",
-            "reasoning_trace": [trace],
-        }
+        res["reasoning_trace"] = [trace]
+        return res
 
 

@@ -1,10 +1,9 @@
 """
-Hybrid Mode - Adaptive Multi-Model Summarizer Agent (L4 SOTA Hierarchy).
-Dynamically routes synthesis to the strongest live backend based on SOTA performance:
-  1. Priority 1 (Cao nhất): GPU Finetune Dual-QLoRA (Generator + Critic on Dual T4)
+Hybrid Mode - Adaptive Multi-Model Summarizer Agent (Policy-Compliant Hierarchy).
+Centralized via ModelGateway (ZERO Gemini):
+  1. Priority 1: GPU Finetune Dual-QLoRA (Generator + Critic on Dual T4)
   2. Priority 2: GPU Max 32B Reasoning (Qwen3-32B-AWQ on Dual T4) if online
   3. Priority 3: Local CPU Max (Qwen2.5-7B on Radeon 780M Vulkan / Local Synthesizer)
-  4. Priority 4 (Cuối cùng): Gemini 2.5 Flash API (Last Resort Fallback)
 """
 
 from __future__ import annotations
@@ -12,65 +11,61 @@ from __future__ import annotations
 from typing import Any
 
 from core.base_agent import BaseAgent
+from core.model_gateway import model_gateway
 from core.state import AgentState
 from modes.cpu_max.summarizer import CPUMaxSummarizerAgent
-from modes.gemini.summarizer import GeminiSummarizerAgent
 from modes.gpu_finetune.summarizer import GPUFinetuneSummarizerAgent
 from modes.gpu_max.summarizer import GPUMaxSummarizerAgent
 from utils.local_vulkan_setup import probe_all_capabilities
 
 
 class HybridSummarizerAgent(BaseAgent):
-    """Flagship Hybrid Summarizer: SOTA GPU Finetune First -> Local CPU -> Gemini Last Fallback."""
+    """Hybrid Summarizer: GPU Finetune -> GPU Max -> Local CPU (Zero Gemini)."""
 
     def __init__(self, max_internal_retry: int = 2):
         super().__init__(name="HybridSummarizerAgent", max_internal_retry=max_internal_retry)
         self._gpu_finetune = GPUFinetuneSummarizerAgent(max_internal_retry=max_internal_retry)
         self._gpu_max = GPUMaxSummarizerAgent(max_internal_retry=max_internal_retry)
         self._cpu_max = CPUMaxSummarizerAgent(max_internal_retry=max_internal_retry)
-        self._gemini = GeminiSummarizerAgent(max_internal_retry=max_internal_retry)
 
     def run(self, state: AgentState) -> dict[str, Any]:
         complexity = str(state.get("complexity") or "MEDIUM").upper()
         caps = probe_all_capabilities()
+        backend_chain = model_gateway.get_hybrid_backend_chain(caps, stage="summarizer")
 
         selected_backend = "cpu_max"
         out: dict[str, Any] = {}
 
-        # Priority 1: GPU Finetune Dual-QLoRA (Generator + Critic) on Kaggle GPU Worker
-        if caps.get("gpu_finetune", {}).get("online") or caps.get("gpu_ft", {}).get("online"):
-            try:
-                selected_backend = "gpu_finetune_dual_qlora"
-                out = self._gpu_finetune.run(state)
-            except Exception as exc:
-                self.logger.warning(f"[Hybrid Summarizer] GPU Finetune failed ({exc}), cascading...")
+        for backend in backend_chain:
+            if out.get("processing_status") == "VERIFICATION_FAILED" or out.get("critic_action") == "verification_failed":
+                break
+            if out.get("answer"):
+                break
+            if backend == "gpu_finetune":
+                try:
+                    selected_backend = "gpu_finetune_dual_qlora"
+                    out = self._gpu_finetune.run(state)
+                except Exception as exc:
+                    self.logger.warning(f"[Hybrid Summarizer] GPU Finetune failed ({exc}), cascading...")
+            elif backend == "gpu_max":
+                try:
+                    selected_backend = "gpu_max_32b"
+                    out = self._gpu_max.run(state)
+                except Exception as exc:
+                    self.logger.warning(f"[Hybrid Summarizer] GPU Max 32B failed ({exc}), cascading...")
+            elif backend == "cpu_max":
+                try:
+                    selected_backend = "cpu_max_local"
+                    out = self._cpu_max.run(state)
+                except Exception as exc:
+                    self.logger.warning(f"[Hybrid Summarizer] Local CPU Max failed ({exc}). Zero Gemini fallback allowed.")
 
-        # Priority 2: GPU Max 32B Reasoning if available
-        if not out.get("answer") and caps.get("kaggle_max", {}).get("online") and caps.get("kaggle_max", {}).get("has_vllm_32b"):
-            try:
-                selected_backend = "gpu_max_32b"
-                out = self._gpu_max.run(state)
-            except Exception as exc:
-                self.logger.warning(f"[Hybrid Summarizer] GPU Max 32B failed ({exc}), cascading...")
-
-        # Priority 3: Local CPU Max (Radeon 780M Vulkan Ollama 7B or Local Extractive Synthesizer)
-        if not out.get("answer"):
-            try:
-                selected_backend = "cpu_max_local"
-                out = self._cpu_max.run(state)
-            except Exception as exc:
-                self.logger.warning(f"[Hybrid Summarizer] Local CPU Max failed ({exc}), cascading to Gemini fallback...")
-
-        # Priority 4 (Ưu tiên CUỐI CÙNG): Gemini 2.5 Flash API (chỉ khi GPU & Local CPU đều không khả dụng)
-        if not out.get("answer") and caps.get("gemini", {}).get("online"):
-            try:
-                selected_backend = "gemini_2.5_flash_fallback"
-                out = self._gemini.run(state)
-            except Exception as exc:
-                self.logger.warning(f"[Hybrid Summarizer] Gemini fallback failed ({exc})")
-
-        # Emergency fallback if all failed
-        if not out.get("answer"):
+        # Emergency local fallback ONLY if all candidates were offline/empty (never override VERIFICATION_FAILED!)
+        if (
+            not out.get("answer")
+            and out.get("processing_status") != "VERIFICATION_FAILED"
+            and out.get("critic_action") != "verification_failed"
+        ):
             out = self._cpu_max.run(state)
             selected_backend = "cpu_max_emergency"
 

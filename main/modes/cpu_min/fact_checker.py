@@ -13,11 +13,15 @@ from typing import Any
 
 from core.base_agent import BaseAgent
 from core.state import AgentState, ClaimCheckResult, EvidenceGap
-from core.verifier import deterministic_verify_claims, split_answer_into_atomic_claims
+from core.verifier import (
+    deterministic_verify_claims,
+    finalize_fact_check_contract,
+    split_answer_into_atomic_claims,
+)
 
 
 class CPUMinFactCheckerAgent(BaseAgent):
-    """Fact Checker Agent for CPU Min: Fast deterministic numerical/date/quote verification + Gap Generator."""
+    """Fact Checker Agent for CPU Min: Fast deterministic numerical/date/quote/provenance verification."""
 
     def __init__(self, max_internal_retry: int = 1):
         super().__init__(name="CPUMinFactCheckerAgent", max_internal_retry=max_internal_retry)
@@ -26,6 +30,7 @@ class CPUMinFactCheckerAgent(BaseAgent):
         query = state.get("query", "")
         answer = state.get("answer", "")
         raw_claims = state.get("claims", []) or []
+        evidence_spans = state.get("evidence_spans", []) or []
         source_units = state.get("source_units", []) or []
         retrieved_docs = state.get("retrieved_docs", []) or []
 
@@ -33,10 +38,13 @@ class CPUMinFactCheckerAgent(BaseAgent):
 
         if not answer.strip():
             return {
+                "evidence_status": "NOT_FOUND",
+                "processing_status": "SUCCESS",
                 "fact_check_label": "not_enough_info",
                 "verified_claims": [],
                 "rejected_claims": [],
                 "evidence_gaps": [EvidenceGap(missing_aspect=query, suggested_query=query).to_dict()],
+                "verifier_model_family": "deterministic_guard",
                 "reasoning_trace": [self.log_action("aborted", {"reason": "empty_answer"})],
             }
 
@@ -48,6 +56,8 @@ class CPUMinFactCheckerAgent(BaseAgent):
             or "không cùng một hệ quy chiếu" in answer
         ):
             return {
+                "evidence_status": "NOT_FOUND",
+                "processing_status": "SUCCESS",
                 "fact_check_label": "support",
                 "verified_claims": [
                     ClaimCheckResult(
@@ -68,31 +78,27 @@ class CPUMinFactCheckerAgent(BaseAgent):
         claims = split_answer_into_atomic_claims(answer, combined_units, existing_claims=raw_claims)
         verified, rejected, gaps = deterministic_verify_claims(claims, combined_units, query=query)
 
-        # If at least 50% verified and no numerical contradiction, mark as support
-        has_contradict = any(r.get("status") == "CONTRADICT" for r in rejected)
-        if verified and len(verified) >= len(rejected) and not has_contradict:
-            label = "support"
-        elif has_contradict and not verified:
-            label = "contradict"
-        else:
-            label = "support" if verified else "not_enough_info"
+        res = finalize_fact_check_contract(
+            query=query,
+            verified_claims=verified,
+            rejected_claims=rejected,
+            evidence_gaps=gaps,
+            evidence_spans=evidence_spans,
+            source_units=combined_units,
+            context_coverage=state.get("context_coverage"),
+            verifier_model_family="deterministic_guard",
+        )
 
         trace = self.log_action(
             "cpu_min_fact_check_completed",
             {
-                "verified_count": len(verified),
-                "rejected_count": len(rejected),
-                "evidence_gaps_count": len(gaps),
-                "label": label,
-                "engine": "Deterministic_Numeric_Quote_Guard",
+                "verified_count": len(res["verified_claims"]),
+                "rejected_count": len(res["rejected_claims"]),
+                "evidence_gaps_count": len(res["evidence_gaps"]),
+                "evidence_status": res["evidence_status"],
+                "label": res["fact_check_label"],
+                "engine": "Deterministic_Numeric_Quote_Provenance_Guard",
             },
         )
-
-        return {
-            "fact_check_label": label,
-            "verified_claims": verified,
-            "rejected_claims": rejected,
-            "evidence_gaps": gaps,
-            "verifier_model_family": "deterministic_guard",
-            "reasoning_trace": [trace],
-        }
+        res["reasoning_trace"] = [trace]
+        return res

@@ -19,6 +19,11 @@ import httpx
 
 from core.config import settings
 from core.db import get_cached_llm, log_api_usage, set_cached_llm
+from core.model_gateway import (
+    ProviderConfigurationError,
+    ProviderPolicyError,
+    model_gateway,
+)
 from core.schemas import canonical_adapter_name
 from utils.local_vulkan_setup import probe_ollama_models
 from utils.logger import logger
@@ -79,11 +84,11 @@ class UnifiedLLMClient:
                 set_cached_llm(cache_key, prompt, response_text)
             return response_text
 
-        # 1. Remote Kaggle Worker (Explicit Kaggle FN, Kaggle Max, or GPU Finetune mode)
-        elif target_mode in ["model", "kaggle", "kaggle_fn", "kaggle_max", "kaggle_gpu", "gpu_finetune", "gpu_ft"]:
+        # 1. Remote Kaggle Worker (Explicit Kaggle FN, Kaggle Max, GPU Finetune, or GPU Max mode)
+        elif target_mode in ["model", "kaggle", "kaggle_fn", "kaggle_max", "kaggle_gpu", "gpu_finetune", "gpu_max"]:
             if not self.settings.REMOTE_INFERENCE_URL:
                 raise RuntimeError(
-                    f"Kaggle mode '{target_mode}' requires REMOTE_INFERENCE_URL to be set in environment or settings."
+                    f"Kaggle/GPU mode '{target_mode}' requires REMOTE_INFERENCE_URL to be set in environment or settings."
                 )
             try:
                 canon_adapter = canonical_adapter_name(agent)
@@ -100,33 +105,71 @@ class UnifiedLLMClient:
                     },
                 )
             except Exception as e:
-                logger.warning(f"Kaggle remote for agent '{agent}' failed ({e}). Cascading to Cloud Foundation Model for high-fidelity generative synthesis...")
+                logger.warning(f"Kaggle/GPU remote for agent '{agent}' failed ({e}). Zero Gemini fallback allowed in mode '{target_mode}'.")
                 response_text = ""
             if response_text:
                 set_cached_llm(cache_key, prompt, response_text)
             return response_text
 
-        # 2. Cloud Foundation Model (Explicit 'gemini' or 'api' mode)
-        if self.settings.GEMINI_API_KEY:
-            try:
-                response_text = self._call_gemini(
-                    prompt, system_instruction, temperature, max_tokens, json_mode
-                )
-            except Exception as e:
-                logger.warning(f"Gemini API call failed: {e}. Trying fallback provider...")
+        # 1b. Hybrid Mode (GPU Finetune -> GPU Max -> Local CPU; ZERO Gemini API calls)
+        elif target_mode == "hybrid":
+            if self.settings.REMOTE_INFERENCE_URL:
+                try:
+                    canon_adapter = canonical_adapter_name(agent)
+                    response_text = self._call_remote_kaggle(
+                        task="generate",
+                        payload={
+                            "prompt": prompt,
+                            "system_instruction": system_instruction,
+                            "temperature": temperature,
+                            "max_tokens": max_tokens,
+                            "json_mode": json_mode,
+                            "adapter": canon_adapter,
+                            "mode": "hybrid",
+                        },
+                    )
+                except Exception as e:
+                    logger.warning(f"[Hybrid Mode] Remote GPU failed ({e}), cascading to Local CPU (no Gemini fallback).")
+                    response_text = ""
+            if not response_text:
+                try:
+                    response_text = self._call_local_cpu(
+                        prompt=prompt,
+                        system_instruction=system_instruction,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        json_mode=json_mode,
+                        agent=agent,
+                        model_tier="7b",
+                    )
+                except Exception as e:
+                    logger.info(
+                        f"[Hybrid Mode] Local Ollama server unavailable ({e}). "
+                        f"Using deterministic offline extractive fallback (zero Gemini calls)."
+                    )
+                    response_text = self._offline_extractive_fallback(prompt, json_mode)
+            if response_text:
+                set_cached_llm(cache_key, prompt, response_text)
+            return response_text
 
-        # 3. Fallback to DeepSeek / OpenAI-compatible API if Gemini fails
-        if not response_text and (self.settings.DEEPSEEK_API_KEY or self.settings.OPENAI_API_KEY):
-            try:
-                response_text = self._call_openai_compatible(
-                    prompt, system_instruction, temperature, max_tokens, json_mode
-                )
-            except Exception as e:
-                logger.error(f"Fallback OpenAI/DeepSeek API failed: {e}")
+        # 2. Cloud Foundation Model — Gemini is strictly allowed ONLY in execution mode 'gemini'
+        model_gateway.assert_gemini_ready(
+            mode=target_mode,
+            api_key=self.settings.GEMINI_API_KEY,
+            caller=f"UnifiedLLMClient.generate(agent={agent})",
+        )
+        try:
+            response_text = self._call_gemini(
+                prompt, system_instruction, temperature, max_tokens, json_mode, mode=target_mode
+            )
+        except (ProviderPolicyError, ProviderConfigurationError):
+            raise
+        except Exception as e:
+            logger.warning(f"Gemini API call failed in mode 'gemini': {e}.")
 
-        # 4. Fallback if cloud APIs fail
+        # 3. Deterministic offline fallback if Gemini endpoint is temporarily unreachable
         if not response_text:
-            logger.warning("Cloud APIs unreachable! Returning heuristic deterministic response.")
+            logger.warning("Gemini API unreachable! Returning heuristic deterministic response.")
             response_text = self._offline_extractive_fallback(prompt, json_mode)
 
         if response_text:
@@ -261,8 +304,15 @@ class UnifiedLLMClient:
         temperature: float = 0.2,
         max_tokens: int = 2048,
         json_mode: bool = False,
+        mode: Optional[str] = None,
     ) -> str:
-        """Call Gemini REST API directly with automatic multi-model fallback."""
+        """Call Gemini REST API directly with automatic multi-model fallback (strictly gated by ModelGateway)."""
+        active_mode = mode if mode is not None else self.settings.EXECUTION_MODE
+        model_gateway.assert_gemini_ready(
+            mode=active_mode,
+            api_key=self.settings.GEMINI_API_KEY,
+            caller="UnifiedLLMClient._call_gemini",
+        )
         raw_candidates = [
             self.settings.DEFAULT_LLM_MODEL,
             "gemini-3.1-flash-lite",

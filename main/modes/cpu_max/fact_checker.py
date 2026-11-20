@@ -11,9 +11,12 @@ from __future__ import annotations
 from typing import Any
 from core.base_agent import BaseAgent
 from core.state import AgentState, EvidenceGap
+from core.verifier import (
+    check_numerical_and_date_consistency,
+    finalize_fact_check_contract,
+)
 from agents.agent4_fact_checker.components.claim_extractor import ClaimExtractor
 from agents.agent4_fact_checker.components.judge import FactCheckJudge
-from agents.agent4_fact_checker.components.numeric_verifier import verify_numbers_in_claim
 from agents.agent4_fact_checker.components.dates import verify_dates_in_claim
 
 
@@ -44,6 +47,8 @@ class CPUMaxFactCheckerAgent(BaseAgent):
                 "verified_claims": [],
                 "rejected_claims": [],
                 "evidence_gaps": [EvidenceGap(missing_aspect="Nội dung trống", suggested_query=query).to_dict()],
+                "evidence_status": "NOT_FOUND",
+                "processing_status": "SUCCESS",
                 "fact_check_label": "not_enough_info",
                 "reasoning_trace": [trace],
             }
@@ -59,6 +64,8 @@ class CPUMaxFactCheckerAgent(BaseAgent):
         ):
             trace = self.log_action("out_of_domain_verified", {"status": "support"})
             return {
+                "evidence_status": "NOT_FOUND",
+                "processing_status": "SUCCESS",
                 "fact_check_label": "support",
                 "verified_claims": [
                     {
@@ -93,55 +100,56 @@ class CPUMaxFactCheckerAgent(BaseAgent):
         verified_claims = []
         rejected_claims = []
         evidence_gaps = []
-        statuses = []
 
         for c_text in claims_to_check:
-            nums_ok, num_reason = verify_numbers_in_claim(c_text, context_corpus)
-            dates_ok, date_reason = verify_dates_in_claim(c_text, context_corpus)
+            nums_ok, num_dates_ok, missing_nums = check_numerical_and_date_consistency(c_text, context_corpus)
+            dates_ok_legacy, date_reason = verify_dates_in_claim(c_text, context_corpus)
+            dates_ok = bool(num_dates_ok and dates_ok_legacy)
 
             eval_res = self.judge.judge_claim(c_text, ev_texts, context_corpus)
             eval_res["claim"] = c_text
             eval_res["text"] = c_text
-            status = eval_res["status"]
+            eval_res["numerical_passed"] = nums_ok
+            eval_res["dates_passed"] = dates_ok
+            status = str(eval_res.get("status") or "not_enough_info").lower()
 
             if not nums_ok:
-                status = "not_enough_info"
-                eval_res["rationale"] = f"Cảnh báo số liệu: {num_reason}"
+                if status == "support":
+                    status = "not_enough_info"
+                eval_res["rationale"] = f"Cảnh báo số liệu: {', '.join(missing_nums)}"
             elif not dates_ok:
-                status = "not_enough_info"
-                eval_res["rationale"] = f"Cảnh báo mốc thời gian: {date_reason}"
+                if status == "support":
+                    status = "not_enough_info"
+                eval_res["rationale"] = f"Cảnh báo mốc thời gian: {date_reason or ', '.join(missing_nums)}"
 
-            statuses.append(status)
+            eval_res["status"] = status
             if status == "support":
                 verified_claims.append(eval_res)
             else:
                 rejected_claims.append(eval_res)
                 evidence_gaps.append(EvidenceGap(missing_aspect=c_text[:120], suggested_query=c_text).to_dict())
 
-        # Consensus labeling: if verified claims exist and outnumber contradictions, approve
-        has_contradict = any(s == "contradict" for s in statuses)
-        if verified_claims and len(verified_claims) >= len(rejected_claims):
-            consensus_label = "support"
-        elif has_contradict and not verified_claims:
-            consensus_label = "contradict"
-        elif verified_claims:
-            consensus_label = "support"
-        else:
-            consensus_label = "not_enough_info"
+        combined_units = list(source_units) if source_units else list(retrieved_docs)
+        res = finalize_fact_check_contract(
+            query=query,
+            verified_claims=verified_claims,
+            rejected_claims=rejected_claims,
+            evidence_gaps=evidence_gaps,
+            evidence_spans=evidence_spans,
+            source_units=combined_units,
+            full_context_text=context_corpus,
+            context_coverage=state.get("context_coverage"),
+            verifier_model_family="local_minicheck_nli",
+        )
 
         trace = self.log_action(
             "cpu_max_fact_check_completed",
             {
-                "verified_count": len(verified_claims),
-                "rejected_count": len(rejected_claims),
-                "consensus_label": consensus_label,
+                "verified_count": len(res["verified_claims"]),
+                "rejected_count": len(res["rejected_claims"]),
+                "evidence_status": res["evidence_status"],
+                "consensus_label": res["fact_check_label"],
             },
         )
-
-        return {
-            "verified_claims": verified_claims,
-            "rejected_claims": rejected_claims,
-            "evidence_gaps": evidence_gaps,
-            "fact_check_label": consensus_label,
-            "reasoning_trace": [trace],
-        }
+        res["reasoning_trace"] = [trace]
+        return res

@@ -308,9 +308,12 @@ class SetRemoteUrlRequest(BaseModel):
 @app.post("/api/config/mode")
 def set_execution_mode(req: SetModeRequest):
     from modes.registry import normalize_mode
-    norm_mode = normalize_mode(req.mode)
+    try:
+        norm_mode = normalize_mode(req.mode)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     valid_modes = [
-        "gemini", "cpu_min", "cpu_max", "gpu_ft", "gpu_finetune",
+        "gemini", "cpu_min", "cpu_max", "gpu_finetune",
         "gpu_max", "hybrid", "local_api", "kaggle_gpu", "local_cpu"
     ]
     if norm_mode not in valid_modes and req.mode not in valid_modes:
@@ -438,7 +441,7 @@ async def remote_switch_gpu_mode(req: RemoteSwitchModeRequest):
         raise HTTPException(status_code=400, detail="Chưa cấu hình REMOTE_INFERENCE_URL (Kaggle Cloudflare Tunnel).")
 
     target = req.target_mode.lower().strip()
-    if target not in ["gpu_finetune", "gpu_max", "gpu_ft"]:
+    if target not in ["gpu_finetune", "gpu_max"]:
         raise HTTPException(status_code=400, detail="Chỉ hỗ trợ chuyển đổi giữa 'gpu_finetune' và 'gpu_max'")
 
     try:
@@ -832,15 +835,13 @@ def set_agent_modes(req: SetAgentModesRequest):
             return "cpu_min"
         elif m in ["cpu_max", "cpumax", "cpu"]:
             return "cpu_max"
-        elif m in ["gpu_ft", "gpuft", "ft", "kaggle_fn", "fn"]:
-            return "gpu_ft"
-        elif m in ["gpu_finetune", "finetune", "gpufinetune", "gpu_ft_new"]:
+        elif m in ["gpu_finetune", "finetune", "gpufinetune", "kaggle_fn", "fn"]:
             return "gpu_finetune"
         elif m in ["gpu_max", "gpumax", "kaggle_max", "kaggle", "model"]:
             return "gpu_max"
         elif m in ["hybrid", "auto", "optimal"]:
             return "hybrid"
-        return "cpu_min"
+        raise HTTPException(status_code=400, detail=f"Chế độ '{m}' không hợp lệ hoặc đã bị loại bỏ.")
 
     if req.agent_modes:
         for agent_name, mode in req.agent_modes.items():

@@ -14,7 +14,7 @@ from typing import Any
 
 from agents.agent2_reader.tools.pdf_parser import parse_pdf_document
 from core.base_agent import BaseAgent
-from core.state import AgentState, SourceUnit
+from core.state import AgentState, SourceUnit, deduplicate_and_merge_source_units
 from core.tools import extract_table_or_equations_tool
 from utils.llm_client import llm_client
 
@@ -95,6 +95,8 @@ class GPUFinetuneReaderAgent(BaseAgent):
             curr_offset += len(t_unit.text) + 1
             source_units.append(t_unit.to_dict())
 
+        source_units = deduplicate_and_merge_source_units(source_units)
+
         trace = self.log_action(
             "gpu_finetune_reader_completed",
             {
@@ -108,5 +110,6 @@ class GPUFinetuneReaderAgent(BaseAgent):
             "source_units": source_units,
             "document_schema": document_schema,
             "extracted_tables": extracted_tables,
+            "processing_status": "SUCCESS",
             "reasoning_trace": [trace],
         }

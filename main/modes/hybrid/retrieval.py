@@ -1,16 +1,14 @@
 """
-Hybrid Mode - Adaptive Retrieval Agent (L4 SOTA Cascade).
-Hierarchical 3-Tier Autonomous Resilience:
-  - Tier 1 (Primary - Cloud API): Gemini 2.5 Flash for deep intent reasoning & STORM sub-queries.
-  - Tier 2 (Self-Healing Fallback 1): GPU Finetune Router LoRA (01_agent1_router) on Kaggle GPU.
-  - Tier 3 (Self-Healing Fallback 2 - 100% Offline): Local Supervisor Planner + C-Engine FTS5 + BM25 search.
+Hybrid Mode - Adaptive Retrieval Agent (Policy-Compliant Cascade).
+Hierarchical Autonomous Resilience via ModelGateway (ZERO Gemini):
+  - Priority 1: GPU Finetune Router LoRA (01_agent1_router) on Kaggle GPU.
+  - Priority 2 (100% Offline): Local Supervisor Planner + C-Engine FTS5 + BM25 search.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import re
 from typing import Any
 
 from agents.agent1_retrieval.tools.bm25 import SimpleBM25
@@ -18,6 +16,7 @@ from agents.agent1_retrieval.tools.fts5_search import SQLiteFTS5Searcher
 from agents.agent1_retrieval.tools.hybrid import reciprocal_rank_fusion
 from agents.agent1_retrieval.tools.perspective import generate_research_perspectives
 from core.base_agent import BaseAgent
+from core.model_gateway import model_gateway
 from core.schemas import RouterPlanOutput
 from core.state import AgentState
 from core.supervisor import supervisor_planner
@@ -27,7 +26,7 @@ from utils.local_vulkan_setup import probe_all_capabilities
 
 
 class HybridRetrievalAgent(BaseAgent):
-    """Flagship Hybrid Retrieval: Gemini Router First -> GPU Finetune LoRA -> Local FTS5/BM25."""
+    """Hybrid Retrieval: GPU Finetune Router LoRA -> Local FTS5/BM25 (Zero Gemini)."""
 
     def __init__(self, max_internal_retry: int = 2):
         super().__init__(name="HybridRetrievalAgent", max_internal_retry=max_internal_retry)
@@ -69,34 +68,13 @@ class HybridRetrievalAgent(BaseAgent):
         planning_backend = "local_supervisor"
 
         caps = probe_all_capabilities()
+        backend_chain = model_gateway.get_hybrid_backend_chain(caps, stage="retrieval")
 
         # =====================================================================
-        # Tier 1 (Primary - Gemini API): Deep Intent & STORM Planning
+        # Priority 1: GPU Finetune Router LoRA (if online); Local CPU otherwise
+        # (Gemini is strictly forbidden in Hybrid mode per ModelGateway policy)
         # =====================================================================
-        if caps.get("gemini", {}).get("online") and retry_count == 0:
-            try:
-                gemini_prompt = (
-                    f"You are a master academic research routing agent. "
-                    f"Analyze this query and output JSON with keys: intent, sub_queries (3 distinct search angles), "
-                    f"required_entities (key terms), and alpha (0.0 to 1.0).\n\nQuery: {query}"
-                )
-                raw_gemini = llm_client.generate(gemini_prompt, json_mode=True, temperature=0.1)
-                m = re.search(r"\{.*\}", raw_gemini, re.DOTALL)
-                if m:
-                    g_data = json.loads(m.group(0))
-                    g_subs = g_data.get("sub_queries", [])
-                    if isinstance(g_subs, list) and g_subs:
-                        sub_queries = list(dict.fromkeys(g_subs + sub_queries))[:4]
-                        planning_backend = "gemini_cloud_router"
-                        alpha = float(g_data.get("alpha", alpha))
-            except Exception as e:
-                self.logger.warning(f"[Hybrid Retrieval] Tier 1 Gemini planning failed ({e}), cascading to Tier 2...")
-
-        # =====================================================================
-        # Tier 2 (Fallback 1 - GPU Finetune Router LoRA): If Gemini failed/offline
-        # =====================================================================
-        is_gpu_online = caps.get("gpu_finetune", {}).get("online") or caps.get("gpu_ft", {}).get("online")
-        if planning_backend == "local_supervisor" and is_gpu_online and retry_count == 0:
+        if "gpu_finetune" in backend_chain and retry_count == 0:
             try:
                 router_res = llm_client.call_kaggle_specialist(
                     endpoint="api/router",
@@ -109,8 +87,8 @@ class HybridRetrievalAgent(BaseAgent):
                         sub_queries.append(lsq)
                 alpha = lora_plan.alpha
                 planning_backend = "gpu_finetune_router_lora"
-            except Exception:
-                pass
+            except Exception as e:
+                self.logger.warning(f"[Hybrid Retrieval] GPU Finetune Router failed ({e}), using local supervisor.")
 
         # Generate STORM research perspectives to augment queries
         perspectives, storm_subs = generate_research_perspectives(query)

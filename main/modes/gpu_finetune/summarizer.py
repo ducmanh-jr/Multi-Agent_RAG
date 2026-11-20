@@ -12,9 +12,13 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from agents.agent3_summarizer.components.critic import (
+    build_verification_failed_state,
+    evaluate_critic_contract,
+)
 from agents.agent3_summarizer.components.generator import (
     generate_summary_and_claims,
-    pack_context_by_token_budget,
+    pack_context_with_coverage,
 )
 from core.base_agent import BaseAgent
 from core.schemas import SummarizerCriticOutput, SummarizerGeneratorOutput
@@ -56,14 +60,14 @@ class GPUFinetuneSummarizerAgent(BaseAgent):
             res["reasoning_trace"] = [trace]
             return res
 
-        context_str, _ = pack_context_by_token_budget(source_units, max_tokens=1500)
+        context_str, _, context_coverage = pack_context_with_coverage(source_units, max_tokens=1500)
 
         current_answer = ""
-        current_claims: list[str] = []
+        current_claims: list[Any] = []
         current_spans_raw: list[dict[str, Any]] = []
         internal_attempts = 0
         last_critic_feedback = ""
-        critic_action = "accept"
+        critic_action = "approve"
         critique_text = ""
         critic_out = None
 
@@ -102,8 +106,10 @@ class GPUFinetuneSummarizerAgent(BaseAgent):
             if not current_claims and not any(k in current_answer.lower() for k in ["không chứa nội dung", "không có thông tin", "không được đề cập"]):
                 current_claims = split_answer_into_atomic_claims(current_answer, source_units)
 
-            # 2. Critic Pass: Call Remote fine-tuned Critic QLoRA only if generator succeeded
+            # 2. Critic Pass (Fail-Closed via shared evaluate_critic_contract)
             if not generator_failed:
+                critic_exc: Exception | None = None
+                critic_dict: dict[str, Any] | None = None
                 try:
                     critic_claims = [c.get("text") or c.get("claim_text") or str(c) if isinstance(c, dict) else str(c) for c in current_claims]
                     critic_dict = llm_client.call_kaggle_specialist(
@@ -114,33 +120,73 @@ class GPUFinetuneSummarizerAgent(BaseAgent):
                         adapter="critic",
                         timeout=float(self.settings.REMOTE_TIMEOUT_SECONDS or 90.0),
                     )
-                    critic_out = SummarizerCriticOutput.from_dict(critic_dict)
-                    critic_action = critic_out.action
-                    critique_text = getattr(critic_out, "critique_rationale", "") or str(getattr(critic_out, "critique", ""))
+                except Exception as exc:
+                    critic_exc = exc
 
-                    if critic_action in ("accept", "approve"):
-                        self.logger.info(f"[GPU Finetune Critic] PASS: Answer accepted on attempt {internal_attempts}")
-                        break
-                    elif critic_action in ("rewrite", "request_more_context") and internal_attempts <= self.max_internal_retry:
-                        last_critic_feedback = f"Critique: {critique_text}. Issues: {getattr(critic_out, 'issues_found', [])}"
-                        self.logger.info(f"[GPU Finetune Critic] REWRITE requested ({critique_text}) -> Looping pass {internal_attempts + 1}")
-                        continue
-                    else:
-                        break
-                except Exception as e:
-                    self.logger.warning(f"[GPU Finetune Critic] Remote critic skipped ({e}), accepting synthesis.")
+                norm_claims = [
+                    c if isinstance(c, dict) else {"id": f"claim_{i+1}", "text": str(c)}
+                    for i, c in enumerate(current_claims)
+                ]
+                critic_res = evaluate_critic_contract(
+                    current_answer,
+                    norm_claims,
+                    current_spans_raw,
+                    precomputed_critic_data=critic_dict,
+                    critic_exception=critic_exc,
+                )
+                if critic_res["processing_status"] == "VERIFICATION_FAILED":
+                    fail_trace = self.log_action(
+                        "gpu_finetune_critic_verification_failed",
+                        {"error": critic_res["error_message"]},
+                    )
+                    return build_verification_failed_state(
+                        answer=current_answer,
+                        reason=critic_res["error_message"] or "GPU Finetune Critic failed",
+                        context_coverage=context_coverage,
+                        model_family="gpu_finetune_dual_qlora",
+                        trace=fail_trace,
+                    )
+
+                critic_out = SummarizerCriticOutput.from_dict(critic_res["critic_feedback"])
+                critic_action = critic_res["critic_action"]
+                critique_text = critic_res["critic_feedback"].get("critique_rationale", "")
+
+                if critic_action == "approve":
+                    self.logger.info(f"[GPU Finetune Critic] PASS: Answer accepted on attempt {internal_attempts}")
+                    break
+                elif critic_action in ("rewrite", "request_more_context") and internal_attempts <= self.max_internal_retry:
+                    last_critic_feedback = f"Critique: {critique_text}. Issues: {getattr(critic_out, 'issues_found', [])}"
+                    self.logger.info(f"[GPU Finetune Critic] REWRITE requested ({critique_text}) -> Looping pass {internal_attempts + 1}")
+                    continue
+                else:
                     break
             else:
-                self.logger.info("[GPU Finetune Critic] Generator synthesized locally with 100% ground-truth citations. Skipping remote critic.")
-                critic_action = "accept"
-                critique_text = "Deterministic ground truth accepted."
+                # Generator fell back to local synthesis -> run fail-closed local critic contract
+                norm_claims = [
+                    c if isinstance(c, dict) else {"id": f"claim_{i+1}", "text": str(c)}
+                    for i, c in enumerate(current_claims)
+                ]
+                critic_res = evaluate_critic_contract(current_answer, norm_claims, current_spans_raw)
+                if critic_res["processing_status"] == "VERIFICATION_FAILED":
+                    fail_trace = self.log_action("gpu_finetune_local_critic_failed", {"error": critic_res["error_message"]})
+                    return build_verification_failed_state(
+                        answer=current_answer,
+                        reason=critic_res["error_message"] or "Local critic verification failed",
+                        context_coverage=context_coverage,
+                        model_family="gpu_finetune_dual_qlora",
+                        trace=fail_trace,
+                    )
+                current_claims = critic_res["claims"]
+                critic_action = critic_res["critic_action"]
+                critique_text = critic_res["critic_feedback"].get("critique_rationale", "")
                 break
 
-        # Fallback to CPU engine if generation was completely empty or failed
+        # Fallback to CPU engine if generation was completely empty
         if not current_answer or len(current_answer.strip()) < 50:
             self.logger.warning("[GPU Finetune Summarizer] Output insufficient, running CPU Engine fallback.")
             res = self.cpu_engine.run(state)
             res["generator_model_family"] = "gpu_finetune_cpu_fallback"
+            res.setdefault("context_coverage", context_coverage)
             return res
 
         # Ensure inline citations
@@ -169,6 +215,8 @@ class GPUFinetuneSummarizerAgent(BaseAgent):
                 "missing_key_points": getattr(critic_out, "missing_key_points", []) if critic_out and hasattr(critic_out, "missing_key_points") else [],
                 "unsupported_claims": getattr(critic_out, "unsupported_claims", []) if critic_out and hasattr(critic_out, "unsupported_claims") else [],
             },
+            "processing_status": "SUCCESS",
+            "context_coverage": context_coverage,
             "generator_model_family": "gpu_finetune_dual_qlora",
             "reasoning_trace": [trace],
         }

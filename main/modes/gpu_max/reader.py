@@ -11,7 +11,7 @@ from typing import Any
 
 from agents.agent2_reader.tools.pdf_parser import parse_pdf_document
 from core.base_agent import BaseAgent
-from core.state import AgentState, SourceUnit
+from core.state import AgentState, SourceUnit, deduplicate_and_merge_source_units
 from core.tools import extract_table_or_equations_tool
 
 
@@ -74,6 +74,8 @@ class GPUMaxReaderAgent(BaseAgent):
                     document_schema = schema
                     source_units.extend([u.to_dict() for u in units[:12]])
 
+        source_units = deduplicate_and_merge_source_units(source_units)
+
         if not document_schema:
             document_schema = {
                 "doc_id": source_units[0]["doc_id"] if source_units else "unknown",
@@ -93,6 +95,7 @@ class GPUMaxReaderAgent(BaseAgent):
         return {
             "document_schema": document_schema,
             "source_units": source_units,
+            "processing_status": "SUCCESS",
             "reasoning_trace": [trace],
         }
 

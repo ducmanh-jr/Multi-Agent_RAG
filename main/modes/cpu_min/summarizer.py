@@ -20,6 +20,11 @@ import unicodedata
 from typing import Any
 
 from agents.agent1_retrieval.tools.bm25 import SimpleBM25
+from agents.agent3_summarizer.components.critic import (
+    build_verification_failed_state,
+    evaluate_critic_contract,
+)
+from agents.agent3_summarizer.components.generator import pack_context_with_coverage
 from core.base_agent import BaseAgent
 from core.state import AgentState, AtomicClaim, EvidenceSpan
 from core.verifier import evaluate_inner_critic_fast
@@ -1289,20 +1294,37 @@ class CPUMinSummarizerAgent(BaseAgent):
                     ).to_dict()
                 )
 
-        critic_eval = evaluate_inner_critic_fast(
-            query=clean_q,
-            draft_answer=answer,
+        _, _, context_coverage = pack_context_with_coverage(source_units, max_tokens=3800)
+
+        critic_res = evaluate_critic_contract(
+            answer,
+            claims,
+            evidence_spans,
+            use_fast_critic=True,
             source_units=source_units[:10],
+            query=clean_q,
             required_entities=required_entities,
         )
+        if critic_res["processing_status"] == "VERIFICATION_FAILED":
+            fail_trace = self.log_action(
+                "cpu_min_critic_verification_failed",
+                {"error": critic_res["error_message"]},
+            )
+            return build_verification_failed_state(
+                answer=answer,
+                reason=critic_res["error_message"] or "CPU Min Critic failed",
+                context_coverage=context_coverage,
+                model_family="cpu_min_extractive",
+                trace=fail_trace,
+            )
 
         trace = self.log_action(
             "cpu_min_summarization_completed",
             {
                 "units_used": len(source_units),
                 "claims_extracted": len(claims),
-                "critic_action": critic_eval.action,
-                "critic_confidence": critic_eval.confidence,
+                "critic_action": critic_res["critic_action"],
+                "critic_confidence": critic_res["critic_feedback"].get("confidence", 0.9),
                 "mode": "cpu_min",
             },
         )
@@ -1311,8 +1333,10 @@ class CPUMinSummarizerAgent(BaseAgent):
             "answer": answer,
             "claims": claims,
             "evidence_spans": evidence_spans,
-            "critic_action": critic_eval.action,
-            "critic_feedback": critic_eval.to_dict(),
+            "critic_action": critic_res["critic_action"],
+            "critic_feedback": critic_res["critic_feedback"],
+            "processing_status": "SUCCESS",
+            "context_coverage": context_coverage,
             "generator_model_family": "cpu_min_extractive",
             "reasoning_trace": [trace],
         }

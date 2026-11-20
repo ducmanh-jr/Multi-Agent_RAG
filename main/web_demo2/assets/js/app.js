@@ -50,10 +50,9 @@ document.addEventListener("DOMContentLoaded", () => {
     gemini: "Gemini API",
     cpu_min: "CPU Min",
     cpu_max: "CPU Max",
-    gpu_ft: "GPU FT",
     gpu_finetune: "GPU Finetune",
     gpu_max: "GPU Max",
-    kaggle_fn: "GPU FT",
+    kaggle_fn: "GPU Finetune",
     kaggle_max: "GPU Max",
     hybrid: "Hybrid",
   };
@@ -1381,7 +1380,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (s.includes("fact") || s.includes("check") || s.includes("nli")) return "FACT-CHECK";
     if (s.includes("writer")) return "WRITER";
     if (s.includes("critic")) return "CRITIC";
-    return rawBadge.replace(/^(cpu_min_|cpumin_|cpu_max_|cpumax_|hybrid_|gemini_|gpu_ft_|gpu_max_|gpuft_|gpumax_|kaggle_fn_|kaggle_max_)/i, "").replace(/agent$/i, "").toUpperCase();
+    return rawBadge.replace(/^(cpu_min_|cpumin_|cpu_max_|cpumax_|hybrid_|gemini_|gpu_finetune_|gpu_max_|gpufinetune_|gpumax_|kaggle_fn_|kaggle_max_)/i, "").replace(/agent$/i, "").toUpperCase();
   }
 
   function formatActionText(rawAction) {
@@ -1389,12 +1388,12 @@ document.addEventListener("DOMContentLoaded", () => {
     const text = String(rawAction).trim();
     const actionMap = {
       "bypass_discovery": "Bỏ qua trinh sát (tài liệu đã có sẵn trong kho)",
-      "gpu_ft_retrieval_completed": "Truy hồi tài liệu khoa học hoàn tất",
-      "gpu_ft_reading_completed": "Đọc hiểu cấu trúc văn bản & BBox hoàn tất",
-      "gpu_ft_page_summary_completed": "Tổng hợp trích đoạn & luận điểm hoàn tất",
-      "gpu_ft_summarization_completed": "Tổng hợp trích đoạn & luận điểm hoàn tất",
-      "gpu_ft_fact_check_completed": "Thẩm định đối soát luận điểm hoàn tất",
-      "gpu_ft_report_written": "Biên soạn báo cáo học thuật hoàn tất",
+      "gpu_finetune_retrieval_completed": "Truy hồi tài liệu khoa học hoàn tất",
+      "gpu_finetune_reading_completed": "Đọc hiểu cấu trúc văn bản & BBox hoàn tất",
+      "gpu_finetune_page_summary_completed": "Tổng hợp trích đoạn & luận điểm hoàn tất",
+      "gpu_finetune_summarization_completed": "Tổng hợp trích đoạn & luận điểm hoàn tất",
+      "gpu_finetune_fact_check_completed": "Thẩm định đối soát luận điểm hoàn tất",
+      "gpu_finetune_report_written": "Biên soạn báo cáo học thuật hoàn tất",
       "gpu_max_retrieval_completed": "Truy hồi đa tầng FTS5 + BM25 hoàn tất",
       "gpu_max_reading_completed": "Bóc tách layout PDF & bảng biểu hoàn tất",
       "gpu_max_page_summary_completed": "Tổng hợp trích dẫn sâu hoàn tất",
@@ -2963,7 +2962,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (isOllamaOnline !== undefined) state.isOllamaOnline = Boolean(isOllamaOnline);
 
     // 1. Cập nhật các nút Quick Select (Mờ xám nhạt và chặn chọn khi Offline)
-    const gpuButtons = document.querySelectorAll('.quick-select-btn[data-mode="gpu_ft"], .quick-select-btn[data-mode="gpu_finetune"], .quick-select-btn[data-mode="gpu_max"], .quick-select-btn[data-mode="hybrid"]');
+    const gpuButtons = document.querySelectorAll('.quick-select-btn[data-mode="gpu_finetune"], .quick-select-btn[data-mode="gpu_max"], .quick-select-btn[data-mode="hybrid"]');
     gpuButtons.forEach(btn => {
       if (!state.isKaggleOnline) {
         btn.classList.add("mode-offline-dimmed");
@@ -3407,7 +3406,7 @@ document.addEventListener("DOMContentLoaded", () => {
             let targetMode = data.agent_modes[agentKey];
             if (targetMode === "cpu") targetMode = "cpu_min";
             if (targetMode === "model" || targetMode === "kaggle" || targetMode === "kaggle_max") targetMode = "gpu_max";
-            if (targetMode === "kaggle_fn" || targetMode === "fn") targetMode = "gpu_ft";
+            if (targetMode === "kaggle_fn" || targetMode === "fn") targetMode = "gpu_finetune";
             if (targetMode === "api") targetMode = "gemini";
             if (targetMode) {
               const opt = Array.from(select.options).find(o => o.value === targetMode);
@@ -3473,39 +3472,30 @@ document.addEventListener("DOMContentLoaded", () => {
   function updateGpuMutualExclusionUI(is32b) {
     isGpuMaxActive = Boolean(is32b);
     const hotSwapBanner = document.getElementById("hotSwapBanner");
-    const gpuFtBtn = document.querySelector('.quick-select-btn[data-mode="gpu_ft"]');
     const gpuFnBtn = document.querySelector('.quick-select-btn[data-mode="gpu_finetune"]');
 
     if (isGpuMaxActive) {
       if (hotSwapBanner) hotSwapBanner.classList.add("show");
-      if (gpuFtBtn) {
-        gpuFtBtn.classList.add("vram-locked-dimmed");
-        gpuFtBtn.title = "⚠️ Đang khóa: Toàn bộ 32GB VRAM đang được GPU Max 32B độc chiếm.";
-      }
       if (gpuFnBtn) {
         gpuFnBtn.classList.add("vram-locked-dimmed");
         gpuFnBtn.title = "⚠️ Đang khóa: Toàn bộ 32GB VRAM đang được GPU Max 32B độc chiếm.";
       }
       document.querySelectorAll(".agent-model-select").forEach(sel => {
         Array.from(sel.options).forEach(opt => {
-          if (opt.value === "gpu_ft" || opt.value === "gpu_finetune") {
+          if (opt.value === "gpu_finetune") {
             opt.disabled = true;
           }
         });
       });
     } else {
       if (hotSwapBanner) hotSwapBanner.classList.remove("show");
-      if (gpuFtBtn) {
-        gpuFtBtn.classList.remove("vram-locked-dimmed");
-        gpuFtBtn.title = "Áp dụng GPU FT cho toàn bộ 5 Agent";
-      }
       if (gpuFnBtn) {
         gpuFnBtn.classList.remove("vram-locked-dimmed");
         gpuFnBtn.title = "Áp dụng GPU Finetune (Cụm 7 Mô Hình SOTA) cho toàn bộ 5 Agent";
       }
       document.querySelectorAll(".agent-model-select").forEach(sel => {
         Array.from(sel.options).forEach(opt => {
-          if (opt.value === "gpu_ft" || opt.value === "gpu_finetune") {
+          if (opt.value === "gpu_finetune") {
             opt.disabled = false;
           }
         });

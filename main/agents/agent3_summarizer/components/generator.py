@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import re
 from typing import Any
+from core.schemas import ContextCoverage
 from core.state import AtomicClaim, EvidenceSpan, compute_context_hash
 from utils.llm_client import llm_client
 from utils.logger import logger
@@ -18,19 +19,17 @@ def estimate_tokens(text: str) -> int:
     return int(len(words) * 2.3) + 1
 
 
-def pack_context_by_token_budget(
+def pack_context_with_coverage(
     source_units: list[dict[str, Any]],
     max_tokens: int = 3800,
-) -> tuple[str, list[dict[str, Any]]]:
+) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
     """
-    Packs source units into context string until max_tokens budget is reached.
-    Ensures long papers (>10 pages) are maximally represented without truncation bias
-    or overflowing LLM context windows.
-    Returns:
-      (packed_context_str, included_units)
+    Packs source units into context string until max_tokens budget is reached
+    and returns explicit ContextCoverage metadata (`total_units`, `included_units`,
+    `omitted_units`, `truncated`, `omitted_unit_ids`).
     """
-    context_parts = []
-    included_units = []
+    context_parts: list[str] = []
+    included_units: list[dict[str, Any]] = []
     current_tokens = 0
 
     for u in source_units:
@@ -53,7 +52,28 @@ def pack_context_by_token_budget(
         included_units.append(u)
         current_tokens += unit_tokens
 
-    return "".join(context_parts), included_units
+    included_ids = {id(u) for u in included_units}
+    omitted_units_list = [u for u in source_units if id(u) not in included_ids]
+    coverage = ContextCoverage(
+        total_units=len(source_units),
+        included_units=len(included_units),
+        omitted_units=len(omitted_units_list),
+        truncated=len(omitted_units_list) > 0,
+        omitted_unit_ids=[str(u.get("id") or f"idx_{i}") for i, u in enumerate(omitted_units_list)],
+    ).to_dict()
+
+    return "".join(context_parts), included_units, coverage
+
+
+def pack_context_by_token_budget(
+    source_units: list[dict[str, Any]],
+    max_tokens: int = 3800,
+) -> tuple[str, list[dict[str, Any]]]:
+    """
+    Backward-compatible wrapper returning (packed_context_str, included_units).
+    """
+    context_str, included_units, _ = pack_context_with_coverage(source_units, max_tokens=max_tokens)
+    return context_str, included_units
 
 
 def format_academic_answer(answer: str) -> str:

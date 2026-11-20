@@ -14,8 +14,11 @@ from __future__ import annotations
 import re
 from typing import Any, Optional
 
-from core.schemas import SummarizerCriticOutput
-from core.state import AtomicClaim, ClaimCheckResult, EvidenceGap, EvidenceSpan
+from core.schemas import (
+    SummarizerCriticOutput,
+    map_evidence_to_legacy_fact_check_label,
+)
+from core.state import AtomicClaim, ClaimCheckResult, EvidenceGap, EvidenceSpan, compute_context_hash
 from utils.logger import logger
 
 
@@ -65,32 +68,124 @@ BẮT BUỘC trả về kết quả hoàn toàn bằng định dạng JSON hợp
 }"""
 
 
+_UNIT_CANONICAL_MAP: dict[str, str] = {
+    "%": "%",
+    "percent": "%",
+    "pct": "%",
+    "phần trăm": "%",
+    "phan tram": "%",
+    "km": "km",
+    "kilometer": "km",
+    "kilometers": "km",
+    "kilomet": "km",
+    "m": "m",
+    "meter": "m",
+    "meters": "m",
+    "mét": "m",
+    "met": "m",
+    "cm": "cm",
+    "mm": "mm",
+    "ms": "ms",
+    "s": "s",
+    "sec": "s",
+    "second": "s",
+    "seconds": "s",
+    "giây": "s",
+    "gb": "gb",
+    "mb": "mb",
+    "kb": "kb",
+    "tb": "tb",
+    "kg": "kg",
+    "g": "g",
+    "mg": "mg",
+    "hz": "hz",
+    "mhz": "mhz",
+    "ghz": "ghz",
+    "usd": "usd",
+    "$": "usd",
+    "vnd": "vnd",
+}
+
+_UNIT_PATTERN = re.compile(
+    r"(?<!\d)(\d+(?:[.,]\d+)?)\s*(%|phần\s+trăm|phan\s+tram|percent|pct|"
+    r"kilometers?|kilomet|km|meters?|mét|met|cm|mm|ms|seconds?|sec|giây|"
+    r"ghz|mhz|hz|tb|gb|mb|kb|kg|mg|usd|vnd|\$|m\b|s\b|g\b)?",
+    re.IGNORECASE,
+)
+
+_METRIC_ANCHOR_WORDS = {
+    "accuracy", "f1", "bleu", "rouge", "precision", "recall", "latency",
+    "throughput", "memory", "loss", "perplexity", "mrr", "ndcg", "auc",
+    "bert", "roberta", "llama", "qwen", "gpt", "transformer", "lora",
+}
+
+
+def _canonicalize_unit(raw_unit: Optional[str]) -> str:
+    if not raw_unit:
+        return ""
+    cleaned = re.sub(r"\s+", " ", raw_unit.strip().lower())
+    return _UNIT_CANONICAL_MAP.get(cleaned, cleaned)
+
+
+def extract_numbers_with_units(text: str) -> list[tuple[str, str, int]]:
+    """
+    Extracts (normalized_number, canonical_unit, char_index) tuples from text.
+    Ignores citation brackets [1], page/section/table/figure indices, and arXiv IDs.
+    """
+    cleaned = re.sub(r"\[\d{1,3}\]", " ", text or "")
+    cleaned = re.sub(r"(?i)\b(?:trang|page|mục|section|hình|figure|table|bảng)\s*\d+\b", " ", cleaned)
+    cleaned = re.sub(r"\b\d{4}\.\d{4,5}(?:v\d+)?\b", " ", cleaned)
+
+    results: list[tuple[str, str, int]] = []
+    seen: set[tuple[str, str]] = set()
+    for m in _UNIT_PATTERN.finditer(cleaned):
+        raw_num = m.group(1)
+        raw_unit = m.group(2)
+        norm_num = raw_num.replace(",", ".")
+        canon_unit = _canonicalize_unit(raw_unit)
+        # Skip single-digit bullet/section indices (1..9) unless accompanied by a unit or decimal
+        if len(norm_num) == 1 and norm_num.isdigit() and not canon_unit:
+            continue
+        key = (norm_num, canon_unit)
+        if key not in seen:
+            seen.add(key)
+            results.append((norm_num, canon_unit, m.start()))
+    return results
+
+
 def extract_numbers_and_years(text: str) -> list[str]:
     """
     Extracts significant numbers, percentages, decimals, and 4-digit years from text.
     Ignores citation brackets [1], [2], page markers (Trang 1, Page 2), and arXiv version tags.
     """
-    cleaned = re.sub(r"\[\d{1,3}\]", " ", text or "")
-    cleaned = re.sub(r"(?i)\b(?:trang|page|mục|section|hình|figure|table|bảng)\s*\d+\b", " ", cleaned)
-    cleaned = re.sub(r"\b\d{4}\.\d{4,5}(?:v\d+)?\b", " ", cleaned)
-    raw_nums = re.findall(r"\b\d+(?:[.,]\d+)?%?\b", cleaned)
+    items = extract_numbers_with_units(text)
     normalized: list[str] = []
-    for n in raw_nums:
-        norm = n.replace(",", ".")
-        # Skip single-digit bullet/section indices (1..9) unless percentage or decimal
-        if len(norm) == 1 and norm.isdigit():
-            continue
-        if norm not in normalized:
-            normalized.append(norm)
+    for num, unit, _ in items:
+        label = f"{num}%" if unit == "%" else (f"{num} {unit}" if unit else num)
+        if label not in normalized:
+            normalized.append(label)
     return normalized
+
+
+def _extract_context_matches(full_context_text: str) -> list[tuple[str, str, int]]:
+    """Extracts all (normalized_number, canonical_unit, char_index) occurrences in context (without dedup)."""
+    ctx = full_context_text or ""
+    out: list[tuple[str, str, int]] = []
+    for m in _UNIT_PATTERN.finditer(ctx):
+        norm_num = m.group(1).replace(",", ".")
+        canon_unit = _canonicalize_unit(m.group(2))
+        out.append((norm_num, canon_unit, m.start()))
+    return out
 
 
 def check_numerical_and_date_consistency(claim_text: str, full_context_text: str) -> tuple[bool, bool, list[str]]:
     """
-    Deterministic Numerical & Date Guard:
-    Verifies whether numbers and 4-digit years stated in `claim_text` appear in `full_context_text`.
-    If `claim_text` is an explicit negative/abstention statement ("không đề cập", "không chứa", etc.),
-    numbers echoed from the user's question are not treated as hallucinations.
+    Unit-Aware & Context-Aware Deterministic Numerical & Date Guard:
+      - `85%` matches `85%`, `85 percent`, `85 phần trăm`, NOT bare `85`.
+      - `85 km` matches `85 km`, NOT `85 m`.
+      - `2025` matches `2025`, NOT `2024`.
+      - If claim mentions a known metric/model anchor that also exists in context,
+        verifies the matched number appears within a local window of that anchor.
     Returns (numerical_passed, dates_passed, missing_numbers).
     """
     lower_claim = (claim_text or "").lower()
@@ -111,36 +206,147 @@ def check_numerical_and_date_consistency(claim_text: str, full_context_text: str
     ):
         return True, True, []
 
-    claim_nums = extract_numbers_and_years(claim_text)
-    if not claim_nums:
+    claim_items = extract_numbers_with_units(claim_text)
+    if not claim_items:
         return True, True, []
 
-    ctx_norm = (full_context_text or "").replace(",", ".")
+    ctx_text = full_context_text or ""
+    ctx_lower = ctx_text.lower()
+    ctx_matches = _extract_context_matches(ctx_text)
+
+    # Identify salient metric/model anchors present in BOTH claim and context
+    claim_tokens = set(re.findall(r"[a-z0-9_]+", lower_claim))
+    shared_anchors = {a for a in (_METRIC_ANCHOR_WORDS & claim_tokens) if a in ctx_lower}
+
     missing_nums: list[str] = []
     dates_passed = True
     numerical_passed = True
 
-    for num in claim_nums:
-        # Check exact or comma/dot equivalent presence in context with word boundaries
-        clean_num = num.rstrip("%")
-        raw_variants = {num, clean_num, clean_num.replace(".", ","), clean_num.replace(",", ".")}
+    for norm_num, claim_unit, _ in claim_items:
+        candidates = [
+            (c_num, c_unit, c_pos)
+            for (c_num, c_unit, c_pos) in ctx_matches
+            if c_num == norm_num
+        ]
+
+        unit_matched_positions: list[int] = []
+        for _, c_unit, c_pos in candidates:
+            if claim_unit:
+                # Claim explicitly specifies a unit (e.g. %, km, ms) -> context MUST match canonical unit
+                if c_unit == claim_unit:
+                    unit_matched_positions.append(c_pos)
+            else:
+                # Claim has bare number -> match bare number in context (or non-% / non-conflicting?
+                # bare number must NOT silently match a percentage if unit was dropped)
+                if c_unit != "%":
+                    unit_matched_positions.append(c_pos)
+
         found = False
-        for v in raw_variants:
-            if not v:
-                continue
-            # Regex boundary so '10' does not match '2010' or '100'
-            pat = r"(?<!\d)" + re.escape(v) + r"(?!\d)"
-            if re.search(pat, ctx_norm) or re.search(pat, full_context_text or ""):
+        if unit_matched_positions:
+            if not shared_anchors or len(ctx_text) <= 180:
                 found = True
-                break
+            else:
+                # Verify at least one matched position sits near ALL shared metric/entity anchors (word-boundary)
+                for pos in unit_matched_positions:
+                    win_start = max(0, pos - 120)
+                    win_end = min(len(ctx_lower), pos + 120)
+                    window = ctx_lower[win_start:win_end]
+                    if all(re.search(rf"\b{re.escape(anchor)}\b", window) for anchor in shared_anchors):
+                        found = True
+                        break
+
         if not found:
-            missing_nums.append(num)
-            if re.match(r"^(?:19\d\d|20\d\d)$", num):
+            display = f"{norm_num}%" if claim_unit == "%" else (f"{norm_num} {claim_unit}" if claim_unit else norm_num)
+            missing_nums.append(display)
+            if not claim_unit and re.match(r"^(?:19\d\d|20\d\d)$", norm_num):
                 dates_passed = False
             else:
                 numerical_passed = False
 
     return numerical_passed, dates_passed, missing_nums
+
+
+def verify_evidence_span_provenance(
+    span: dict[str, Any],
+    source_units: list[dict[str, Any]],
+) -> tuple[bool, str]:
+    """
+    Independent Citation Provenance Verifier:
+    Validates that an EvidenceSpan actually matches a real SourceUnit (or one of its
+    merged multi-source provenance records) on:
+      1. doc_id
+      2. page_no
+      3. unit_id (when specified)
+      4. quote substring presence in source text
+      5. context_hash integrity (when provided)
+    """
+    if not isinstance(span, dict):
+        return False, "Evidence span is not a dict."
+    quote = str(span.get("quote") or span.get("text") or "").strip()
+    doc_id = str(span.get("doc_id") or "").strip()
+    unit_id = str(span.get("source_unit_id") or span.get("unit_id") or "").strip()
+    raw_page = span.get("page_no")
+    span_hash = str(span.get("context_hash") or "").strip()
+
+    if not quote or not doc_id:
+        return False, "Evidence span missing quote or doc_id."
+
+    try:
+        page_no = int(raw_page)
+    except Exception:
+        return False, f"Invalid page_no in evidence span: {raw_page!r}"
+
+    if span_hash:
+        expected_quote_hash = compute_context_hash(quote, doc_id, page_no)
+        # Allow hash computed on quote OR on full source unit text (checked below)
+    else:
+        expected_quote_hash = ""
+
+    norm_quote = re.sub(r"\s+", " ", quote).lower()
+
+    for unit in source_units or []:
+        if not isinstance(unit, dict):
+            continue
+        u_text = str(unit.get("text") or unit.get("content") or "")
+        norm_u_text = re.sub(r"\s+", " ", u_text).lower()
+        if norm_quote not in norm_u_text:
+            continue
+
+        # Build candidate provenance list: explicit provenance list + primary unit metadata
+        prov_list = list(unit.get("provenance") or [])
+        primary_prov = {
+            "doc_id": str(unit.get("doc_id") or "").strip(),
+            "page_no": unit.get("page_no"),
+            "unit_id": str(unit.get("id") or "").strip(),
+        }
+        prov_list.append(primary_prov)
+
+        for prov in prov_list:
+            if not isinstance(prov, dict):
+                continue
+            p_doc = str(prov.get("doc_id") or "").strip()
+            try:
+                p_page = int(prov.get("page_no"))
+            except Exception:
+                continue
+            p_uid = str(prov.get("unit_id") or "").strip()
+
+            if p_doc != doc_id or p_page != page_no:
+                continue
+            if unit_id and unit_id not in ("unknown", "u1") and p_uid and p_uid != unit_id:
+                # Allow matching either the primary unit id or the merged provenance unit_id
+                if str(unit.get("id") or "").strip() != unit_id:
+                    continue
+
+            if span_hash:
+                unit_hash = str(unit.get("context_hash") or "").strip()
+                prov_unit_hash = compute_context_hash(u_text, p_doc, p_page)
+                if span_hash not in (expected_quote_hash, unit_hash, prov_unit_hash):
+                    return False, f"context_hash mismatch for doc={doc_id}, page={page_no}."
+
+            return True, f"Verified provenance: doc={doc_id}, page={page_no}"
+
+    return False, f"No matching source unit/provenance found for doc={doc_id}, page={page_no}."
 
 
 def split_answer_into_atomic_claims(
@@ -303,8 +509,8 @@ def deterministic_verify_claims(
             res = ClaimCheckResult(
                 claim_id=c_id,
                 claim_text=c_text,
-                status="CONTRADICT",
-                reason=f"Sai lệch số liệu/năm không có trong tài liệu gốc: {', '.join(missing_nums)}",
+                status="NOT_ENOUGH_INFO",
+                reason=f"Sai lệch số liệu/năm hoặc đơn vị không khớp tài liệu gốc: {', '.join(missing_nums)}",
                 numerical_passed=num_ok,
                 dates_passed=date_ok,
                 confidence_score=0.25,
@@ -315,6 +521,28 @@ def deterministic_verify_claims(
                     missing_aspect=f"Kiểm chứng số liệu {', '.join(missing_nums)} trong mệnh đề: {c_text[:90]}",
                     suggested_query=f"{query} {' '.join(missing_nums)}".strip(),
                     perspective="numerical_verification",
+                ).to_dict()
+            )
+        elif (
+            (overlap_ratio >= 0.20 or ascii_overlap >= 0.30)
+            and bool({w for w in re.findall(r"\w+", c_text.lower())}.intersection({"không", "không thể", "chưa", "chẳng", "not", "never", "cannot", "no"}))
+            != bool({w for w in re.findall(r"\w+", unit_text.lower())}.intersection({"không", "không thể", "chưa", "chẳng", "not", "never", "cannot", "no"}))
+        ):
+            res = ClaimCheckResult(
+                claim_id=c_id,
+                claim_text=c_text,
+                status="CONTRADICT",
+                reason="Mâu thuẫn khẳng định/phủ định trực tiếp với tài liệu nguồn.",
+                numerical_passed=num_ok,
+                dates_passed=date_ok,
+                confidence_score=0.88,
+            ).to_dict()
+            rejected.append(res)
+            gaps.append(
+                EvidenceGap(
+                    missing_aspect=f"Xác minh mâu thuẫn: {c_text[:90]}",
+                    suggested_query=f"{query} {c_text[:45]}".strip(),
+                    perspective="contradiction_verification",
                 ).to_dict()
             )
         elif (
@@ -467,3 +695,172 @@ def ensure_inline_citations(
     text_out = re.sub(r"([a-z0-9à-ỹ\.\)\]\>])[ \t]+([-\*•]\s+)", r"\1\n\2", text_out, flags=re.IGNORECASE)
 
     return re.sub(r"[,;\s]*\[\s*$", "", text_out).strip()
+
+
+def finalize_fact_check_contract(
+    *,
+    query: str,
+    verified_claims: list[dict[str, Any]],
+    rejected_claims: list[dict[str, Any]],
+    evidence_gaps: list[dict[str, Any]],
+    evidence_spans: Optional[list[dict[str, Any]]] = None,
+    source_units: Optional[list[dict[str, Any]]] = None,
+    full_context_text: str = "",
+    context_coverage: Optional[dict[str, Any]] = None,
+    verifier_model_family: str = "unknown",
+    reasoning_trace: Optional[list[dict[str, Any]]] = None,
+) -> dict[str, Any]:
+    """
+    Unified Fact-Checking Contract Enforcer shared across ALL 6 execution modes:
+      1. Verifies Citation Provenance (`verify_evidence_span_provenance`) on all `evidence_spans`.
+      2. Audits every claim for unit-aware numerical consistency, date consistency, and provenance.
+      3. Downgrades ungrounded 'SUPPORT' claims to 'not_enough_info' (never conflating missing evidence
+         or unverified numbers with 'contradict').
+      4. Aggregates per-claim statuses into `evidence_status` (FOUND | PARTIAL | NOT_FOUND | CONFLICTING_EVIDENCE)
+         and projects legacy `fact_check_label` (support | contradict | not_enough_info).
+    """
+    units = list(source_units or [])
+    spans = [s for s in (evidence_spans or []) if isinstance(s, dict)]
+    if not full_context_text:
+        full_context_text = "\n".join(
+            str(u.get("text") or u.get("content") or "") for u in units if isinstance(u, dict)
+        )
+
+    span_prov_results: list[tuple[dict[str, Any], bool, str]] = [
+        (sp, *verify_evidence_span_provenance(sp, units)) for sp in spans
+    ]
+
+    final_verified: list[dict[str, Any]] = []
+    final_rejected: list[dict[str, Any]] = []
+    final_gaps: list[dict[str, Any]] = list(evidence_gaps or [])
+    statuses: list[str] = []
+
+    all_input_claims: list[tuple[dict[str, Any], str]] = [
+        (c if isinstance(c, dict) else {"claim": str(c)}, "support")
+        for c in (verified_claims or [])
+    ] + [
+        (c if isinstance(c, dict) else {"claim": str(c)}, "rejected")
+        for c in (rejected_claims or [])
+    ]
+
+    for c_dict, bucket in all_input_claims:
+        c_text = str(
+            c_dict.get("claim_text") or c_dict.get("claim") or c_dict.get("text") or ""
+        ).strip()
+        if not c_text:
+            continue
+
+        raw_st = str(c_dict.get("status") or ("SUPPORT" if bucket == "support" else "NOT_ENOUGH_INFO")).upper()
+        reason_str = str(c_dict.get("reason") or c_dict.get("rationale") or c_dict.get("reasoning") or "")
+
+        num_ok, date_ok, missing_nums = check_numerical_and_date_consistency(c_text, full_context_text)
+        if "numerical_passed" in c_dict and c_dict["numerical_passed"] is False:
+            num_ok = False
+        if "dates_passed" in c_dict and c_dict["dates_passed"] is False:
+            date_ok = False
+
+        linked_ids = set(str(x) for x in (c_dict.get("evidence_ids") or []))
+        if c_dict.get("unit_id"):
+            linked_ids.add(str(c_dict["unit_id"]))
+
+        if span_prov_results:
+            rel_spans = [
+                r for r in span_prov_results
+                if not linked_ids
+                or str(r[0].get("id") or "") in linked_ids
+                or str(r[0].get("source_unit_id") or r[0].get("unit_id") or "") in linked_ids
+            ] or span_prov_results
+            provenance_ok = any(r[1] for r in rel_spans)
+            prov_msg = "Citation provenance verified." if provenance_ok else "; ".join(r[2] for r in rel_spans[:2])
+        else:
+            provenance_ok = bool(units) and not bool(spans)
+            prov_msg = "Checked against source_units."
+
+        # Determine canonical per-claim status: support | contradict | not_enough_info
+        if bucket == "support" and "SUPPORT" in raw_st:
+            status = "support"
+        elif "CONTRA" in raw_st or "REFUT" in raw_st:
+            # Guard against legacy callers that labeled numerical mismatch as CONTRADICT
+            if not num_ok or not date_ok or "Sai lệch số liệu" in reason_str:
+                status = "not_enough_info"
+            else:
+                status = "contradict"
+        else:
+            status = "not_enough_info"
+
+        # Enforce hard guards on 'support' claims
+        if not num_ok:
+            if status == "support":
+                status = "not_enough_info"
+            reason_str = f"{reason_str} | Số liệu/đơn vị không khớp nguồn: {', '.join(missing_nums)}".strip(" |")
+        if not date_ok:
+            if status == "support":
+                status = "not_enough_info"
+            reason_str = f"{reason_str} | Năm/thời gian không khớp nguồn: {', '.join(missing_nums)}".strip(" |")
+        if span_prov_results and not provenance_ok:
+            if status == "support":
+                status = "not_enough_info"
+            reason_str = f"{reason_str} | {prov_msg}".strip(" |")
+
+        enriched = dict(c_dict)
+        enriched.update(
+            {
+                "claim": c_text,
+                "claim_text": c_text,
+                "text": c_text,
+                "status": status,
+                "numerical_passed": num_ok,
+                "dates_passed": date_ok,
+                "provenance_ok": provenance_ok,
+                "numeric_valid": num_ok,
+                "reason": reason_str,
+                "rationale": reason_str,
+                "reasoning": reason_str,
+                "confidence": float(c_dict.get("confidence") or c_dict.get("confidence_score") or 0.9),
+            }
+        )
+        statuses.append(status)
+        if status == "support":
+            final_verified.append(enriched)
+        else:
+            final_rejected.append(enriched)
+            if not final_gaps:
+                final_gaps.append(
+                    EvidenceGap(
+                        missing_aspect=f"Xác minh nhận định: {c_text[:80]}",
+                        suggested_query=f"{query} {c_text[:50]}".strip(),
+                    ).to_dict()
+                )
+
+    total = len(statuses)
+    support_cnt = statuses.count("support")
+    contradict_cnt = statuses.count("contradict")
+    nei_cnt = statuses.count("not_enough_info")
+
+    if total == 0:
+        evidence_status = "NOT_FOUND"
+    elif contradict_cnt > 0 and (support_cnt == 0 or contradict_cnt >= support_cnt):
+        evidence_status = "CONFLICTING_EVIDENCE"
+    elif support_cnt == total:
+        evidence_status = "FOUND"
+    elif support_cnt > 0:
+        evidence_status = "PARTIAL"
+    else:
+        evidence_status = "NOT_FOUND"
+
+    fact_check_label = map_evidence_to_legacy_fact_check_label(evidence_status)
+
+    out: dict[str, Any] = {
+        "verified_claims": final_verified,
+        "rejected_claims": final_rejected,
+        "evidence_gaps": final_gaps,
+        "evidence_status": evidence_status,
+        "processing_status": "SUCCESS",
+        "fact_check_label": fact_check_label,
+        "verifier_model_family": verifier_model_family,
+    }
+    if context_coverage is not None:
+        out["context_coverage"] = context_coverage
+    if reasoning_trace is not None:
+        out["reasoning_trace"] = reasoning_trace
+    return out

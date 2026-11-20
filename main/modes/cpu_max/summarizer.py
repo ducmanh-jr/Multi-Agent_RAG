@@ -49,15 +49,19 @@ class CPUMaxSummarizerAgent(BaseAgent):
             return res
 
         # Probe Ollama with adequate timeout for local server
+        from agents.agent3_summarizer.components.generator import pack_context_with_coverage
+        _, _, context_coverage = pack_context_with_coverage(source_units, max_tokens=3800)
         ollama_info = probe_ollama_models(timeout=2.0)
 
-        # Path A: Local Ollama 7B Vulkan LLM is online (with resilient fallback to Pure CPU engine)
+        # Path A: Local Ollama 7B Vulkan LLM is online (with fail-closed Critic contract)
         if ollama_info.get("online"):
             try:
-                from agents.agent3_summarizer.components.critic import critique_summary_and_claims
+                from agents.agent3_summarizer.components.critic import (
+                    build_verification_failed_state,
+                    evaluate_critic_contract,
+                )
                 from agents.agent3_summarizer.components.generator import generate_summary_and_claims
-                from core.schemas import SummarizerCriticOutput
-                from core.verifier import ensure_inline_citations, evaluate_inner_critic_fast
+                from core.verifier import ensure_inline_citations
 
                 raw_answer, evidence_spans, raw_claims = generate_summary_and_claims(query, source_units)
                 if raw_answer:
@@ -70,19 +74,24 @@ class CPUMaxSummarizerAgent(BaseAgent):
                     )
                     res = self.cpu_engine.run(state)
                     res["generator_model_family"] = "cpu_max_academic_engine"
+                    res.setdefault("context_coverage", context_coverage)
                     return res
 
-                critic_output = evaluate_inner_critic_fast(
-                    query=query,
-                    draft_answer=raw_answer,
-                    source_units=source_units,
-                    required_entities=required_entities,
-                )
+                critic_res = evaluate_critic_contract(raw_answer, raw_claims, evidence_spans)
+                if critic_res["processing_status"] == "VERIFICATION_FAILED":
+                    fail_trace = self.log_action(
+                        "cpu_max_critic_verification_failed",
+                        {"error": critic_res["error_message"]},
+                    )
+                    return build_verification_failed_state(
+                        answer=raw_answer,
+                        reason=critic_res["error_message"] or "Critic verification failed",
+                        context_coverage=context_coverage,
+                        model_family="qwen_local_vulkan",
+                        trace=fail_trace,
+                    )
 
-                refined_answer, filtered_claims, warnings = critique_summary_and_claims(
-                    raw_answer, raw_claims, evidence_spans
-                )
-                refined_answer = ensure_inline_citations(refined_answer, source_units, evidence_spans)
+                refined_answer = ensure_inline_citations(critic_res["answer"], source_units, evidence_spans)
                 refined_answer = re.sub(r"^>\s*\*\*Câu trả lời trực tiếp:\*\*\s*", "", refined_answer.strip(), flags=re.IGNORECASE).strip()
 
                 trace = self.log_action(
@@ -90,23 +99,28 @@ class CPUMaxSummarizerAgent(BaseAgent):
                     {
                         "ollama_vulkan_active": True,
                         "model_used": ollama_info.get("cpu_max_model", "qwen2.5:7b-instruct"),
-                        "claims_count": len(filtered_claims),
+                        "claims_count": len(critic_res["claims"]),
                         "evidence_spans_count": len(evidence_spans),
+                        "critic_action": critic_res["critic_action"],
                     },
                 )
                 return {
                     "answer": refined_answer,
                     "evidence_spans": evidence_spans,
-                    "claims": filtered_claims,
-                    "critic_action": critic_output.action,
-                    "critic_feedback": critic_output.to_dict(),
+                    "claims": critic_res["claims"],
+                    "critic_action": critic_res["critic_action"],
+                    "critic_feedback": critic_res["critic_feedback"],
+                    "processing_status": "SUCCESS",
+                    "confidence": critic_res["confidence"],
+                    "context_coverage": context_coverage,
                     "generator_model_family": "qwen_local_vulkan",
                     "reasoning_trace": [trace],
                 }
             except Exception as e:
-                self.logger.warning(f"[CPU Max Summarizer] Local LLM failed ({e}), seamlessly falling back to CPU engine.")
+                self.logger.warning(f"[CPU Max Summarizer] Local LLM generator failed ({e}), falling back to CPU engine.")
 
         # Path B: Pure-CPU High-Precision Comprehensive Engine (Fast, 0s latency, zero hallucinations)
         res = self.cpu_engine.run(state)
         res["generator_model_family"] = "cpu_max_academic_engine"
+        res.setdefault("context_coverage", context_coverage)
         return res

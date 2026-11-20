@@ -10,9 +10,13 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from agents.agent3_summarizer.components.critic import (
+    build_verification_failed_state,
+    evaluate_critic_contract,
+)
 from agents.agent3_summarizer.components.generator import (
     generate_summary_and_claims,
-    pack_context_by_token_budget,
+    pack_context_with_coverage,
 )
 from core.base_agent import BaseAgent
 from core.schemas import SummarizerCriticOutput
@@ -52,7 +56,7 @@ class GPUMaxSummarizerAgent(BaseAgent):
 
         self.logger.info(f"[GPU Max Summarizer] 32B /think CoT reasoning on Dual T4 for: '{query[:65]}'")
 
-        context_str, _ = pack_context_by_token_budget(source_units, max_tokens=6000)
+        context_str, _, context_coverage = pack_context_with_coverage(source_units, max_tokens=6000)
 
         prompt = f"""Bạn là Đại Mô Hình Suy Luận Nghiên Cứu Khoa Học 32B (Qwen3-32B-AWQ / QwQ-32B-AWQ chạy Tensor Parallelism TP=2 trên Kaggle Dual Tesla T4).
 Hãy suy luận từng bước (Chain-of-Thought ngắn gọn dưới 600 từ trong thẻ <think>...</think>), đối chiếu chéo các đoạn tài liệu và số liệu, sau đó xuất kết quả JSON chuẩn xác:
@@ -87,34 +91,52 @@ YÊU CẦU TRẢ VỀ ĐÚNG ĐỊNH DẠNG JSON:
             try:
                 res_32b = llm_client.call_gpu_max_32b(
                     prompt=prompt,
-                    enable_thinking=True,  # Deep /think CoT mode for 32B synthesis!
+                    enable_thinking=True,
                     temperature=0.2,
                     max_tokens=2560,
                     json_mode=True,
                 )
-                thinking_trace = str(res_32b.get("thinking") or "")
-                parsed = res_32b.get("parsed") or {}
-                if isinstance(parsed, dict) and parsed.get("answer"):
-                    answer = str(parsed.get("answer", "")).strip()
-                    raw_spans = parsed.get("evidence_spans", []) or []
-                    raw_claims = parsed.get("claims", []) or []
-                    critic_out = SummarizerCriticOutput.from_dict(
-                        {
-                            "is_supported": parsed.get("is_supported", True),
-                            "missing_key_points": parsed.get("missing_key_points", []),
-                            "action": parsed.get("critic_action", "approve"),
-                        }
-                    )
-                elif res_32b.get("text"):
-                    answer = str(res_32b["text"]).strip()
             except Exception as e:
-                self.logger.warning(f"[GPU Max Summarizer] Remote 32B GPU error: {e}")
+                self.logger.warning(f"[GPU Max Summarizer] Remote 32B GPU connection error: {e}")
+                res_32b = {}
+
+            if res_32b:
+                thinking_trace = str(res_32b.get("thinking") or "")
+                parsed = res_32b.get("parsed")
+                ans_candidate = (
+                    str(parsed.get("answer") or "").strip()
+                    if isinstance(parsed, dict)
+                    else ""
+                )
+                critic_res = evaluate_critic_contract(
+                    ans_candidate,
+                    list(parsed.get("claims") or []) if isinstance(parsed, dict) else [],
+                    list(parsed.get("evidence_spans") or []) if isinstance(parsed, dict) else [],
+                    precomputed_critic_data=parsed if (isinstance(parsed, dict) and ans_candidate) else {"error": "invalid_32b_schema"},
+                )
+                if critic_res["processing_status"] == "VERIFICATION_FAILED":
+                    reason = critic_res["error_message"] or f"GPU Max 32B returned invalid JSON/Critic schema: {parsed!r}"
+                    self.logger.error(f"[GPU Max Summarizer] {reason}")
+                    fail_trace = self.log_action("gpu_max_critic_schema_invalid", {"error": reason})
+                    return build_verification_failed_state(
+                        answer=ans_candidate or str(res_32b.get("text") or ""),
+                        reason=reason,
+                        context_coverage=context_coverage,
+                        model_family="qwen3_32b_awq",
+                        trace=fail_trace,
+                    )
+
+                answer = ans_candidate
+                raw_spans = parsed.get("evidence_spans", []) or []
+                raw_claims = parsed.get("claims", []) or []
+                critic_out = SummarizerCriticOutput.from_dict(critic_res["critic_feedback"])
 
         is_remote_failed = bool(res_32b.get("is_fallback") or not answer or len(answer.strip()) < 50)
         if is_remote_failed:
             self.logger.warning("[GPU Max Summarizer] Remote 32B GPU offline/timeout, falling back to High-Precision CPU Engine.")
             res = self.cpu_engine.run(state)
             res["generator_model_family"] = "gpu_max_cpu_fallback"
+            res.setdefault("context_coverage", context_coverage)
             return res
 
         evidence_spans: list[dict[str, Any]] = []
@@ -154,6 +176,8 @@ YÊU CẦU TRẢ VỀ ĐÚNG ĐỊNH DẠNG JSON:
             "thinking_trace": thinking_trace,
             "critic_action": critic_out.action,
             "critic_feedback": critic_out.to_dict(),
+            "processing_status": "SUCCESS",
+            "context_coverage": context_coverage,
             "generator_model_family": "qwen3_32b_awq",
             "reasoning_trace": [trace],
         }

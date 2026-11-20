@@ -14,7 +14,7 @@ from typing import Any
 
 from agents.agent2_reader.tools.pdf_parser import parse_pdf_document
 from core.base_agent import BaseAgent
-from core.state import AgentState, SourceUnit
+from core.state import AgentState, SourceUnit, deduplicate_and_merge_source_units
 
 
 def clean_source_text(text: str) -> str:
@@ -101,6 +101,8 @@ class CPUMaxReaderAgent(BaseAgent):
                         source_units.append(unit.to_dict())
                         curr_offset += len(u_clean_text) + 1
 
+        source_units = deduplicate_and_merge_source_units(source_units)
+
         trace = self.log_action(
             "cpu_max_reading_completed",
             {
@@ -112,5 +114,6 @@ class CPUMaxReaderAgent(BaseAgent):
         return {
             "source_units": source_units,
             "document_schema": {},
+            "processing_status": "SUCCESS",
             "reasoning_trace": [trace],
         }
