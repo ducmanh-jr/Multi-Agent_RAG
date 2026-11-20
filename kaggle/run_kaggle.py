@@ -9,6 +9,7 @@ import sys
 import subprocess
 import shutil
 import time
+import hashlib
 import json
 import urllib.request
 import zipfile
@@ -19,6 +20,33 @@ def format_bytes(size):
             return f"{size:.2f} {unit}"
         size /= 1024.0
     return f"{size:.2f} PB"
+
+
+def verify_checkpoint_integrity(cp, base_dir, verify_sha256=True):
+    sub_path = cp.get("sub_path", "")
+    cp_path = os.path.join(base_dir, sub_path)
+    if not os.path.exists(cp_path):
+        return False, "Thư mục checkpoint không tồn tại"
+
+    req_files = cp.get("required_files", [])
+    for rf in req_files:
+        if not os.path.exists(os.path.join(cp_path, rf)):
+            return False, f"Thiếu file bắt buộc: {rf}"
+
+    if verify_sha256 and "primary_file" in cp:
+        pf = cp["primary_file"]
+        pf_path = os.path.join(cp_path, pf["filename"])
+        if not os.path.exists(pf_path):
+            return False, f"Thiếu primary file: {pf['filename']}"
+        h = hashlib.sha256()
+        with open(pf_path, "rb") as f:
+            while chunk := f.read(1024 * 1024):
+                h.update(chunk)
+        calc_sha = h.hexdigest()
+        if calc_sha != pf["sha256"]:
+            return False, f"Sai lệch SHA256: {calc_sha[:12]} != {pf['sha256'][:12]}"
+
+    return True, "Hợp lệ"
 
 def run():
     print("\n" + "═" * 78)
@@ -97,24 +125,26 @@ def run():
     os.makedirs(weights_dir, exist_ok=True)
 
     manifest_path = os.path.join(repo_dir, "kaggle", "weights_manifest.json")
-    manifest_checkpoints = []
-    if os.path.exists(manifest_path):
-        try:
-            with open(manifest_path, "r", encoding="utf-8") as mf:
-                m_data = json.load(mf)
-                manifest_checkpoints = m_data.get("checkpoints", [])
-        except Exception as e:
-            print(f"    ⚠️ Lỗi đọc weights_manifest.json: {e}")
+    if not os.path.exists(manifest_path):
+        print(f"    ❌ LỖI NGHIÊM TRỌNG: Không tìm thấy weights_manifest.json tại {manifest_path}")
+        sys.exit(1)
 
-    # Check which checkpoints exist and have all required files
+    try:
+        with open(manifest_path, "r", encoding="utf-8") as mf:
+            m_data = json.load(mf)
+            manifest_checkpoints = m_data.get("checkpoints", [])
+            if not manifest_checkpoints:
+                raise ValueError("Manifest không chứa danh sách checkpoint nào.")
+    except Exception as e:
+        print(f"    ❌ LỖI NGHIÊM TRỌNG: Không thể đọc hoặc phân tích weights_manifest.json: {e}")
+        sys.exit(1)
+
+    # Check which checkpoints exist and have verified cryptographic SHA256 hashes
     missing_mandatory = []
     for cp in manifest_checkpoints:
-        sub_path = cp.get("sub_path", "")
-        cp_path = os.path.join(weights_dir, sub_path)
-        req_files = cp.get("required_files", [])
-        is_complete = os.path.exists(cp_path) and all(os.path.exists(os.path.join(cp_path, f)) for f in req_files)
-        if not is_complete and cp.get("is_mandatory", False):
-            missing_mandatory.append(cp.get("id"))
+        is_valid, reason = verify_checkpoint_integrity(cp, weights_dir, verify_sha256=True)
+        if not is_valid and cp.get("is_mandatory", False):
+            missing_mandatory.append((cp.get("id"), reason))
 
     if missing_mandatory:
         working_dir = "/kaggle/working" if os.path.exists("/kaggle/working") else os.path.abspath(".")
@@ -122,7 +152,8 @@ def run():
         os.makedirs(download_dir, exist_ok=True)
         drive_folder_id = "1UPF13BNjxFFhd8YFv5PpuyfOR4G-VNte"
 
-        print(f"    🌐 Phát hiện {len(missing_mandatory)} checkpoint bắt buộc chưa có sẵn ({', '.join(missing_mandatory)}).")
+        missing_names = [m[0] for m in missing_mandatory]
+        print(f"    🌐 Phát hiện {len(missing_mandatory)} checkpoint bắt buộc chưa hoàn chỉnh ({', '.join(missing_names)}).")
         print("    🌐 Đang kết nối Google Drive tải gói 'final_weights_bundle.zip' (2.85 GB)...")
         print("    📊 Tiến độ tải thực tế:")
         try:
@@ -150,15 +181,24 @@ def run():
         except Exception as e:
             print(f"    ⚠️ Lỗi trong quá trình tải Drive: {e}")
     else:
-        print("    ✔ Toàn bộ trọng số mô hình đã có sẵn và khớp với weights_manifest.json:")
+        print("    ✔ Toàn bộ trọng số mô hình đã có sẵn và xác thực SHA256 thành công:")
 
+    # Post-staging mandatory cryptographic verification (Fail-Fast)
+    unresolved_mandatory = []
+    print("\n    🔍 Kiểm tra mật mã học SHA256 toàn bộ checkpoint trên đĩa:")
     for cp in manifest_checkpoints:
-        sub_path = cp.get("sub_path", "")
-        cp_path = os.path.join(weights_dir, sub_path)
-        req_files = cp.get("required_files", [])
-        is_complete = os.path.exists(cp_path) and all(os.path.exists(os.path.join(cp_path, f)) for f in req_files)
-        status = "✔" if is_complete else ("⚠️ THIẾU" if cp.get("is_mandatory", False) else "ℹ️ TÙY CHỌN")
-        print(f"      {status} [{cp.get('id')}] - {cp.get('description', '')}")
+        is_valid, reason = verify_checkpoint_integrity(cp, weights_dir, verify_sha256=True)
+        if not is_valid and cp.get("is_mandatory", False):
+            unresolved_mandatory.append((cp.get("id"), reason))
+        status = "✔ SHA256 HỢP LỆ" if is_valid else (f"❌ HỎNG/THIẾU ({reason})" if cp.get("is_mandatory", False) else f"ℹ️ TÙY CHỌN ({reason})")
+        print(f"      • [{cp.get('id')}] {status} - {cp.get('description', '')}")
+
+    if unresolved_mandatory:
+        print(f"\n    ❌ DỪNG HỆ THỐNG: Phát hiện {len(unresolved_mandatory)} checkpoint bắt buộc không vượt qua kiểm tra toàn vẹn SHA256:")
+        for cid, reason in unresolved_mandatory:
+            print(f"      - {cid}: {reason}")
+        print("    Vui lòng kiểm tra lại gói trọng số hoặc kết nối mạng trước khi khởi động Supervisor.")
+        sys.exit(1)
 
     # -------------------------------------------------------------------------
     # 4. Start Master Supervisor Gateway & Load Dual GPU VRAM

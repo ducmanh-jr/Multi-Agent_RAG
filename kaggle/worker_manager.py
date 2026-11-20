@@ -294,23 +294,27 @@ class WorkerManager:
         # Baseline VRAM Record
         self.baseline_vram: Dict[int, Dict[str, float]] = GPUVRAMProbe.get_vram_info()
 
-        # Load & Validate Manifest
+        # Load & Validate Manifest (Fail-Fast Cryptographic Verification)
         self.manifest = self._load_manifest()
-        self.validated_capabilities = self.validate_manifest_checkpoints()
+        self.validated_capabilities = self.validate_manifest_checkpoints(verify_sha256=True)
 
     def _load_manifest(self) -> Dict[str, Any]:
         manifest_path = Path(self.project_dir) / "kaggle" / "weights_manifest.json"
-        if manifest_path.exists():
-            try:
-                with open(manifest_path, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception as e:
-                print(f"[WorkerManager WARNING] Could not parse weights_manifest.json: {e}")
-        return {}
+        if not manifest_path.exists():
+            raise FileNotFoundError(f"[WorkerManager CRITICAL] weights_manifest.json không tồn tại tại: {manifest_path}")
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if not isinstance(data, dict) or "checkpoints" not in data:
+                    raise ValueError("Manifest thiếu trường 'checkpoints' bắt buộc.")
+                return data
+        except Exception as e:
+            raise RuntimeError(f"[WorkerManager CRITICAL] Không thể đọc hoặc phân tích weights_manifest.json: {e}")
 
-    def validate_manifest_checkpoints(self, verify_sha256: bool = False) -> Dict[str, bool]:
+    def validate_manifest_checkpoints(self, verify_sha256: bool = True) -> Dict[str, bool]:
         """
         Validates all checkpoints against disk files.
+        Default verify_sha256=True guarantees cryptographic SHA256 integrity validation.
         Returns a dictionary mapping capability -> bool.
         """
         capabilities = {

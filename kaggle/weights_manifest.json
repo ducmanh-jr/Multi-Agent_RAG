@@ -10,7 +10,7 @@
       "target_gpu": 0,
       "min_vram_mb": 4800.0,
       "source": "huggingface:Qwen/Qwen2.5-7B-Instruct",
-      "revision": "main"
+      "revision": "d4094e97c9b83b6b15802fb8ce335a9f6d4d14b4"
     },
     "qwen_32b_awq": {
       "model_id": "Qwen/Qwen2.5-32B-Instruct-AWQ",
@@ -21,7 +21,7 @@
       "gpu_memory_utilization": 0.88,
       "min_vram_per_gpu_mb": 13500.0,
       "source": "huggingface:Qwen/Qwen2.5-32B-Instruct-AWQ",
-      "revision": "main"
+      "revision": "e4630a845173361405b0b2326ec588e388ffc0b2"
     }
   },
   "checkpoints": [

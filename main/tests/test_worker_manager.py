@@ -65,15 +65,116 @@ def worker_manager():
 # =====================================================================
 
 def test_manifest_validation_engine(worker_manager):
-    """Verify that validate_manifest_checkpoints detects all present checkpoints accurately."""
-    caps = worker_manager.validate_manifest_checkpoints(verify_sha256=False)
+    """Verify that validate_manifest_checkpoints detects all present checkpoints accurately with SHA256."""
+    caps = worker_manager.validate_manifest_checkpoints(verify_sha256=True)
     assert isinstance(caps, dict)
-    # The 5 mandatory Finetune models must be detected on disk
+    # The 5 mandatory Finetune models must be detected on disk and cryptographically verified
     assert caps["router"] is True
     assert caps["generator"] is True
     assert caps["critic"] is True
     assert caps["fact_checker_nli"] is True
     assert caps["writer"] is True
+
+
+def test_manifest_pinned_revisions_are_commit_shas(worker_manager):
+    """Verify base models in manifest have pinned commit SHAs (40 hex chars) and not 'main'."""
+    base_models = worker_manager.manifest.get("base_models", {})
+    assert len(base_models) >= 2
+    for model_key, spec in base_models.items():
+        rev = spec.get("revision")
+        assert rev is not None, f"Model {model_key} must specify 'revision'"
+        assert rev != "main", f"Model {model_key} revision must NOT be 'main'"
+        assert len(rev) == 40, f"Model {model_key} revision must be 40-character commit SHA"
+
+
+def test_manifest_fails_fast_on_missing_file():
+    """Verify WorkerManager raises FileNotFoundError when weights_manifest.json is missing."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        with pytest.raises(FileNotFoundError) as exc_info:
+            WorkerManager(project_dir=tmp_dir)
+        assert "weights_manifest.json không tồn tại" in str(exc_info.value)
+
+
+def test_manifest_fails_fast_on_malformed_json():
+    """Verify WorkerManager raises RuntimeError when weights_manifest.json contains malformed JSON."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        k_dir = os.path.join(tmp_dir, "kaggle")
+        os.makedirs(k_dir, exist_ok=True)
+        with open(os.path.join(k_dir, "weights_manifest.json"), "w") as f:
+            f.write("{invalid_json: true")
+
+        with pytest.raises(RuntimeError) as exc_info:
+            WorkerManager(project_dir=tmp_dir)
+        assert "Không thể đọc hoặc phân tích weights_manifest.json" in str(exc_info.value)
+
+
+def test_manifest_sha256_mismatch_invalidates_capability(worker_manager):
+    """Verify that a corrupted primary file (SHA256 mismatch) causes the capability to be False."""
+    corrupted_manifest = dict(worker_manager.manifest)
+    corrupted_manifest["checkpoints"] = [
+        {
+            **cp,
+            "primary_file": {
+                **cp["primary_file"],
+                "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+            } if "primary_file" in cp else None
+        }
+        for cp in worker_manager.manifest.get("checkpoints", [])
+    ]
+    with patch.object(worker_manager, "manifest", corrupted_manifest):
+        caps = worker_manager.validate_manifest_checkpoints(verify_sha256=True)
+        # All capabilities with primary_file must be False due to checksum mismatch
+        assert caps["router"] is False
+        assert caps["generator"] is False
+
+
+def test_run_kaggle_verify_checkpoint_integrity():
+    """Verify verify_checkpoint_integrity from run_kaggle detects missing files and SHA256 mismatches."""
+    from kaggle.run_kaggle import verify_checkpoint_integrity
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        cp = {
+            "id": "test_cp",
+            "sub_path": "test_model",
+            "required_files": ["config.json", "model.bin"],
+            "primary_file": {
+                "filename": "model.bin",
+                "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"  # sha256 of empty file
+            }
+        }
+        # Case A: Directory does not exist
+        ok, reason = verify_checkpoint_integrity(cp, tmp_dir)
+        assert ok is False
+        assert "không tồn tại" in reason
+
+        # Case B: Missing required file
+        cp_dir = os.path.join(tmp_dir, "test_model")
+        os.makedirs(cp_dir, exist_ok=True)
+        with open(os.path.join(cp_dir, "config.json"), "w") as f:
+            f.write("{}")
+
+        ok, reason = verify_checkpoint_integrity(cp, tmp_dir)
+        assert ok is False
+        assert "Thiếu file bắt buộc: model.bin" in reason
+
+        # Case C: SHA256 mismatch
+        with open(os.path.join(cp_dir, "model.bin"), "wb") as f:
+            f.write(b"corrupted content")
+
+        ok, reason = verify_checkpoint_integrity(cp, tmp_dir, verify_sha256=True)
+        assert ok is False
+        assert "Sai lệch SHA256" in reason
+
+        # Case D: Valid SHA256
+        with open(os.path.join(cp_dir, "model.bin"), "wb") as f:
+            f.write(b"")  # empty matches hash above
+
+        ok, reason = verify_checkpoint_integrity(cp, tmp_dir, verify_sha256=True)
+        assert ok is True
+        assert reason == "Hợp lệ"
 
 
 def test_status_contract_schema(worker_manager):
