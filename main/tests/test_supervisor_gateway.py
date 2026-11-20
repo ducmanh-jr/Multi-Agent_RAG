@@ -170,4 +170,47 @@ def test_gateway_proxy_adapts_payload_for_gpu_max_vllm(client):
         assert "/v1/chat/completions" in args[0]
         payload = kwargs["json"]
         assert payload["model"] == "Qwen/Qwen2.5-32B-Instruct-AWQ"
-        assert payload["messages"][1]["content"] == "Explain attention mechanism"
+        assert "Explain attention mechanism" in payload["messages"][1]["content"]
+
+
+def test_gateway_proxy_preserves_generator_and_critic_and_writer_payloads(client):
+    """Verify that specialized endpoints preserve context, feedback, answer, and claims when routed to 32B."""
+    gw.worker_manager.transition_state = "ready"
+    gw.worker_manager.active_worker = "gpu_max"
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "choices": [{"message": {"content": '{"action": "accept", "critique": "All good", "issues_found": []}'}}]
+    }
+
+    with patch.object(gw._http_client, "post", new_callable=AsyncMock, return_value=mock_resp) as mock_post:
+        # Critic
+        client.post("/api/summarize/critic", json={
+            "query": "Q",
+            "answer": "A",
+            "context": "Context 123",
+            "claims": [{"claim_text": "C1"}]
+        })
+        payload = mock_post.call_args[1]["json"]
+        content = payload["messages"][1]["content"]
+        assert "Context 123" in content
+        assert "C1" in content
+        assert "Generated Answer: A" in content
+
+    # Writer
+    mock_resp.json.return_value = {
+        "choices": [{"message": {"content": "# Academic Report\nText"}}]
+    }
+    with patch.object(gw._http_client, "post", new_callable=AsyncMock, return_value=mock_resp) as mock_post:
+        resp = client.post("/api/writer", json={
+            "query": "Q",
+            "answer": "Summary A",
+            "claims": [{"claim_text": "Claim 1"}]
+        })
+        payload = mock_post.call_args[1]["json"]
+        content = payload["messages"][1]["content"]
+        assert "Summary A" in content
+        assert "Claim 1" in content
+        assert resp.json()["report"] == "# Academic Report\nText"
+

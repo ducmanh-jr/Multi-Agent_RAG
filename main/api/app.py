@@ -454,10 +454,10 @@ async def remote_switch_gpu_mode(req: RemoteSwitchModeRequest):
         async with httpx.AsyncClient(timeout=180.0) as client:
             resp = await client.post(
                 f"{url}/api/admin/switch_mode",
-                json={"target_mode": target},
+                json={"target_mode": target, "wait": True},
                 headers=headers
             )
-            if resp.status_code in (200, 202):
+            if resp.status_code == 200:
                 data = resp.json()
                 settings.EXECUTION_MODE = target
                 update_env_file("EXECUTION_MODE", target)
@@ -465,6 +465,15 @@ async def remote_switch_gpu_mode(req: RemoteSwitchModeRequest):
                     "status": "success",
                     "active_mode": target,
                     "message": data.get("message", f"Đã chuyển đổi thành công sang {target.upper()}"),
+                    "remote_data": data,
+                }
+            elif resp.status_code == 202:
+                data = resp.json()
+                return {
+                    "status": "transitioning",
+                    "active_mode": settings.EXECUTION_MODE,
+                    "target_mode": target,
+                    "message": data.get("message", f"Đang trong quá trình chuyển sang {target.upper()}..."),
                     "remote_data": data,
                 }
             else:

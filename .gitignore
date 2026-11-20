@@ -19,14 +19,12 @@ main/*.db
 # Files strictly exceeding GitHub's 100MB single-file limit (Base Embedding & LayoutLMv3 480MB)
 main/models/multilingual-e5-small/model.safetensors
 
-
-training_lab/
-training_lab/
-
-RESPONSE_PRINCIPLES.md
-start.cmd
-AGENT.md
-.gitignore
+# Runtime temporary artifacts & uploads
 main/uploads/
-main/web/
-README.md
+kaggle/*.pgid
+kaggle/*.pid
+
+# Large training artifacts
+training_lab/
+
+

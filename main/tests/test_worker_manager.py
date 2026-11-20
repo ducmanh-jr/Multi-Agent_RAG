@@ -915,4 +915,85 @@ def test_finetune_unimplemented_capabilities_fail_closed():
         assert "layout_reader" in exc_info.value.detail
 
 
+def test_worker_pgid_persisted_and_unlinked_during_lifecycle(worker_manager):
+    """
+    CRITICAL P0: Verify that worker.pgid is created on spawn and cleanly removed on termination.
+    """
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        with patch.object(worker_manager, "project_dir", tmp_dir):
+            kaggle_dir = os.path.join(tmp_dir, "kaggle")
+            os.makedirs(kaggle_dir, exist_ok=True)
+            pgid_file = os.path.join(kaggle_dir, "worker.pgid")
+
+            # Mock spawn process
+            mock_proc = MagicMock(pid=12345)
+            with patch("subprocess.Popen", return_value=mock_proc):
+                proc = worker_manager._spawn_process(["python", "-c", "pass"], "test.log")
+                assert os.path.exists(pgid_file)
+                with open(pgid_file, "r") as f:
+                    assert f.read().strip() == "12345"
+
+            # Terminate worker -> pgid_file unlinked
+            async def _term():
+                with patch.object(worker_manager, "_verify_vram_reclaimed", new_callable=AsyncMock):
+                    await worker_manager._terminate_current_worker()
+                assert not os.path.exists(pgid_file)
+
+            asyncio.run(_term())
+
+
+def test_cleanup_cluster_reaps_lingering_worker_pgid():
+    """
+    CRITICAL P0: Verify cleanup_cluster in run_kaggle reaps any detached worker process group.
+    """
+    import tempfile
+    from kaggle.run_kaggle import cleanup_cluster
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        kaggle_dir = os.path.join(tmp_dir, "kaggle")
+        os.makedirs(kaggle_dir, exist_ok=True)
+        pgid_file = os.path.join(kaggle_dir, "worker.pgid")
+        with open(pgid_file, "w") as f:
+            f.write("54321")
+
+        mock_server = MagicMock()
+        mock_server.poll.return_value = None
+
+        with patch("kaggle.worker_manager.is_process_group_alive", side_effect=[True, False]), \
+             patch("kaggle.worker_manager.kill_process_group") as mock_kill, \
+             patch("time.sleep"):
+            cleanup_cluster(mock_server, tmp_dir)
+            # Supervisor terminated with up to 25s wait
+            mock_server.terminate.assert_called_once()
+            mock_server.wait.assert_called_with(timeout=25)
+            # Detached worker PGID killed
+            mock_kill.assert_called_with(54321, 15)  # SIGTERM
+            # worker.pgid unlinked
+            assert not os.path.exists(pgid_file)
+
+
+def test_truthful_capabilities_reporting_excludes_unloaded_models(worker_manager):
+    """
+    CRITICAL P1: Verify get_status_payload truthfully marks unloaded capabilities as False.
+    """
+    worker_manager.active_worker = "gpu_finetune"
+    status = worker_manager.get_status_payload()
+    caps = status["active_worker_capabilities"]
+
+    # Mandatory finetune models are True
+    assert caps["router"] is True
+    assert caps["generator"] is True
+    assert caps["critic"] is True
+    assert caps["writer"] is True
+    assert caps["fact_checker_nli"] is True
+
+    # Unloaded models on finetune server MUST be False
+    assert caps["layout_reader"] is False
+    assert caps["embedding"] is False
+    assert caps["reranker"] is False
+    assert caps["vllm_32b_awq"] is False
+
+
+
 

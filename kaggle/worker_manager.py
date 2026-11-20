@@ -483,6 +483,14 @@ class WorkerManager:
         self._pgid = None
         self.active_worker = None
 
+        # Remove worker.pgid file if present
+        pgid_file = Path(self.project_dir) / "kaggle" / "worker.pgid"
+        if pgid_file.exists():
+            try:
+                pgid_file.unlink()
+            except Exception:
+                pass
+
         # Strict Verification 3 & 4: Reclaim VRAM back to baseline & verify sufficient for next worker
         self.transition_state = "reclaiming_vram"
         self.transition_message = "Đang xác minh giải phóng VRAM về baseline..."
@@ -555,6 +563,14 @@ class WorkerManager:
             cwd=str(Path(self.project_dir) / "kaggle"),
         )
         self._pgid = proc.pid
+
+        # Persist PGID to disk so runner can reap if supervisor is killed prematurely
+        try:
+            with open(log_dir / "worker.pgid", "w", encoding="utf-8") as f:
+                f.write(str(proc.pid))
+        except Exception as e:
+            print(f"[WorkerManager WARNING] Ghi worker.pgid thất bại: {e}")
+
         return proc
 
     async def _poll_worker_ready(self, target_worker: str, url: str, timeout_seconds: int = 90) -> bool:
@@ -953,9 +969,24 @@ class WorkerManager:
                 "critic": True,
                 "writer": True,
                 "vllm_32b_awq": True,
+                "fact_checker_nli": False,
+                "layout_reader": False,
+                "embedding": False,
+                "reranker": False,
             })
         elif self.active_worker == "gpu_finetune":
-            capabilities.update(self.validated_capabilities)
+            # Truthful capability reporting: Only capabilities actually loaded in kaggle_finetune_server
+            capabilities.update({
+                "router": self.validated_capabilities.get("router", False),
+                "generator": self.validated_capabilities.get("generator", False),
+                "critic": self.validated_capabilities.get("critic", False),
+                "writer": self.validated_capabilities.get("writer", False),
+                "fact_checker_nli": self.validated_capabilities.get("fact_checker_nli", False),
+                "layout_reader": False,
+                "embedding": False,
+                "reranker": False,
+                "vllm_32b_awq": False,
+            })
 
         return {
             "runtime_status": "running" if self.transition_state != "error" else "degraded",

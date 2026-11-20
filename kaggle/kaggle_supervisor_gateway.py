@@ -100,7 +100,7 @@ async def startup_event():
 async def shutdown_event():
     print("[Supervisor] Gateway đang tắt, dọn dẹp GPU worker hiện tại...")
     try:
-        await worker_manager._terminate_current_worker()
+        await asyncio.wait_for(worker_manager._terminate_current_worker(), timeout=25.0)
     except Exception as e:
         print(f"[Supervisor] Lỗi khi dọn dẹp worker lúc tắt: {e}")
     try:
@@ -250,13 +250,65 @@ async def proxy_all(request: Request, path: str):
             # Adapt generation/summarization/routing payloads for vLLM when active worker is gpu_max
             if worker_manager.active_worker == "gpu_max":
                 if path in (
-                    "generate", "api/generate", "api/router",
-                    "api/summarize/generator", "api/summarize/critic", "api/writer"
+                    "generate", "api/generate", "api/router", "router",
+                    "api/summarize/generator", "summarize/generator",
+                    "api/summarize/critic", "summarize/critic",
+                    "api/writer", "writer"
                 ):
                     try:
+                        import json as py_json
+                        import re
                         body_json = await request.json() if body else {}
-                        prompt = body_json.get("prompt") or body_json.get("query") or ""
-                        sys_inst = body_json.get("system_instruction") or "Bạn là Đại Mô Hình Nghiên Cứu Khoa Học 32B."
+
+                        # Tailored prompts preserving 100% of input data:
+                        if path in ("api/router", "router"):
+                            q = body_json.get("query", "") or body_json.get("prompt", "")
+                            sys_inst = "You are an intelligent routing agent for an Academic RAG system. Output ONLY valid JSON."
+                            prompt = (
+                                "Analyze the user query and output a JSON object with: intent, sub_queries, alpha (0.0 to 1.0), top_k (1 to 15), and reasoning.\n\n"
+                                f"Query: {q}\nOutput JSON:"
+                            )
+                        elif path in ("api/summarize/generator", "summarize/generator"):
+                            q = body_json.get("query", "")
+                            ctx = body_json.get("context", "")
+                            fb = body_json.get("feedback", "")
+                            sys_inst = "You are a rigorous scientific synthesis agent. Output valid JSON with 'answer', 'claims', and 'evidence_spans'."
+                            prompt = (
+                                f"Question: {q}\n\nContext:\n{ctx}\n\n"
+                            )
+                            if fb:
+                                prompt += f"[Critic Feedback]: {fb}\n\n"
+                            prompt += "Output format JSON with 'answer', 'claims' (list of atomic statements), and 'evidence_spans'."
+                        elif path in ("api/summarize/critic", "summarize/critic"):
+                            q = body_json.get("query", "")
+                            ans = body_json.get("answer", "")
+                            ctx = body_json.get("context", "")
+                            claims = body_json.get("claims", [])
+                            sys_inst = "You are an adversarial scientific peer reviewer. Output valid JSON with 'action' ('accept' or 'rewrite'), 'critique', and 'issues_found'."
+                            prompt = (
+                                f"Query: {q}\n"
+                                f"Generated Answer: {ans}\n"
+                                f"Source Context: {ctx}\n"
+                                f"Extracted Claims: {py_json.dumps(claims, ensure_ascii=False)}\n\n"
+                                "Evaluate whether each claim is fully supported by the source context. "
+                                "Output JSON with 'action' ('accept' or 'rewrite'), 'critique', and 'issues_found'."
+                            )
+                        elif path in ("api/writer", "writer"):
+                            q = body_json.get("query", "")
+                            ans = body_json.get("answer", "")
+                            claims = body_json.get("claims", [])
+                            v_text = "\n".join([f"- {c.get('claim_text', str(c)) if isinstance(c, dict) else str(c)}" for c in claims])
+                            sys_inst = "You are an elite scientific academic paper author. Generate a comprehensive, publication-grade academic report formatted in Markdown."
+                            prompt = (
+                                f"Research Question: {q}\n\n"
+                                f"Executive Summary:\n{ans}\n\n"
+                                f"Verified Scientific Evidence:\n{v_text}\n\n"
+                                "Write a structured, formal academic paper formatted in Markdown."
+                            )
+                        else:
+                            prompt = body_json.get("prompt") or body_json.get("query") or ""
+                            sys_inst = body_json.get("system_instruction") or "Bạn là Đại Mô Hình Nghiên Cứu Khoa Học 32B."
+
                         vllm_payload = {
                             "model": "Qwen/Qwen2.5-32B-Instruct-AWQ",
                             "messages": [
@@ -273,6 +325,27 @@ async def proxy_all(request: Request, path: str):
                         )
                         data = resp.json()
                         text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+
+                        # For JSON endpoints, parse text into structured dict if valid
+                        if path in ("api/router", "router", "api/summarize/generator", "summarize/generator", "api/summarize/critic", "summarize/critic"):
+                            try:
+                                m = re.search(r"\{.*\}", text, re.DOTALL)
+                                if m:
+                                    parsed = py_json.loads(m.group(0))
+                                    if isinstance(parsed, dict):
+                                        parsed.setdefault("model", "Qwen2.5-32B-Instruct-AWQ")
+                                        parsed.setdefault("text", text)
+                                        parsed.setdefault("output", text)
+                                    return JSONResponse(content=parsed, status_code=resp.status_code)
+                            except Exception:
+                                pass
+
+                        if path in ("api/writer", "writer"):
+                            return JSONResponse(
+                                content={"report": text, "metadata": {"model": "Qwen2.5-32B-Instruct-AWQ"}},
+                                status_code=resp.status_code
+                            )
+
                         return JSONResponse(
                             content={"text": text, "output": text, "response": text, "model": "Qwen2.5-32B-Instruct-AWQ"},
                             status_code=resp.status_code

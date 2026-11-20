@@ -22,6 +22,57 @@ def format_bytes(size):
     return f"{size:.2f} PB"
 
 
+def cleanup_cluster(server_process, repo_dir):
+    """
+    Guaranteed cluster cleanup (P0 fix):
+    1. Gives supervisor process up to 25s to run graceful shutdown (which reaps worker & reclaims VRAM).
+    2. If supervisor times out, escalates to SIGKILL.
+    3. Reads kaggle/worker.pgid to ensure any detached worker process group is explicitly killed.
+    4. Performs safety sweep for lingering processes on Linux.
+    """
+    print("\n    🛑 Đang dọn dẹp cụm tiến trình Supervisor & GPU Workers...")
+    if server_process and server_process.poll() is None:
+        server_process.terminate()
+        try:
+            server_process.wait(timeout=25)
+        except subprocess.TimeoutExpired:
+            print("    ⚠️ Supervisor không dừng trong 25s, cưỡng chế kill tiến trình Supervisor...")
+            server_process.kill()
+            try:
+                server_process.wait(timeout=5)
+            except Exception:
+                pass
+
+    # Ensure worker process group is definitely not orphaned
+    pgid_file = os.path.join(repo_dir, "kaggle", "worker.pgid")
+    if os.path.exists(pgid_file):
+        try:
+            with open(pgid_file, "r") as f:
+                raw_pid = f.read().strip()
+            if raw_pid.isdigit():
+                worker_pgid = int(raw_pid)
+                from kaggle.worker_manager import is_process_group_alive, kill_process_group, SIGKILL, SIGTERM
+                if is_process_group_alive(worker_pgid):
+                    print(f"    ⚠️ Phát hiện Worker Process Group {worker_pgid} còn sống! Cưỡng chế giải phóng...")
+                    kill_process_group(worker_pgid, SIGTERM)
+                    time.sleep(2)
+                    if is_process_group_alive(worker_pgid):
+                        kill_process_group(worker_pgid, SIGKILL)
+            os.remove(pgid_file)
+        except Exception as e:
+            print(f"    ⚠️ Cảnh báo dọn dẹp worker.pgid: {e}")
+
+    # Safety sweep on Linux
+    try:
+        import platform
+        if platform.system() != "Windows":
+            subprocess.run(["pkill", "-9", "-f", "vllm"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(["pkill", "-9", "-f", "kaggle_finetune_server"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+    print("    ✔ Hoàn tất dọn dẹp cụm tiến trình.")
+
+
 def verify_checkpoint_integrity(cp, base_dir, verify_sha256=True):
     sub_path = cp.get("sub_path", "")
     cp_path = os.path.join(base_dir, sub_path)
@@ -228,6 +279,13 @@ def run():
     os.environ["INITIAL_MODE"] = "gpu_finetune"
     os.environ["PROJECT_DIR"] = repo_dir
 
+    # Automatically generate / configure secure admin token
+    admin_token = os.environ.get("SUPERVISOR_ADMIN_TOKEN")
+    if not admin_token:
+        import secrets
+        admin_token = secrets.token_hex(16)
+        os.environ["SUPERVISOR_ADMIN_TOKEN"] = admin_token
+
     print("    ⚙️  Đang khởi động Master Gateway trên cổng 8000...")
     supervisor_log = open(os.path.join(repo_dir, "kaggle", "supervisor.log"), "w", encoding="utf-8", errors="ignore")
     server_process = subprocess.Popen([
@@ -237,6 +295,18 @@ def run():
         "--port", "8000",
         "--app-dir", os.path.join(repo_dir, "kaggle"),
     ], stdout=supervisor_log, stderr=subprocess.STDOUT)
+
+    # Register signal handlers for clean interrupt
+    def sig_handler(sig, frame):
+        print(f"\n    🛑 Nhận tín hiệu ngắt ({sig}), bắt đầu dọn dẹp cụm...")
+        cleanup_cluster(server_process, repo_dir)
+        sys.exit(0)
+
+    try:
+        signal.signal(signal.SIGINT, sig_handler)
+        signal.signal(signal.SIGTERM, sig_handler)
+    except Exception:
+        pass
 
     # Animated progress bar waiting for worker warmup (Wait until Worker A finishes loading weights)
     total_seconds = 75
@@ -269,14 +339,8 @@ def run():
                     for line in lf.readlines()[-20:]:
                         print("      " + line.strip())
 
-        # Cleanup supervisor process to avoid lingering zombies
-        if server_process and server_process.poll() is None:
-            print("\n    🛑 Đang chấm dứt tiến trình Supervisor Gateway...")
-            server_process.terminate()
-            try:
-                server_process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                server_process.kill()
+        # Guaranteed cluster cleanup with up to 25s timeout & PGID reaping
+        cleanup_cluster(server_process, repo_dir)
 
         print("\n    🛑 DỪNG TOÀN BỘ HỆ THỐNG: Khởi chạy thất bại. Tuyệt đối không mở Cloudflare Tunnel.")
         sys.exit(1)
@@ -321,25 +385,26 @@ def run():
     # 6. Beautiful Link Output Banner
     # -------------------------------------------------------------------------
     print("\n" + "╔" + "═" * 76 + "╗")
-    print("║  🚀 ĐƯỜNG DẪN KẾT NỐI CHO MULTI-AGENT RAG (HÃY SAO CHÉP DÒNG DƯỚI)       ║")
+    print("║  🚀 THÔNG TIN KẾT NỐI CHO MULTI-AGENT RAG (HÃY SAO CHÉP CÁC DÒNG DƯỚI)   ║")
     print("╠" + "═" * 76 + "╣")
     print(f"║                                                                            ║")
     print(f"║    REMOTE_INFERENCE_URL={tunnel_url.ljust(51)}║")
+    print(f"║    SUPERVISOR_ADMIN_TOKEN={admin_token.ljust(49)}║")
     print(f"║                                                                            ║")
     print("╚" + "═" * 76 + "╝")
     print("\n📌 HƯỚNG DẪN TIẾP THEO:")
     print(f"  1. Sao chép dòng: REMOTE_INFERENCE_URL={tunnel_url}")
-    print(f"  2. Dán vào file .env trên máy của bạn (hoặc dán trực tiếp trên Web Demo2).")
-    print(f"  3. Cụm 7 Mô Hình SOTA đang trực tuyến và chạy trên Dual T4.")
-    print(f"  4. Muốn đổi sang Đại Mô Hình 32B AWQ: Chỉ cần 1-click trên Web Demo2!")
+    print(f"  2. Sao chép dòng: SUPERVISOR_ADMIN_TOKEN={admin_token}")
+    print(f"  3. Dán vào file .env trên máy của bạn (hoặc dán trực tiếp trên Web Demo2).")
+    print(f"  4. Cụm 7 Mô Hình SOTA đang trực tuyến và chạy trên Dual T4.")
+    print(f"  5. Muốn đổi sang Đại Mô Hình 32B AWQ: Chỉ cần 1-click trên Web Demo2!")
     print("─" * 78)
     print("🟢 Máy chủ đang giữ kết nối... Vui lòng để ô code này tiếp tục chạy.\n")
 
     try:
         server_process.wait()
     except KeyboardInterrupt:
-        print("\n🛑 Đang dừng máy chủ...")
-        server_process.terminate()
+        cleanup_cluster(server_process, repo_dir)
 
 if __name__ == "__main__":
     run()
