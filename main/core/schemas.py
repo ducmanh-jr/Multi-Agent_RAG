@@ -2,7 +2,7 @@
 Unified Schemas & Contracts (Single Source of Truth) across:
   - training_lab/agent1_retrieval/schemas.py
   - training_lab/agent3_summarizer/Code/prompts_generator.py & prompts_critic.py
-  - All 6 Execution Modes: cpu_min, cpu_max, gemini, kaggle_fn, kaggle_max, hybrid
+  - All 6 Official Execution Modes: cpu_min, cpu_max, gpu_finetune, gpu_max, hybrid, gemini
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Literal, Optional
 
 
+# Legacy RAG sub-intents (preserved for backward compatibility)
 IntentType = Literal[
     "summarize",
     "compare",
@@ -24,11 +25,114 @@ IntentType = Literal[
     "numeric_fact",
 ]
 
+# General-Purpose AI Assistant Primary Intents (AGENT.md Section 7)
+PrimaryIntentType = Literal[
+    "DOCUMENT_QA",
+    "GENERAL_QA",
+    "WEB_RESEARCH",
+    "MIXED_QA",
+    "TASK_ASSISTED_RESPONSE",
+    "TASK_EXECUTION",
+    "CLARIFICATION_REQUIRED",
+    "SAFETY_RESTRICTED",
+    "UNSUPPORTED_CAPABILITY",
+]
+
+# 4 Independent State Groups (AGENT.md Section 9)
+InputStatus = Literal[
+    "OK",
+    "NO_DOCUMENT_SELECTED",
+]
+
+QueryResolutionStatus = Literal[
+    "CLEAR",
+    "AMBIGUOUS",
+    "CLARIFICATION_REQUIRED",
+]
+
+ProcessingStatus = Literal[
+    "PENDING",
+    "RUNNING",
+    "SUCCESS",
+    "RETRIEVAL_FAILED",
+    "EXTRACTION_FAILED",
+    "PARSING_FAILED",
+    "VERIFICATION_FAILED",
+    "LLM_FAILED",
+    "TOOL_FAILED",
+    "TIMEOUT",
+    "CANCELLED",
+]
+
+EvidenceStatus = Literal[
+    "NOT_APPLICABLE",
+    "FOUND",
+    "PARTIAL",
+    "NOT_FOUND",
+    "CONFLICTING_EVIDENCE",
+]
+
+VALID_PRIMARY_INTENTS: frozenset[str] = frozenset(
+    {
+        "DOCUMENT_QA",
+        "GENERAL_QA",
+        "WEB_RESEARCH",
+        "MIXED_QA",
+        "TASK_ASSISTED_RESPONSE",
+        "TASK_EXECUTION",
+        "CLARIFICATION_REQUIRED",
+        "SAFETY_RESTRICTED",
+        "UNSUPPORTED_CAPABILITY",
+    }
+)
+VALID_INPUT_STATUSES: frozenset[str] = frozenset({"OK", "NO_DOCUMENT_SELECTED"})
+VALID_QUERY_RESOLUTION_STATUSES: frozenset[str] = frozenset(
+    {"CLEAR", "AMBIGUOUS", "CLARIFICATION_REQUIRED"}
+)
+VALID_PROCESSING_STATUSES: frozenset[str] = frozenset(
+    {
+        "PENDING",
+        "RUNNING",
+        "SUCCESS",
+        "RETRIEVAL_FAILED",
+        "EXTRACTION_FAILED",
+        "PARSING_FAILED",
+        "VERIFICATION_FAILED",
+        "LLM_FAILED",
+        "TOOL_FAILED",
+        "TIMEOUT",
+        "CANCELLED",
+    }
+)
+VALID_EVIDENCE_STATUSES: frozenset[str] = frozenset(
+    {
+        "NOT_APPLICABLE",
+        "FOUND",
+        "PARTIAL",
+        "NOT_FOUND",
+        "CONFLICTING_EVIDENCE",
+    }
+)
+
+
+def map_evidence_to_legacy_fact_check_label(
+    evidence_status: str,
+) -> Literal["support", "contradict", "not_enough_info"]:
+    """Projects the new EvidenceStatus onto legacy fact_check_label for API/Frontend compatibility."""
+    norm = (evidence_status or "").strip().upper()
+    if norm in ("FOUND", "NOT_APPLICABLE"):
+        return "support"
+    if norm == "CONFLICTING_EVIDENCE":
+        return "contradict"
+    return "not_enough_info"
+
+
 CriticActionType = Literal[
     "approve",
     "rewrite",
     "request_more_context",
     "lower_confidence",
+    "verification_failed",
 ]
 
 ComplexityLevel = Literal["LOW", "MEDIUM", "HIGH"]
@@ -63,6 +167,35 @@ def canonical_adapter_name(name: Optional[str]) -> str:
 
 
 @dataclass
+class ContextCoverage:
+    """Tracks how much of the retrieved/parsed context fit within the LLM token budget."""
+    total_units: int = 0
+    included_units: int = 0
+    omitted_units: int = 0
+    truncated: bool = False
+    omitted_unit_ids: list[str] = field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ContextCoverage":
+        if not isinstance(data, dict):
+            return cls()
+        total = max(0, int(data.get("total_units", 0)))
+        included = max(0, int(data.get("included_units", 0)))
+        omitted = max(0, int(data.get("omitted_units", max(0, total - included))))
+        omitted_ids = [str(x) for x in (data.get("omitted_unit_ids") or []) if str(x).strip()]
+        return cls(
+            total_units=total,
+            included_units=included,
+            omitted_units=omitted,
+            truncated=bool(data.get("truncated", omitted > 0)),
+            omitted_unit_ids=omitted_ids,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
 class RouterPlanOutput:
     """Output contract of Agent 0 / Agent 1 Router & Supervisor Planner (matches training_lab/agent1_retrieval/schemas.py)."""
     intent: str = "academic_research"
@@ -76,6 +209,13 @@ class RouterPlanOutput:
     reasoning: str = ""
     recommended_generator: str = "auto"
     recommended_verifier: str = "auto"
+    # General-Purpose AI Assistant routing fields (AGENT.md Sections 7-9)
+    primary_intent: PrimaryIntentType = "DOCUMENT_QA"
+    sub_intent: str = ""
+    query_resolution: QueryResolutionStatus = "CLEAR"
+    input_status: InputStatus = "OK"
+    needs_scout: bool = False
+    needs_retrieval: bool = True
 
     @classmethod
     def from_dict(cls, data: dict[str, Any], default_query: str = "") -> "RouterPlanOutput":
@@ -102,6 +242,18 @@ class RouterPlanOutput:
         if complexity not in ("LOW", "MEDIUM", "HIGH"):
             complexity = "MEDIUM"
 
+        raw_primary = str(data.get("primary_intent", "DOCUMENT_QA")).upper().strip()
+        if raw_primary not in VALID_PRIMARY_INTENTS:
+            raw_primary = "DOCUMENT_QA"
+
+        raw_qres = str(data.get("query_resolution", "CLEAR")).upper().strip()
+        if raw_qres not in VALID_QUERY_RESOLUTION_STATUSES:
+            raw_qres = "CLEAR"
+
+        raw_input = str(data.get("input_status", "OK")).upper().strip()
+        if raw_input not in VALID_INPUT_STATUSES:
+            raw_input = "OK"
+
         return cls(
             intent=str(data.get("intent", "academic_research")),
             complexity=complexity,  # type: ignore[arg-type]
@@ -114,6 +266,12 @@ class RouterPlanOutput:
             reasoning=str(data.get("reasoning", "")),
             recommended_generator=str(data.get("recommended_generator", "auto")),
             recommended_verifier=str(data.get("recommended_verifier", "auto")),
+            primary_intent=raw_primary,  # type: ignore[arg-type]
+            sub_intent=str(data.get("sub_intent", "")),
+            query_resolution=raw_qres,  # type: ignore[arg-type]
+            input_status=raw_input,  # type: ignore[arg-type]
+            needs_scout=bool(data.get("needs_scout", False)),
+            needs_retrieval=bool(data.get("needs_retrieval", True)),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -198,7 +356,7 @@ class SummarizerCriticOutput:
             missing = [str(missing)]
 
         raw_action = str(data.get("action") or ("approve" if is_sup else "rewrite")).lower().strip()
-        if raw_action not in ("approve", "rewrite", "request_more_context", "lower_confidence"):
+        if raw_action not in ("approve", "rewrite", "request_more_context", "lower_confidence", "verification_failed"):
             raw_action = "approve" if is_sup else "rewrite"
 
         try:
