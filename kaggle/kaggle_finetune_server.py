@@ -291,12 +291,25 @@ def healthcheck():
                 "vram_used_gb": round(torch.cuda.memory_allocated(i) / (1024 ** 3), 2),
                 "vram_total_gb": round(torch.cuda.get_device_properties(i).total_memory / (1024 ** 3), 2),
             }
+
+    mandatory_adapters = ["router", "generator", "critic", "writer"]
+    missing_adapters = [ad for ad in mandatory_adapters if ad not in _loaded_adapters]
+    mandatory_models = ["qwen_cluster", "factcheck"]
+    missing_models = [m for m in mandatory_models if m not in _models]
+
+    is_ready = (len(missing_adapters) == 0 and len(missing_models) == 0)
+
     return {
-        "status": "online",
+        "status": "online" if is_ready else "degraded",
+        "ready": is_ready,
+        "worker_status": "online" if is_ready else "degraded",
+        "mandatory_ready": is_ready,
         "pipeline": "gpu_finetune_7_models",
         "gpus_available": torch.cuda.device_count() if torch.cuda.is_available() else 0,
         "loaded_adapters": _loaded_adapters,
+        "missing_adapters": missing_adapters,
         "active_models": list(_models.keys()),
+        "missing_models": missing_models,
         "gpus": gpu_info,
     }
 
