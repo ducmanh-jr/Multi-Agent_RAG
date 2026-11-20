@@ -966,7 +966,8 @@ def test_cleanup_cluster_reaps_lingering_worker_pgid():
         with patch("kaggle.worker_manager.is_process_group_alive", side_effect=[True, True, False]), \
              patch("kaggle.worker_manager.kill_process_group") as mock_kill, \
              patch("time.sleep"):
-            cleanup_cluster(mock_server, tmp_dir)
+            res = cleanup_cluster(mock_server, tmp_dir)
+            assert res is True
             # Supervisor terminated with up to 40s wait
             mock_server.terminate.assert_called_once()
             mock_server.wait.assert_called_with(timeout=40)
@@ -980,7 +981,8 @@ def test_cleanup_cluster_reaps_lingering_worker_pgid():
 
 def test_cleanup_cluster_retains_pgid_file_if_worker_remains_alive_after_sigkill():
     """
-    CRITICAL P0: If process group remains alive after SIGKILL, worker.pgid MUST be retained.
+    CRITICAL P0: If process group remains alive after SIGKILL, worker.pgid MUST be retained
+    and cleanup_cluster MUST report failure (False).
     """
     import tempfile
     from kaggle.run_kaggle import cleanup_cluster
@@ -999,7 +1001,8 @@ def test_cleanup_cluster_retains_pgid_file_if_worker_remains_alive_after_sigkill
         with patch("kaggle.worker_manager.is_process_group_alive", return_value=True), \
              patch("kaggle.worker_manager.kill_process_group") as mock_kill, \
              patch("time.sleep"):
-            cleanup_cluster(mock_server, tmp_dir)
+            res = cleanup_cluster(mock_server, tmp_dir)
+            assert res is False
             # Both SIGTERM and SIGKILL attempted
             assert mock_kill.call_count >= 2
             # worker.pgid MUST STILL EXIST because process did not die!

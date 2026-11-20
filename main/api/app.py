@@ -451,7 +451,7 @@ async def remote_switch_gpu_mode(req: RemoteSwitchModeRequest):
         if admin_token:
             headers["Authorization"] = f"Bearer {admin_token}"
 
-        async with httpx.AsyncClient(timeout=360.0) as client:
+        async with httpx.AsyncClient(timeout=450.0) as client:
             resp = await client.post(
                 f"{url}/api/admin/switch_mode",
                 json={"target_mode": target, "wait": True},

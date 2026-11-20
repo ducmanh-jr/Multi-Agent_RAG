@@ -33,6 +33,10 @@ def cleanup_cluster(server_process, repo_dir):
     5. Zero blind/global pkill commands.
     """
     print("\n    🛑 Đang dọn dẹp cụm tiến trình Supervisor & GPU Workers...")
+    all_clean = True
+    if repo_dir and repo_dir not in sys.path:
+        sys.path.insert(0, repo_dir)
+
     if server_process and server_process.poll() is None:
         server_process.terminate()
         try:
@@ -44,6 +48,8 @@ def cleanup_cluster(server_process, repo_dir):
                 server_process.wait(timeout=5)
             except Exception:
                 pass
+            if server_process.poll() is None:
+                all_clean = False
 
     # Ensure worker process group is definitely not orphaned
     pgid_file = os.path.join(repo_dir, "kaggle", "worker.pgid")
@@ -77,6 +83,7 @@ def cleanup_cluster(server_process, repo_dir):
                     except Exception as e:
                         print(f"    ⚠️ Lỗi khi xóa worker.pgid: {e}")
                 else:
+                    all_clean = False
                     print(f"    🛑 LỖI P0: Worker Process Group {worker_pgid} VẪN CÒN SỐNG sau SIGKILL! Giữ lại {pgid_file} để cách ly và điều tra.")
             else:
                 try:
@@ -84,9 +91,14 @@ def cleanup_cluster(server_process, repo_dir):
                 except Exception:
                     pass
         except Exception as e:
+            all_clean = False
             print(f"    ⚠️ Cảnh báo dọn dẹp worker.pgid: {e}")
 
-    print("    ✔ Hoàn tất dọn dẹp cụm tiến trình.")
+    if all_clean:
+        print("    ✔ Hoàn tất dọn dẹp cụm tiến trình thành công.")
+    else:
+        print("    ❌ Dọn dẹp cụm tiến trình KHÔNG HOÀN TẤT: Còn tiến trình hoặc lỗi chưa được giải phóng triệt để.")
+    return all_clean
 
 
 def verify_checkpoint_integrity(cp, base_dir, verify_sha256=True):
@@ -209,6 +221,8 @@ def run():
     import gdown
 
     repo_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    if repo_dir not in sys.path:
+        sys.path.insert(0, repo_dir)
     weights_dir = os.path.join(repo_dir, "training_lab", "final_weights")
     os.makedirs(weights_dir, exist_ok=True)
 
