@@ -111,7 +111,28 @@ def run():
                 )
             pbar.update(1)
 
-    print("    ✔ Toàn bộ thư viện cần thiết đã sẵn sàng!")
+    # Post-installation verification: fail fast if mandatory packages failed to install
+    failed_pkgs = []
+    has_dual_gpu = False
+    try:
+        import torch
+        has_dual_gpu = torch.cuda.is_available() and torch.cuda.device_count() >= 2
+    except Exception:
+        pass
+
+    for pkg, mod in pkg_map.items():
+        if pkg == "vllm" and not has_dual_gpu:
+            # vllm is only strictly required when Dual-GPU is present for GPU Max
+            continue
+        if importlib.util.find_spec(mod) is None:
+            failed_pkgs.append(pkg)
+
+    if failed_pkgs:
+        print(f"\n    ❌ LỖI NGHIÊM TRỌNG: Cài đặt thư viện thất bại cho: {', '.join(failed_pkgs)}")
+        print("    Vui lòng kiểm tra lại kết nối mạng hoặc môi trường Python của Kaggle.")
+        sys.exit(1)
+
+    print("    ✔ Toàn bộ thư viện cần thiết đã sẵn sàng và được xác thực hoàn tất!")
 
     # -------------------------------------------------------------------------
     # 3. Synchronize Checkpoints via Authoritative Manifest from Google Drive
@@ -239,13 +260,26 @@ def run():
                 pass
 
     if not is_ready:
+        print("\n    ❌ LỖI NGHIÊM TRỌNG: Hết thời gian chờ (75s) nhưng GPU Worker chưa đạt trạng thái sẵn sàng (ready)!")
         for log_name in ["supervisor.log", "worker_finetune.log"]:
             lf_path = os.path.join(repo_dir, "kaggle", log_name)
             if os.path.exists(lf_path):
-                print(f"\n    ⚠️ Nhật ký {log_name}:")
+                print(f"\n    ⚠️ Nhật ký {log_name} (20 dòng gần nhất):")
                 with open(lf_path, "r", encoding="utf-8", errors="ignore") as lf:
-                    for line in lf.readlines()[-10:]:
+                    for line in lf.readlines()[-20:]:
                         print("      " + line.strip())
+
+        # Cleanup supervisor process to avoid lingering zombies
+        if server_process and server_process.poll() is None:
+            print("\n    🛑 Đang chấm dứt tiến trình Supervisor Gateway...")
+            server_process.terminate()
+            try:
+                server_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                server_process.kill()
+
+        print("\n    🛑 DỪNG TOÀN BỘ HỆ THỐNG: Khởi chạy thất bại. Tuyệt đối không mở Cloudflare Tunnel.")
+        sys.exit(1)
 
     # Print Detailed Per-GPU VRAM Allocation Dashboard
     print("\n" + "─" * 78)

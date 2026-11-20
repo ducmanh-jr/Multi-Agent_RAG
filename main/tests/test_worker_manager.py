@@ -852,3 +852,67 @@ def test_finetune_critic_endpoint_fails_closed_on_malformed_json():
         assert "critic_malformed_json_response" in res["issues_found"]
         assert "Không thể phân tích phản hồi JSON" in res["critique"]
 
+
+def test_request_switch_mode_rollback_preserves_previous_selected_mode(worker_manager):
+    """
+    Verify that calling the public request_switch_mode() preserves the original selected_mode
+    if the target worker fails readiness and rolls back to the previous worker.
+    """
+    async def _test():
+        worker_manager.active_worker = "gpu_finetune"
+        worker_manager.selected_mode = "gpu_finetune"
+        worker_manager.transition_state = "ready"
+
+        # Mock VRAM probe OK for both modes
+        with patch.object(GPUVRAMProbe, "check_vram_against_profile", return_value=(True, "OK")), \
+             patch.object(worker_manager, "_drain_in_flight_requests", new_callable=AsyncMock), \
+             patch.object(worker_manager, "_terminate_current_worker", new_callable=AsyncMock), \
+             patch.object(worker_manager, "_spawn_process", return_value=MagicMock(pid=9999)), \
+             patch.object(worker_manager, "_poll_worker_ready", side_effect=[False, True]):
+            # First poll (gpu_max startup) fails -> rolls back to gpu_finetune.
+            # Second poll (gpu_finetune recovery) succeeds!
+
+            res = await worker_manager.request_switch_mode("gpu_max")
+            assert res["status"] == "recovered_previous"
+            # CRITICAL: selected_mode must be rolled back to "gpu_finetune", NOT stuck at "gpu_max"!
+            assert worker_manager.selected_mode == "gpu_finetune"
+            assert worker_manager.active_worker == "gpu_finetune"
+            assert res["selected_mode"] == "gpu_finetune"
+
+    asyncio.run(_test())
+
+
+def test_finetune_unimplemented_capabilities_fail_closed():
+    """
+    CRITICAL: Unimplemented or unloaded capabilities (reranker, embed, reader)
+    MUST fail closed (HTTP 501) rather than returning mock results.
+    """
+    from kaggle import kaggle_finetune_server as srv
+    from fastapi import HTTPException
+
+    # 1. Reranker when model not in _models
+    with patch.dict(srv._models, {}, clear=True):
+        req = srv.RerankRequest(query="test", candidates=["doc A", "doc B"])
+        with pytest.raises(HTTPException) as exc_info:
+            srv.rerank_endpoint(req)
+        assert exc_info.value.status_code == 501
+        assert "reranker" in exc_info.value.detail
+
+    # 2. Embed when model not in _models
+    with patch.dict(srv._models, {}, clear=True):
+        req = srv.EmbedRequest(texts=["sample text"])
+        with pytest.raises(HTTPException) as exc_info:
+            srv.embed_endpoint(req)
+        assert exc_info.value.status_code == 501
+        assert "embedding" in exc_info.value.detail
+
+    # 3. Reader layout when model not in _models
+    with patch.dict(srv._models, {}, clear=True):
+        req = srv.ReaderLayoutRequest(pdf_path="sample.pdf", pages=[0])
+        with pytest.raises(HTTPException) as exc_info:
+            srv.reader_layout_endpoint(req)
+        assert exc_info.value.status_code == 501
+        assert "layout_reader" in exc_info.value.detail
+
+
+

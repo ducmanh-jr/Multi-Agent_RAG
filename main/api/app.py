@@ -441,14 +441,23 @@ async def remote_switch_gpu_mode(req: RemoteSwitchModeRequest):
         raise HTTPException(status_code=400, detail="Chưa cấu hình REMOTE_INFERENCE_URL (Kaggle Cloudflare Tunnel).")
 
     target = req.target_mode.lower().strip()
-    if target not in ["gpu_finetune", "gpu_max"]:
-        raise HTTPException(status_code=400, detail="Chỉ hỗ trợ chuyển đổi giữa 'gpu_finetune' và 'gpu_max'")
+    if target not in ["gpu_finetune", "gpu_max", "hybrid"]:
+        raise HTTPException(status_code=400, detail="Chỉ hỗ trợ chuyển đổi giữa 'gpu_finetune', 'gpu_max' và 'hybrid'")
 
     try:
         import httpx
+        headers = {}
+        admin_token = getattr(settings, "SUPERVISOR_ADMIN_TOKEN", None) or os.environ.get("SUPERVISOR_ADMIN_TOKEN")
+        if admin_token:
+            headers["Authorization"] = f"Bearer {admin_token}"
+
         async with httpx.AsyncClient(timeout=180.0) as client:
-            resp = await client.post(f"{url}/api/admin/switch_mode", json={"target_mode": target})
-            if resp.status_code == 200:
+            resp = await client.post(
+                f"{url}/api/admin/switch_mode",
+                json={"target_mode": target},
+                headers=headers
+            )
+            if resp.status_code in (200, 202):
                 data = resp.json()
                 settings.EXECUTION_MODE = target
                 update_env_file("EXECUTION_MODE", target)
@@ -2032,39 +2041,8 @@ async def create_run(req: CreateRunRequest):
         if doc and doc.get("path") and os.path.exists(doc.get("path")):
             pdf_paths.append(doc.get("path"))
 
-    if target_doc_ids and pdf_paths:
-        doc_id = target_doc_ids[0]
-        pdf_path = pdf_paths[0]
-    else:
-        # Nếu người dùng không chọn tài liệu và không có doc_id -> Thông báo rõ ràng
-        no_doc_report = (
-            "# Thông báo Hệ thống\n\n"
-            "> **Trạng thái:** `WAITING_FOR_DOCUMENT`\n\n"
-            "Vui lòng **chọn một tài liệu** trong kho hoặc bật **Auto-Scout** để bắt đầu nghiên cứu."
-        )
-        db.save_run(
-            run_id=run_id,
-            question=prompt,
-            status="completed",
-            document_id=None,
-            session_id=req.session_id,
-        )
-        db.update_run_result(
-            run_id=run_id,
-            status="completed",
-            final_report=no_doc_report,
-            verified_claims=[],
-            rejected_claims=[],
-            evidence_spans=[],
-            reasoning_trace=[{"action": "waiting_for_document", "message": "Vui lòng chọn tài liệu hoặc bật Auto-Scout."}],
-        )
-        return {
-            "id": run_id,
-            "status": "completed",
-            "question": prompt,
-            "document_id": None,
-            "final_report": no_doc_report,
-        }
+    doc_id = target_doc_ids[0] if (target_doc_ids and pdf_paths) else None
+    pdf_path = pdf_paths[0] if (target_doc_ids and pdf_paths) else None
 
     run_record = db.save_run(
         run_id=run_id,

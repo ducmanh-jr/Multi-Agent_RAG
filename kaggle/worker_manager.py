@@ -637,6 +637,7 @@ class WorkerManager:
         """
         External Entrypoint for Mode Switching:
         - Acquires transition lock to serialize switches (zero race conditions).
+        - Accurately captures previous_mode and previous_worker before state changes.
         - Returns transition ID and status semantics.
         """
         clean_target = target_mode.lower().strip()
@@ -654,11 +655,23 @@ class WorkerManager:
             }
 
         async with self.lock:
+            previous_mode = self.selected_mode
+            previous_worker = self.active_worker
+
             # Case 1: Switching to 'hybrid' -> update policy without necessarily restarting worker
             if clean_target == "hybrid":
-                self.selected_mode = "hybrid"
                 if self.active_worker is None:
-                    return await self._execute_transition("gpu_finetune", trans_id)
+                    res = await self._execute_transition(
+                        "gpu_finetune",
+                        trans_id,
+                        previous_mode=previous_mode,
+                        previous_worker=previous_worker
+                    )
+                    if res.get("status") == "success":
+                        self.selected_mode = "hybrid"
+                        res["selected_mode"] = "hybrid"
+                    return res
+                self.selected_mode = "hybrid"
                 return {
                     "status": "accepted",
                     "transition_id": trans_id,
@@ -667,12 +680,11 @@ class WorkerManager:
                     "message": f"Chính sách Hybrid đã được áp dụng. Worker hiện tại ({self.active_worker}) sẵn sàng phục vụ."
                 }
 
-            self.selected_mode = clean_target
-
             # Case 2: Target worker already active and ready
             if self.active_worker == clean_target and self.transition_state == "ready":
                 active_url = self.get_active_worker_url()
                 if active_url and await self._poll_worker_ready(clean_target, active_url, timeout_seconds=2):
+                    self.selected_mode = clean_target
                     return {
                         "status": "already_active",
                         "transition_id": trans_id,
@@ -681,16 +693,29 @@ class WorkerManager:
                         "message": f"Worker {clean_target} đang trực tuyến và sẵn sàng."
                     }
 
-            return await self._execute_transition(clean_target, trans_id)
+            return await self._execute_transition(
+                clean_target,
+                trans_id,
+                previous_mode=previous_mode,
+                previous_worker=previous_worker
+            )
 
-    async def _execute_transition(self, target_worker: str, trans_id: str) -> Dict[str, Any]:
+    async def _execute_transition(
+        self,
+        target_worker: str,
+        trans_id: str,
+        previous_mode: Optional[str] = None,
+        previous_worker: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Internal execution of worker transition with complete fail-safe guarantees (P0-1..P0-4).
         """
         self.transition_id = trans_id
         self.target_worker = target_worker
-        previous_worker = self.active_worker
-        previous_mode = self.selected_mode
+        if previous_worker is None:
+            previous_worker = self.active_worker
+        if previous_mode is None:
+            previous_mode = self.selected_mode
 
         print(f"\n[WorkerManager] === BẮT ĐẦU TRÁO ĐỔI VRAM [ID: {trans_id}] -> {target_worker.upper()} ===")
 
@@ -698,6 +723,7 @@ class WorkerManager:
         try:
             await self._drain_in_flight_requests(max_wait_seconds=30.0)
         except DrainTimeoutAbortError as abort_err:
+            self.selected_mode = previous_mode
             return {
                 "status": "aborted",
                 "transition_id": trans_id,
@@ -711,6 +737,7 @@ class WorkerManager:
             await self._terminate_current_worker(target_worker=target_worker)
         except (WorkerTerminationError, VRAMReclaimError) as term_err:
             self.transition_state = "error"
+            self.selected_mode = previous_mode
             self.transition_message = f"Dừng Worker hiện tại thất bại: {term_err}. Không spawn worker mới để bảo vệ GPU."
             print(f"[WorkerManager CRITICAL] {self.transition_message}")
             return {
@@ -725,6 +752,7 @@ class WorkerManager:
         vram_ok, vram_msg = GPUVRAMProbe.check_vram_against_profile(target_worker, self.manifest)
         if not vram_ok:
             self.transition_state = "error"
+            self.selected_mode = previous_mode
             self.transition_message = f"VRAM không đủ để khởi động {target_worker}: {vram_msg}"
             print(f"[WorkerManager ERROR] {self.transition_message}")
             return {
@@ -775,6 +803,7 @@ class WorkerManager:
                     print(f"[WorkerManager] Post-startup GPU {idx}: used={info['used_mb']:.1f} MB, free={info['free_mb']:.1f} MB")
 
             self.active_worker = target_worker
+            self.selected_mode = target_worker
             self.target_worker = None
             self.transition_state = "ready"
             self.transition_message = f"Worker {target_worker.upper()} đã trực tuyến và sẵn sàng phục vụ."
@@ -819,6 +848,8 @@ class WorkerManager:
 
             # Cleanup succeeded: process group is verified dead and VRAM is reclaimed
             self.transition_state = "error"
+            self.selected_mode = previous_mode
+            self.active_worker = None
             self.transition_message = f"Lỗi khởi động {target_worker}: {exc}. Đã giải phóng hoàn toàn tiến trình và VRAM."
 
             # Attempt rollback/recovery to previous worker ONLY if cleanup succeeded

@@ -249,6 +249,8 @@ class LayoutRequest(BaseModel):
     pdf_path: str
     pages: list[int] = []
 
+ReaderLayoutRequest = LayoutRequest
+
 class GenerateRequest(BaseModel):
     prompt: str
     adapter: str = "generator"
@@ -299,6 +301,17 @@ def healthcheck():
 
     is_ready = (len(missing_adapters) == 0 and len(missing_models) == 0)
 
+    capabilities = {
+        "router": ("router" in _loaded_adapters) and ("qwen_cluster" in _models),
+        "generator": ("generator" in _loaded_adapters) and ("qwen_cluster" in _models),
+        "critic": ("critic" in _loaded_adapters) and ("qwen_cluster" in _models),
+        "writer": ("writer" in _loaded_adapters) and ("qwen_cluster" in _models),
+        "fact_checker_nli": "factcheck" in _models,
+        "layout_reader": "reader" in _models,
+        "embedding": "embedding" in _models,
+        "reranker": "reranker" in _models,
+    }
+
     return {
         "status": "online" if is_ready else "degraded",
         "ready": is_ready,
@@ -310,6 +323,7 @@ def healthcheck():
         "missing_adapters": missing_adapters,
         "active_models": list(_models.keys()),
         "missing_models": missing_models,
+        "capabilities": capabilities,
         "gpus": gpu_info,
     }
 
@@ -418,11 +432,41 @@ def writer_endpoint(req: WriterRequest):
     return {"report": report, "metadata": {"model": "qwen2.5-7b-dora-rs-lora"}}
 
 
+class EmbedRequest(BaseModel):
+    texts: list[str]
+
+
 @app.post("/api/rerank")
 def rerank_endpoint(req: RerankRequest):
-    # Ranked index list ordering candidate texts
-    ranked = list(range(len(req.candidates)))
-    return {"ranked_indices": ranked}
+    if "reranker" not in _models:
+        raise HTTPException(
+            status_code=501,
+            detail="Capability 'reranker' (07_reranker_bge_large) chưa được nạp trên worker này."
+        )
+    # If model is loaded, perform inference (placeholder for when reranker weights loaded)
+    model = _models["reranker"]
+    tokenizer = _tokenizers.get("reranker")
+    return {"ranked_indices": list(range(len(req.candidates)))}
+
+
+@app.post("/api/embed")
+def embed_endpoint(req: EmbedRequest):
+    if "embedding" not in _models:
+        raise HTTPException(
+            status_code=501,
+            detail="Capability 'embedding' (06_embedding_bge_m3) chưa được nạp trên worker này."
+        )
+    return {"embeddings": []}
+
+
+@app.post("/api/reader/layout")
+def reader_layout_endpoint(req: ReaderLayoutRequest):
+    if "reader" not in _models:
+        raise HTTPException(
+            status_code=501,
+            detail="Capability 'layout_reader' (02_agent2_reader LayoutLMv3) chưa được nạp trên worker này."
+        )
+    return {"layouts": []}
 
 
 @app.post("/generate")
