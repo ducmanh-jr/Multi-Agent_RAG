@@ -60,33 +60,37 @@ def cleanup_cluster(server_process, repo_dir):
                 raw_pid = f.read().strip()
             if raw_pid.isdigit():
                 worker_pgid = int(raw_pid)
-                from kaggle.worker_manager import is_process_group_alive, kill_process_group, SIGKILL, SIGTERM
-                if is_process_group_alive(worker_pgid):
-                    print(f"    ⚠️ Phát hiện Worker Process Group {worker_pgid} còn sống! Gửi SIGTERM...")
-                    kill_process_group(worker_pgid, SIGTERM)
-                    time.sleep(2)
+                if worker_pgid > 1 and worker_pgid <= 4194304:
+                    from kaggle.worker_manager import is_process_group_alive, kill_process_group, SIGKILL, SIGTERM
                     if is_process_group_alive(worker_pgid):
-                        print(f"    ⚠️ Worker Process Group {worker_pgid} vẫn còn sống sau 2s! Leo thang SIGKILL...")
-                        kill_process_group(worker_pgid, SIGKILL)
+                        print(f"    ⚠️ Phát hiện Worker Process Group {worker_pgid} còn sống! Gửi SIGTERM...")
+                        kill_process_group(worker_pgid, SIGTERM)
+                        time.sleep(2)
+                        if is_process_group_alive(worker_pgid):
+                            print(f"    ⚠️ Worker Process Group {worker_pgid} vẫn còn sống sau 2s! Leo thang SIGKILL...")
+                            kill_process_group(worker_pgid, SIGKILL)
 
-                # Poll to verify process group is genuinely dead before unlinking PGID file
-                is_dead = False
-                for _ in range(10):  # Poll up to 5.0 seconds
-                    time.sleep(0.5)
-                    if not is_process_group_alive(worker_pgid):
-                        is_dead = True
-                        break
+                    # Poll to verify process group is genuinely dead before unlinking PGID file
+                    is_dead = False
+                    for _ in range(10):  # Poll up to 5.0 seconds
+                        time.sleep(0.5)
+                        if not is_process_group_alive(worker_pgid):
+                            is_dead = True
+                            break
 
-                if is_dead:
-                    try:
-                        os.remove(pgid_file)
-                        print(f"    ✔ Đã xác minh Worker Process Group {worker_pgid} đã chết hoàn toàn và dọn dẹp worker.pgid.")
-                    except Exception as e:
+                    if is_dead:
+                        try:
+                            os.remove(pgid_file)
+                            print(f"    ✔ Đã xác minh Worker Process Group {worker_pgid} đã chết hoàn toàn và dọn dẹp worker.pgid.")
+                        except Exception as e:
+                            all_clean = False
+                            print(f"    🛑 LỖI P0: Không thể xóa {pgid_file} ({e})! Đánh dấu cleanup chưa hoàn tất.")
+                    else:
                         all_clean = False
-                        print(f"    🛑 LỖI P0: Không thể xóa {pgid_file} ({e})! Đánh dấu cleanup chưa hoàn tất.")
+                        print(f"    🛑 LỖI P0: Worker Process Group {worker_pgid} VẪN CÒN SỐNG sau SIGKILL! Giữ lại {pgid_file} để cách ly và điều tra.")
                 else:
                     all_clean = False
-                    print(f"    🛑 LỖI P0: Worker Process Group {worker_pgid} VẪN CÒN SỐNG sau SIGKILL! Giữ lại {pgid_file} để cách ly và điều tra.")
+                    print(f"    🛑 LỖI P0: PGID trong {pgid_file} là giá trị không an toàn/hợp lệ ({worker_pgid} <= 1 hoặc vượt giới hạn)! Giữ lại file để điều tra.")
             else:
                 all_clean = False
                 print(f"    🛑 LỖI P0: File {pgid_file} rỗng hoặc định dạng không hợp lệ ({raw_pid!r})! Giữ lại file để điều tra, không thể xác minh worker.")
@@ -329,8 +333,8 @@ def run():
     # Register signal handlers for clean interrupt
     def sig_handler(sig, frame):
         print(f"\n    🛑 Nhận tín hiệu ngắt ({sig}), bắt đầu dọn dẹp cụm...")
-        cleanup_cluster(server_process, repo_dir)
-        sys.exit(0)
+        clean = cleanup_cluster(server_process, repo_dir)
+        sys.exit(0 if clean else 1)
 
     try:
         signal.signal(signal.SIGINT, sig_handler)
@@ -434,7 +438,9 @@ def run():
     try:
         server_process.wait()
     except KeyboardInterrupt:
-        cleanup_cluster(server_process, repo_dir)
+        print("\n🛑 Nhận tín hiệu ngắt (KeyboardInterrupt), bắt đầu dọn dẹp cụm...")
+        clean = cleanup_cluster(server_process, repo_dir)
+        sys.exit(0 if clean else 1)
 
 if __name__ == "__main__":
     run()

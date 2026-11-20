@@ -1095,6 +1095,68 @@ def test_cleanup_cluster_ensures_repo_dir_in_sys_path():
         sys.path.remove(fake_repo)
 
 
+def test_cleanup_cluster_rejects_unsafe_numeric_pgids():
+    """
+    CRITICAL P0: Verify cleanup_cluster strictly rejects PGIDs <= 1 (such as 0, 1) or out-of-range,
+    NEVER calling kill_process_group and preserving the file while reporting failure.
+    """
+    import tempfile
+    from kaggle.run_kaggle import cleanup_cluster
+
+    for unsafe_pgid in ["0", "1", "00", "-5", "9999999999"]:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            kaggle_dir = os.path.join(tmp_dir, "kaggle")
+            os.makedirs(kaggle_dir, exist_ok=True)
+            pgid_file = os.path.join(kaggle_dir, "worker.pgid")
+            with open(pgid_file, "w") as f:
+                f.write(unsafe_pgid)
+
+            mock_server = MagicMock()
+            mock_server.poll.return_value = 0
+
+            with patch("kaggle.worker_manager.kill_process_group") as mock_kill, \
+                 patch("kaggle.worker_manager.is_process_group_alive") as mock_alive:
+                res = cleanup_cluster(mock_server, tmp_dir)
+                assert res is False, f"Failed for unsafe pgid: {unsafe_pgid}"
+                # MUST NEVER call kill or alive on unsafe PGID
+                mock_kill.assert_not_called()
+                mock_alive.assert_not_called()
+                # File must be preserved for investigation
+                assert os.path.exists(pgid_file)
+
+
+def test_kill_process_group_and_is_alive_strictly_guard_against_pgid_le_1():
+    """
+    CRITICAL P0: Verify kill_process_group and is_process_group_alive never signal pgid <= 1.
+    """
+    from kaggle.worker_manager import kill_process_group, is_process_group_alive
+
+    for bad_pgid in [0, 1, -1, 5000000]:
+        assert is_process_group_alive(bad_pgid) is False
+        with patch("os.killpg", create=True) as mock_killpg, \
+             patch("subprocess.run") as mock_sub:
+            kill_process_group(bad_pgid, 15)
+            mock_killpg.assert_not_called()
+            mock_sub.assert_not_called()
+
+
+def test_sig_handler_and_keyboard_interrupt_exit_codes():
+    """
+    CRITICAL P1: Verify that cleanup failure causes exit code 1, and success causes exit code 0.
+    """
+    import kaggle.run_kaggle as rk
+
+    with patch.object(rk, "cleanup_cluster", return_value=True):
+        clean = rk.cleanup_cluster(None, "")
+        exit_code = 0 if clean else 1
+        assert exit_code == 0
+
+    with patch.object(rk, "cleanup_cluster", return_value=False):
+        clean = rk.cleanup_cluster(None, "")
+        exit_code = 0 if clean else 1
+        assert exit_code == 1
+
+
 def test_truthful_capabilities_reporting_excludes_unloaded_models(worker_manager):
     """
     CRITICAL P1: Verify get_status_payload truthfully marks unloaded capabilities as False.

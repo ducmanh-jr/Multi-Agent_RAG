@@ -210,7 +210,11 @@ SIGTERM = getattr(signal, "SIGTERM", 15)
 
 
 def kill_process_group(pgid: int, sig: int) -> None:
-    """Sends signal to entire process group across POSIX/Windows."""
+    """Sends signal to entire process group across POSIX/Windows. Strictly guards against pgid <= 1."""
+    if not isinstance(pgid, int) or pgid <= 1 or pgid > 4194304:
+        print(f"[WorkerManager WARNING] Từ chối gửi tín hiệu đến PGID không an toàn: {pgid}")
+        return
+
     if hasattr(os, "killpg"):
         try:
             os.killpg(pgid, sig)
@@ -233,7 +237,10 @@ def kill_process_group(pgid: int, sig: int) -> None:
 
 
 def is_process_group_alive(pgid: int) -> bool:
-    """Checks whether any processes in the process group are still running."""
+    """Checks whether any processes in the process group are still running. Strictly guards against pgid <= 1."""
+    if not isinstance(pgid, int) or pgid <= 1 or pgid > 4194304:
+        return False
+
     if hasattr(os, "killpg"):
         try:
             os.killpg(pgid, 0)
