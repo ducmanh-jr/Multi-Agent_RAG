@@ -39,8 +39,15 @@ _loaded_adapters: list[str] = []
 
 
 def find_weight_path(sub_path: str) -> Optional[str]:
-    """Search common Kaggle and local paths for fine_weights directories."""
-    candidates = [
+    """Search authoritative PROJECT_DIR, common Kaggle and local paths for weights directories."""
+    candidates = []
+    proj_dir = os.environ.get("PROJECT_DIR")
+    if proj_dir:
+        candidates.extend([
+            Path(proj_dir) / "training_lab" / "final_weights" / sub_path,
+            Path(proj_dir) / "training_lab" / "final_weights" / "final_weights" / sub_path,
+        ])
+    candidates.extend([
         Path("/kaggle/working/Multi-Agent_RAG/training_lab/final_weights") / sub_path,
         Path("/kaggle/working/Multi-Agent_RAG/training_lab/final_weights/final_weights") / sub_path,
         Path("/kaggle/working/training_lab/final_weights") / sub_path,
@@ -51,7 +58,7 @@ def find_weight_path(sub_path: str) -> Optional[str]:
         Path("./training_lab/final_weights") / sub_path,
         Path("../training_lab/final_weights") / sub_path,
         Path("/kaggle/input") / sub_path,
-    ]
+    ])
     for c in candidates:
         if c.exists():
             return str(c.resolve())

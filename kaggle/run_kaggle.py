@@ -184,6 +184,7 @@ def run():
         "httpx": "httpx",
         "pycloudflared": "pycloudflared",
         "transformers": "transformers",
+        "huggingface-hub": "huggingface_hub",
         "peft": "peft",
         "accelerate": "accelerate",
         "bitsandbytes": "bitsandbytes",
@@ -318,6 +319,24 @@ def run():
         sys.exit(1)
 
     # -------------------------------------------------------------------------
+    # Pre-fetch Base Model into local HF cache so Step 4 startup is fast and progress is visible
+    # -------------------------------------------------------------------------
+    base_model_spec = m_data.get("base_models", {}).get("qwen_7b_base", {})
+    base_model_id = os.environ.get("BASE_QWEN_MODEL_ID", base_model_spec.get("model_id", "Qwen/Qwen2.5-7B-Instruct"))
+    print(f"\n    🌐 Đồng bộ Base Model {base_model_id} từ Hugging Face Hub:")
+    try:
+        from huggingface_hub import snapshot_download
+        print(f"      • Bắt đầu tải/kiểm tra cache các shard của {base_model_id}...")
+        snapshot_download(
+            repo_id=base_model_id,
+            allow_patterns=["*.json", "*.safetensors", "*.txt", "tokenizer*"],
+            ignore_patterns=["*.bin", "*.pt", "*.msgpack"],
+        )
+        print(f"      ✔ Base Model {base_model_id} đã sẵn sàng 100% trong cache!")
+    except Exception as e:
+        print(f"      ⚠️ Cảnh báo tải trước Base Model: {e}. Tiến trình Worker sẽ tự tải khi khởi động.")
+
+    # -------------------------------------------------------------------------
     # 4. Start Master Supervisor Gateway & Load Dual GPU VRAM
     # -------------------------------------------------------------------------
     print("\n🚀 [BƯỚC 4/4] KHỞI CHẠY TIẾN TRÌNH SUPERVISOR GATEWAY & NẠP VRAM DUAL T4:")
@@ -339,6 +358,7 @@ def run():
         "--host", "0.0.0.0",
         "--port", "8000",
         "--app-dir", os.path.join(repo_dir, "kaggle"),
+        "--no-access-log",
     ], stdout=supervisor_log, stderr=subprocess.STDOUT)
 
     # Register signal handlers for clean interrupt
@@ -352,7 +372,7 @@ def run():
         pass
 
     # Animated progress bar waiting for worker warmup (Wait until Worker A finishes loading weights)
-    total_seconds = int(os.environ.get("RUNNER_STARTUP_TIMEOUT", "360"))
+    total_seconds = int(os.environ.get("RUNNER_STARTUP_TIMEOUT", "600"))
     is_ready = False
     with tqdm(total=total_seconds, desc="    ⏳ Nạp mô hình vào 2 GPU", unit="s") as pbar:
         for s in range(total_seconds):
@@ -377,10 +397,11 @@ def run():
         for log_name in ["supervisor.log", "worker_finetune.log"]:
             lf_path = os.path.join(repo_dir, "kaggle", log_name)
             if os.path.exists(lf_path):
-                print(f"\n    ⚠️ Nhật ký {log_name} (20 dòng gần nhất):")
+                print(f"\n    ⚠️ Nhật ký {log_name} (các dòng hoạt động gần nhất):")
                 with open(lf_path, "r", encoding="utf-8", errors="ignore") as lf:
-                    for line in lf.readlines()[-20:]:
-                        print("      " + line.strip())
+                    lines = [l.strip() for l in lf.readlines() if l.strip() and "GET /health" not in l]
+                    for line in lines[-40:]:
+                        print("      " + line)
 
         # Guaranteed cluster cleanup with up to 40s timeout & verified PGID reaping
         cleanup_cluster(server_process, repo_dir)

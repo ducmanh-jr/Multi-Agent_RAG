@@ -860,9 +860,10 @@ class WorkerManager:
                     "--host", "127.0.0.1",
                     "--port", "8001",
                     "--app-dir", str(Path(self.project_dir) / "kaggle"),
+                    "--no-access-log",
                 ]
                 self._proc = self._spawn_process(cmd, "worker_finetune.log")
-                ft_timeout = int(os.environ.get("WORKER_FINETUNE_TIMEOUT", "300"))
+                ft_timeout = int(os.environ.get("WORKER_FINETUNE_TIMEOUT", "600"))
                 online = await self._poll_worker_ready("gpu_finetune", "http://127.0.0.1:8001", timeout_seconds=ft_timeout)
 
             if not online:
