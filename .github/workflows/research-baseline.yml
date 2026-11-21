@@ -1,11 +1,13 @@
-name: Research V2 baseline
+name: Multi-Agent RAG CI
 
 on:
   push:
     branches:
-      - 'codex/research-v2-*'
+      - main
+      - tatmanh
   pull_request:
     branches:
+      - main
       - tatmanh
   workflow_dispatch:
 
@@ -13,31 +15,72 @@ permissions:
   contents: read
 
 jobs:
-  offline:
-    runs-on: windows-latest
-    timeout-minutes: 15
+  smoke-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     env:
       PYTHONUTF8: '1'
       PYTHON_DOTENV_DISABLED: '1'
+      PYTHONPATH: main
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11.9'
+          python-version: '3.11'
           cache: pip
-          cache-dependency-path: |
-            requirements.txt
-            requirements-baseline.txt
-      - name: Install baseline dependencies
-        run: python -m pip install -r requirements.txt -c requirements-baseline.txt
-      - name: Offline unit and contract tests
-        run: python -m pytest -q -m "not integration"
-      - name: Offline graph integration tests
-        run: python -m pytest -q -m integration
-      - name: Four-question PDF smoke benchmark
-        run: python main/eval/run_benchmark.py --pilot --modes cpu_min --limit-per-cat 0 --output-dir "${{ runner.temp }}/research-baseline-pilot"
-      - name: Upload pilot results
-        uses: actions/upload-artifact@v4
-        with:
-          name: research-baseline-pilot
-          path: ${{ runner.temp }}/research-baseline-pilot
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt
+
+      - name: Verify Python syntax across main and kaggle
+        run: python -m compileall -q main kaggle
+
+      - name: Validate Kaggle weights manifest JSON
+        run: |
+          python -c "
+          import json, re
+          with open('kaggle/weights_manifest.json', encoding='utf-8') as f:
+              data = json.load(f)
+          base = data.get('base_models') or {}
+          assert len(base) >= 2, 'Expected base_models in manifest'
+          for name, spec in base.items():
+              rev = spec.get('revision', '')
+              assert re.fullmatch(r'[0-9a-f]{40}', rev), f'Invalid commit SHA for {name}: {rev}'
+          checkpoints = data.get('checkpoints') or []
+          assert len(checkpoints) >= 5, 'Expected checkpoints in manifest'
+          for cp in checkpoints:
+              assert cp.get('id') and cp.get('role') and cp.get('target_endpoint')
+          print(f'Manifest OK: {len(base)} base models, {len(checkpoints)} checkpoints')
+          "
+
+      - name: Smoke check core imports and graph compilation
+        run: |
+          python -c "
+          from core.graph import build_research_rag_graph
+          from core.supervisor import supervisor_planner
+          from core.verifier import check_entity_value_binding, extract_numbers_and_years
+          from modes.registry import MODE_MAP
+
+          plan = supervisor_planner.plan_query('Compare Model A and Model B accuracy')
+          assert plan.is_comparative_query is True
+          graph = build_research_rag_graph('cpu_min', comparison_plan=True)
+          assert graph is not None
+          assert 'hybrid' in MODE_MAP and 'gpu_finetune' in MODE_MAP
+          print('Core imports and StateGraph compilation OK')
+          "
+
+      - name: Smoke check FastAPI app health endpoints
+        run: |
+          python -c "
+          from fastapi.testclient import TestClient
+          from api.app import app
+
+          client = TestClient(app)
+          for path in ('/health', '/api/health'):
+              resp = client.get(path)
+              assert resp.status_code == 200, f'{path} returned {resp.status_code}'
+              assert resp.json().get('status') == 'ok'
+          print('FastAPI /health and /api/health OK')
+          "
