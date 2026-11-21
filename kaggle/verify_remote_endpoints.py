@@ -187,7 +187,7 @@ class EndpointVerifier:
         # B02: /api/summarize/generator
         print("  • Đang gửi request B02: /api/summarize/generator (Agent 3 Generator)...")
         payload = {
-            "query": "Tóm tắt kết quả nghiên cứu.",
+            "query": "Tóm tắt ngắn gọn trong 2 câu: Điểm số hai nhóm khác nhau thế nào?",
             "context": "Thí nghiệm trên 200 sinh viên cho thấy nhóm sử dụng công cụ hỗ trợ có điểm trung bình 8.1, nhóm đối chứng có điểm trung bình 7.2.",
             "feedback": "",
             "max_tokens": 512
