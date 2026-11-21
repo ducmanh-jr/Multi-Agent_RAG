@@ -235,7 +235,11 @@ class RunConfig(_AgentModeSettings):
 
     @classmethod
     def capture(
-        cls, *, remote_inference_url: str | None = None, corpus_path: str | None = None,
+        cls,
+        *,
+        remote_inference_url: str | None = None,
+        corpus_path: str | None = None,
+        agent_modes: Mapping[str, str] | None = None,
     ) -> "RunConfig":
         with run_defaults_lock:
             values = {entry.name: getattr(settings, entry.name) for entry in fields(settings)}
@@ -245,6 +249,12 @@ class RunConfig(_AgentModeSettings):
                 values["REMOTE_INFERENCE_URL"] = remote_inference_url
             if corpus_path is not None:
                 values["CORPUS_PATH"] = corpus_path
+            if agent_modes:
+                for role, mode in agent_modes.items():
+                    clean_role = role.lower().replace("agent", "").replace("_", "").strip()
+                    field_name = _AGENT_MODE_FIELDS.get(clean_role)
+                    if field_name and mode:
+                        values[field_name] = str(mode).strip().lower()
             return cls(values)
 
 

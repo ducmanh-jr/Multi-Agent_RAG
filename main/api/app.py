@@ -187,6 +187,7 @@ class CreateRunRequest(BaseModel):
     profile: Optional[str] = "balanced"
     model: Optional[str] = None
     mode: Optional[str] = None
+    agent_modes: Optional[dict[str, str]] = None
     max_iterations: Optional[int] = Field(default=2, ge=0)
     chat_history: Optional[list[dict[str, str]]] = None
     session_id: Optional[str] = None
@@ -1974,11 +1975,21 @@ async def create_run(req: CreateRunRequest):
     if not prompt:
         raise HTTPException(status_code=400, detail="Question cannot be empty.")
 
-    config = RunConfig.capture()
+    normalized_agent_modes = (
+        {role: normalize_mode(mode) for role, mode in req.agent_modes.items() if mode}
+        if req.agent_modes
+        else None
+    )
+    config = RunConfig.capture(agent_modes=normalized_agent_modes)
+    requested_mode = (req.mode or req.model or "").strip().lower()
+    if normalized_agent_modes or requested_mode == "custom":
+        effective_mode = None
+    else:
+        effective_mode = normalize_mode(requested_mode or config.EXECUTION_MODE)
     run = await research_runs.start(ResearchRequest(
         query=prompt,
         config=config,
-        mode=normalize_mode(req.mode or req.model or config.EXECUTION_MODE),
+        mode=effective_mode,
         document_ids=tuple(document_id for document_id in (req.document_ids or [req.document_id]) if document_id),
         auto_scout=req.auto_scout,
         parallel_retrieval=req.parallel_retrieval,

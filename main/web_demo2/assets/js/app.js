@@ -1119,13 +1119,16 @@ document.addEventListener("DOMContentLoaded", () => {
     pendingSubmission = submission;
 
     try {
-      const currentMode = getCurrentSelectedMode();
+      const selectedAgentModes = getSelectedAgentModes();
+      const isCustomMix = isCustomAgentMix();
+      const currentMode = isCustomMix ? "custom" : getCurrentSelectedMode();
       const payload = {
         query: text,
         document_ids: docIds,
         auto_scout: isAutoScout,
         mode: currentMode,
-        model: currentMode,
+        model: isCustomMix ? null : currentMode,
+        agent_modes: isCustomMix ? selectedAgentModes : null,
         max_iterations: state.maxReflectionLoops ?? 2,
         parallel_retrieval: true,
         comparison_plan: docIds.length >= 2,
@@ -2828,6 +2831,24 @@ document.addEventListener("DOMContentLoaded", () => {
   // ==================== GEMINI USAGE QUOTA TRACKER ====================
   let lastGeminiBadge = "0 / 1.500";
 
+  function getSelectedAgentModes() {
+    const modes = {};
+    document.querySelectorAll(".agent-model-select").forEach(select => {
+      const key = select.dataset.agent;
+      if (key && select.value) {
+        modes[key] = select.value;
+      }
+    });
+    return modes;
+  }
+
+  function isCustomAgentMix() {
+    const selects = Array.from(document.querySelectorAll(".agent-model-select"));
+    if (selects.length === 0) return false;
+    const firstVal = selects[0].value;
+    return !firstVal || !selects.every(s => s.value === firstVal);
+  }
+
   function getCurrentSelectedMode() {
     const selects = Array.from(document.querySelectorAll(".agent-model-select"));
     if (selects.length > 0) {
@@ -2997,12 +3018,40 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
 
-      // Khôi phục mode đã lưu của người dùng (mặc định là hybrid hoặc mode trước đó, không tự động nhảy vào GPU Max nếu chưa hoán đổi)
-      let savedMode = localStorage.getItem("rag_preferred_mode") || "hybrid";
-      if (savedMode === "gpu_max" && !isGpuMaxActive) {
-        savedMode = state.isKaggleOnline ? "gpu_finetune" : "hybrid";
+      // Khôi phục cấu hình từng Agent (Tùy biến) nếu người dùng đã chỉnh tay, ngược lại khôi phục preset chung
+      let restoredCustom = false;
+      try {
+        const rawCustom = localStorage.getItem("rag_custom_agent_modes");
+        if (rawCustom) {
+          const parsed = JSON.parse(rawCustom);
+          if (parsed && typeof parsed === "object" && Object.keys(parsed).length > 0) {
+            document.querySelectorAll(".agent-model-select").forEach(select => {
+              const key = select.dataset.agent;
+              let val = parsed[key];
+              if (val === "gpu_max" && !isGpuMaxActive) {
+                val = state.isKaggleOnline ? "gpu_finetune" : "hybrid";
+              }
+              if (val && Array.from(select.options).some(o => o.value === val)) {
+                select.value = val;
+              }
+            });
+            syncModelLabelsFromDropdowns();
+            await fetch("/api/config/agents", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ agent_modes: getSelectedAgentModes() }),
+            });
+            restoredCustom = true;
+          }
+        }
+      } catch (_) {}
+      if (!restoredCustom) {
+        let savedMode = localStorage.getItem("rag_preferred_mode") || "hybrid";
+        if (savedMode === "gpu_max" && !isGpuMaxActive) {
+          savedMode = state.isKaggleOnline ? "gpu_finetune" : "hybrid";
+        }
+        await setAllAgentsMode(savedMode);
       }
-      await setAllAgentsMode(savedMode);
       await updateGeminiUsageBadge();
     } catch (e) {
       console.warn("Failed to load /api/config:", e);
@@ -3182,6 +3231,14 @@ document.addEventListener("DOMContentLoaded", () => {
           });
 
           syncModelLabelsFromDropdowns();
+          try {
+            if (isCustomAgentMix()) {
+              localStorage.setItem("rag_custom_agent_modes", JSON.stringify(getSelectedAgentModes()));
+            } else {
+              localStorage.removeItem("rag_custom_agent_modes");
+              localStorage.setItem("rag_preferred_mode", getCurrentSelectedMode());
+            }
+          } catch (_) {}
 
           autoSelectBestBtn.innerHTML = `
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>
@@ -3202,7 +3259,10 @@ document.addEventListener("DOMContentLoaded", () => {
   async function setAllAgentsMode(mode) {
     let canonMode = mode;
     if (canonMode === "kaggle_fn" || canonMode === "fn") canonMode = "gpu_finetune";
-    try { localStorage.setItem("rag_preferred_mode", canonMode); } catch (_) {}
+    try {
+      localStorage.setItem("rag_preferred_mode", canonMode);
+      localStorage.removeItem("rag_custom_agent_modes");
+    } catch (_) {}
     const agentModes = {};
     document.querySelectorAll(".agent-model-select").forEach(select => {
       const agentKey = select.dataset.agent;
@@ -3479,6 +3539,14 @@ document.addEventListener("DOMContentLoaded", () => {
       const mode = select.value;
 
       syncModelLabelsFromDropdowns();
+      try {
+        if (isCustomAgentMix()) {
+          localStorage.setItem("rag_custom_agent_modes", JSON.stringify(getSelectedAgentModes()));
+        } else {
+          localStorage.removeItem("rag_custom_agent_modes");
+          localStorage.setItem("rag_preferred_mode", mode);
+        }
+      } catch (_) {}
 
       try {
         await fetch("/api/config/agents", {
