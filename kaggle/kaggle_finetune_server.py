@@ -229,6 +229,7 @@ class SummarizeRequest(BaseModel):
     context: str
     feedback: Optional[str] = ""
     adapter: str = "generator"
+    max_tokens: int = 768
 
 class CriticRequest(BaseModel):
     query: str
@@ -363,7 +364,8 @@ def summarize_generator(req: SummarizeRequest):
         prompt += f"[Critic Feedback]: {req.feedback}\n\n"
     prompt += "Output format JSON with 'answer', 'claims' (list of atomic statements), and 'evidence_spans'."
 
-    raw = generate_with_qwen(prompt, adapter="generator", max_new_tokens=1536, temperature=0.2)
+    max_tok = getattr(req, "max_tokens", None) or 768
+    raw = generate_with_qwen(prompt, adapter="generator", max_new_tokens=max_tok, temperature=0.2)
     try:
         m = re.search(r"\{.*\}", raw, re.DOTALL)
         if m:
