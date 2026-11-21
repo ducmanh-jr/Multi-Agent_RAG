@@ -10,9 +10,15 @@ import os
 from typing import Any
 
 from agents.agent2_reader.tools.pdf_parser import parse_pdf_document
+from agents.agent2_reader.tools.reader_pipeline import (
+    build_source_units_from_docs,
+    collect_unique_pdf_paths,
+    ingest_pdf_fallbacks,
+    merge_or_append_unit,
+)
 from core.base_agent import BaseAgent
 from core.state import AgentState, SourceUnit
-from core.tools import extract_table_or_equations_tool
+from core.tools import extract_table_or_equations_tool, load_or_parse_selected_pdf
 
 
 class GeminiReaderAgent(BaseAgent):
@@ -23,42 +29,29 @@ class GeminiReaderAgent(BaseAgent):
 
     def run(self, state: AgentState) -> dict[str, Any]:
         pdf_path = state.get("pdf_path")
-        pdf_paths = state.get("pdf_paths") or ([pdf_path] if pdf_path else [])
+        pdf_paths = collect_unique_pdf_paths(pdf_path, state.get("pdf_paths"))
         retrieved_docs = state.get("retrieved_docs", []) or []
 
         self.logger.info(
-            f"[Gemini Reader] Parsing pdf_path={os.path.basename(pdf_path) if pdf_path else 'None'}, "
-            f"retrieved={len(retrieved_docs)}"
+            f"[Gemini Reader] Parsing pdf_count={len(pdf_paths)}, retrieved={len(retrieved_docs)}"
         )
 
-        source_units: list[dict[str, Any]] = []
+        ordered_units, by_hash, pages_covered, merged_dups, curr_offset = build_source_units_from_docs(
+            retrieved_docs,
+            limit=12,
+            deduplicate=True,
+        )
         document_schema: dict[str, Any] = {}
-        curr_offset = 0
-        pages_covered: set[int] = set()
-
-        # 1. Convert top ranked retrieved_docs into SourceUnits first
-        for idx, d in enumerate(retrieved_docs[:10]):
-            t = str(d.get("text") or d.get("content") or "").strip()
-            if not t:
-                continue
-            d_id = str(d.get("doc_id") or d.get("title") or f"doc_{idx + 1}")
-            p_no = int(d.get("page_no") or d.get("page") or 1)
-            pages_covered.add(p_no)
-            unit = SourceUnit(
-                id=str(d.get("id") or f"{d_id}_p{p_no}_u{idx + 1}"),
-                text=t,
-                doc_id=d_id,
-                page_no=p_no,
-                character_offset=curr_offset,
-            )
-            source_units.append(unit.to_dict())
-            curr_offset += len(t) + 1
+        failed_pdfs: list[dict[str, str]] = []
 
         # 2. Extract Markdown tables from top hit pages when a PDF is selected
         if pdf_path and os.path.exists(str(pdf_path)):
             doc_id = os.path.splitext(os.path.basename(str(pdf_path)))[0]
             for p_no in sorted(list(pages_covered))[:3]:
-                table_md = extract_table_or_equations_tool(pdf_path, p_no)
+                try:
+                    table_md = extract_table_or_equations_tool(pdf_path, p_no)
+                except Exception:
+                    table_md = ""
                 if table_md and ("Bảng" in table_md and "|" in table_md):
                     unit = SourceUnit(
                         id=f"{doc_id}_p{p_no}_table",
@@ -67,30 +60,44 @@ class GeminiReaderAgent(BaseAgent):
                         page_no=p_no,
                         character_offset=curr_offset,
                     )
-                    source_units.append(unit.to_dict())
+                    if merge_or_append_unit(unit, by_hash, ordered_units):
+                        merged_dups += 1
                     curr_offset += len(table_md) + 1
 
-            if not source_units:
-                for p in pdf_paths:
-                    if p and os.path.exists(p):
-                        schema, units = parse_pdf_document(p)
-                        if not document_schema:
-                            document_schema = schema
-                        source_units.extend([u.to_dict() for u in units[:8]])
+        if not ordered_units and pdf_paths:
+            failed_pdfs, extra_merged, curr_offset = ingest_pdf_fallbacks(
+                pdf_paths,
+                ordered_units=ordered_units,
+                units_by_content_hash=by_hash,
+                pages_covered=pages_covered,
+                curr_offset=curr_offset,
+                chunk_loader=load_or_parse_selected_pdf,
+                max_units_per_pdf=8,
+                deduplicate=True,
+            )
+            merged_dups += extra_merged
+
+        source_units = [u.to_dict() for u in ordered_units]
 
         if not document_schema:
             document_schema = {
                 "doc_id": source_units[0]["doc_id"] if source_units else "unknown",
                 "pages_covered": sorted(list(pages_covered)),
                 "total_units": len(source_units),
+                "failed_pdfs": failed_pdfs,
+                "dedup_merged_count": merged_dups,
             }
 
         trace = self.log_action(
             "gemini_reading_completed",
             {
-                "has_pdf": bool(pdf_path),
+                "has_pdf": bool(pdf_paths),
+                "pdf_count": len(pdf_paths),
                 "total_units": len(source_units),
                 "pages_covered": sorted(list(pages_covered)),
+                "dedup_merged_count": merged_dups,
+                "failed_pdf_count": len(failed_pdfs),
+                "failed_pdfs": failed_pdfs,
             },
         )
 

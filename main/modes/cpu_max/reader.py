@@ -13,8 +13,14 @@ import re
 from typing import Any
 
 from agents.agent2_reader.tools.pdf_parser import parse_pdf_document
+from agents.agent2_reader.tools.reader_pipeline import (
+    build_source_units_from_docs,
+    collect_unique_pdf_paths,
+    ingest_pdf_fallbacks,
+)
 from core.base_agent import BaseAgent
-from core.state import AgentState, SourceUnit
+from core.state import AgentState
+from core.tools import load_or_parse_selected_pdf
 
 
 def clean_source_text(text: str) -> str:
@@ -50,8 +56,7 @@ class CPUMaxReaderAgent(BaseAgent):
         super().__init__(name="CPUMaxReaderAgent", max_internal_retry=max_internal_retry)
 
     def run(self, state: AgentState) -> dict[str, Any]:
-        pdf_path = state.get("pdf_path")
-        pdf_paths = state.get("pdf_paths") or ([pdf_path] if pdf_path else [])
+        pdf_paths = collect_unique_pdf_paths(state.get("pdf_path"), state.get("pdf_paths"))
         retrieved_docs = state.get("retrieved_docs", []) or []
 
         self.logger.info(
@@ -59,58 +64,48 @@ class CPUMaxReaderAgent(BaseAgent):
             f"(docs_count={len(pdf_paths)})"
         )
 
-        source_units: list[dict[str, Any]] = []
-        curr_offset = 0
+        ordered_units, by_hash, pages_covered, merged_dups, curr_offset = build_source_units_from_docs(
+            retrieved_docs,
+            limit=max(16, len(retrieved_docs)),
+            text_cleaner=clean_source_text,
+            deduplicate=True,
+        )
 
-        # 1. Convert top ranked retrieved_docs into clean SourceUnits
-        for idx, doc in enumerate(retrieved_docs):
-            raw_text = str(doc.get("text") or doc.get("content") or "").strip()
-            if not raw_text:
-                continue
-            text = clean_source_text(raw_text)
-            if not text:
-                continue
-
-            doc_id = str(doc.get("doc_id") or doc.get("title") or f"doc_{idx + 1}")
-            page_no = int(doc.get("page_no") or doc.get("page") or 1)
-            unit = SourceUnit(
-                id=str(doc.get("id") or f"{doc_id}_p{page_no}_u{idx + 1}"),
-                text=text,
-                doc_id=doc_id,
-                page_no=page_no,
-                character_offset=curr_offset,
+        failed_pdfs: list[dict[str, str]] = []
+        if not ordered_units and pdf_paths:
+            failed_pdfs, extra_merged, curr_offset = ingest_pdf_fallbacks(
+                pdf_paths,
+                ordered_units=ordered_units,
+                units_by_content_hash=by_hash,
+                pages_covered=pages_covered,
+                curr_offset=curr_offset,
+                chunk_loader=load_or_parse_selected_pdf,
+                text_cleaner=clean_source_text,
+                max_units_per_pdf=12,
+                deduplicate=True,
             )
-            source_units.append(unit.to_dict())
-            curr_offset += len(text) + 1
+            merged_dups += extra_merged
 
-        # 2. Fallback to direct PDF parsing if no chunks retrieved
-        if not source_units and pdf_paths:
-            for p in pdf_paths:
-                if p and os.path.exists(str(p)):
-                    d_id = os.path.splitext(os.path.basename(str(p)))[0]
-                    p_units, _ = parse_pdf_document(str(p))
-                    for u in p_units:
-                        u_clean_text = clean_source_text(str(u.get("text", "")))
-                        unit = SourceUnit(
-                            id=str(u.get("id") or f"{d_id}_p{u.get('page_no', 1)}"),
-                            text=u_clean_text,
-                            doc_id=d_id,
-                            page_no=int(u.get("page_no", 1)),
-                            character_offset=curr_offset,
-                        )
-                        source_units.append(unit.to_dict())
-                        curr_offset += len(u_clean_text) + 1
+        source_units = [u.to_dict() for u in ordered_units]
 
         trace = self.log_action(
             "cpu_max_reading_completed",
             {
                 "units_count": len(source_units),
                 "docs_count": len(pdf_paths),
+                "dedup_merged_count": merged_dups,
+                "failed_pdf_count": len(failed_pdfs),
+                "failed_pdfs": failed_pdfs,
             },
         )
 
         return {
             "source_units": source_units,
-            "document_schema": {},
+            "document_schema": {
+                "pages_covered": sorted(list(pages_covered)),
+                "total_units": len(source_units),
+                "failed_pdfs": failed_pdfs,
+                "dedup_merged_count": merged_dups,
+            },
             "reasoning_trace": [trace],
         }

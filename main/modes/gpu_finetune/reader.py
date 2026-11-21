@@ -13,9 +13,15 @@ import os
 from typing import Any
 
 from agents.agent2_reader.tools.pdf_parser import parse_pdf_document
+from agents.agent2_reader.tools.reader_pipeline import (
+    build_source_units_from_docs,
+    collect_unique_pdf_paths,
+    ingest_pdf_fallbacks,
+    merge_or_append_unit,
+)
 from core.base_agent import BaseAgent
 from core.state import AgentState, SourceUnit
-from core.tools import extract_table_or_equations_tool
+from core.tools import extract_table_or_equations_tool, load_or_parse_selected_pdf
 from utils.llm_client import llm_client
 
 
@@ -27,46 +33,51 @@ class GPUFinetuneReaderAgent(BaseAgent):
 
     def run(self, state: AgentState) -> dict[str, Any]:
         pdf_path = state.get("pdf_path")
+        pdf_paths = collect_unique_pdf_paths(pdf_path, state.get("pdf_paths"))
         retrieved_docs = state.get("retrieved_docs", []) or []
 
         self.logger.info(
             f"[GPU Finetune Reader] Building SourceUnits from {len(retrieved_docs)} chunks "
-            f"(pdf_path={os.path.basename(pdf_path) if pdf_path else 'None'})"
+            f"(pdf_count={len(pdf_paths)})"
         )
 
-        source_units: list[dict[str, Any]] = []
+        ordered_units, by_hash, pages_covered, merged_dups, curr_offset = build_source_units_from_docs(
+            retrieved_docs,
+            limit=12,
+            deduplicate=True,
+        )
         document_schema: dict[str, Any] = {}
-        curr_offset = 0
-        pages_covered: set[int] = set()
+        failed_pdfs: list[dict[str, str]] = []
 
-        # 1. Build SourceUnits from retrieved chunks
-        for idx, d in enumerate(retrieved_docs[:10]):
-            t = str(d.get("text") or d.get("content") or "").strip()
-            if not t:
-                continue
-            d_id = str(d.get("doc_id") or d.get("title") or f"doc_{idx + 1}")
-            p_no = int(d.get("page_no") or d.get("page") or 1)
-            pages_covered.add(p_no)
-            unit = SourceUnit(
-                id=str(d.get("id") or f"{d_id}_p{p_no}_u{idx + 1}"),
-                text=t,
-                doc_id=d_id,
-                page_no=p_no,
-                character_offset=curr_offset,
+        if not ordered_units and pdf_paths:
+            failed_pdfs, extra_merged, curr_offset = ingest_pdf_fallbacks(
+                pdf_paths,
+                ordered_units=ordered_units,
+                units_by_content_hash=by_hash,
+                pages_covered=pages_covered,
+                curr_offset=curr_offset,
+                chunk_loader=load_or_parse_selected_pdf,
+                max_units_per_pdf=10,
+                deduplicate=True,
             )
-            curr_offset += len(t) + 1
-            source_units.append(unit.to_dict())
+            merged_dups += extra_merged
 
         # 2. LayoutLMv3 Document Layout Analysis
         extracted_tables: list[tuple[int, str]] = []
-        if pdf_path and os.path.exists(pdf_path):
-            # Check if remote LayoutLMv3 worker endpoint is available
+        primary_pdf = pdf_path or (pdf_paths[0] if pdf_paths else None)
+        if primary_pdf and os.path.exists(primary_pdf):
             if self.settings.REMOTE_INFERENCE_URL:
                 try:
+                    req_kwargs: dict[str, Any] = {
+                        "json": {"pdf_path": os.path.basename(primary_pdf), "pages": list(pages_covered)[:3]},
+                        "timeout": float(self.settings.REMOTE_TIMEOUT_SECONDS) * 2,
+                    }
+                    worker_headers = llm_client._worker_headers()
+                    if worker_headers:
+                        req_kwargs["headers"] = worker_headers
                     layout_resp = llm_client.http_client.post(
                         f"{self.settings.REMOTE_INFERENCE_URL.rstrip('/')}/api/reader/layout",
-                        json={"pdf_path": os.path.basename(pdf_path), "pages": list(pages_covered)[:3]},
-                        timeout=float(self.settings.REMOTE_TIMEOUT_SECONDS) * 2,
+                        **req_kwargs,
                     )
                     if layout_resp.status_code == 200:
                         layout_data = layout_resp.json()
@@ -82,10 +93,9 @@ class GPUFinetuneReaderAgent(BaseAgent):
                 except Exception as e:
                     self.logger.debug(f"[GPU Finetune Reader] Remote layout worker skipped ({e}), falling back to local extractor.")
 
-            # Fallback local table extraction if remote returned empty
             if not extracted_tables:
                 for p in sorted(pages_covered)[:2]:
-                    tbl = extract_table_or_equations_tool(pdf_path, p)
+                    tbl = extract_table_or_equations_tool(primary_pdf, p)
                     if tbl and tbl.strip():
                         extracted_tables.append((p, tbl.strip()))
 
@@ -94,12 +104,15 @@ class GPUFinetuneReaderAgent(BaseAgent):
             t_unit = SourceUnit(
                 id=f"table_layoutlmv3_{t_idx + 1}",
                 text=tbl_str,
-                doc_id=str(os.path.basename(pdf_path) if pdf_path else "extracted_tables"),
+                doc_id=str(os.path.basename(primary_pdf) if primary_pdf else "extracted_tables"),
                 page_no=page,
                 character_offset=curr_offset,
             )
             curr_offset += len(t_unit.text) + 1
-            source_units.append(t_unit.to_dict())
+            if merge_or_append_unit(t_unit, by_hash, ordered_units):
+                merged_dups += 1
+
+        source_units = [u.to_dict() for u in ordered_units]
 
         trace = self.log_action(
             "gpu_finetune_reader_completed",
@@ -107,6 +120,9 @@ class GPUFinetuneReaderAgent(BaseAgent):
                 "units_count": len(source_units),
                 "pages_covered": list(pages_covered),
                 "tables_count": len(extracted_tables),
+                "dedup_merged_count": merged_dups,
+                "failed_pdf_count": len(failed_pdfs),
+                "failed_pdfs": failed_pdfs,
             },
         )
 

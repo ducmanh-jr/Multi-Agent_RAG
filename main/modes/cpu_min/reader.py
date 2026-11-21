@@ -12,6 +12,11 @@ import os
 import re
 from typing import Any, Callable
 
+from agents.agent2_reader.tools.reader_pipeline import (
+    build_source_units_from_docs,
+    collect_unique_pdf_paths,
+    ingest_pdf_fallbacks,
+)
 from core.base_agent import BaseAgent
 from core.citation_audit import citation_location, evidence_quote
 from core.state import AgentState, SourceUnit, compute_context_hash
@@ -60,8 +65,7 @@ class CPUMinReaderAgent(BaseAgent):
         super().__init__(name="CPUMinReaderAgent", max_internal_retry=max_internal_retry)
 
     def run(self, state: AgentState, *, allow_pdf_fallback: bool = True) -> dict[str, Any]:
-        pdf_path = state.get("pdf_path")
-        pdf_paths = state.get("pdf_paths") or ([pdf_path] if pdf_path else [])
+        pdf_paths = collect_unique_pdf_paths(state.get("pdf_path"), state.get("pdf_paths"))
         retrieved_docs = state.get("retrieved_docs", []) or []
 
         self.logger.info(
@@ -69,59 +73,39 @@ class CPUMinReaderAgent(BaseAgent):
             f"(docs_count={len(pdf_paths)})"
         )
 
-        source_units: list[dict[str, Any]] = []
-        curr_offset = 0
-        pages_covered: set[int] = set()
+        # Keep 1:1 chunk traceability for single-doc comparison reader; dedup in unified multi-PDF mode
+        dedup = bool(allow_pdf_fallback)
+        ordered_units, by_hash, pages_covered, merged_dups, curr_offset = build_source_units_from_docs(
+            retrieved_docs,
+            limit=16,
+            text_cleaner=sanitize_unit_text,
+            deduplicate=dedup,
+        )
 
-        # 1. Convert top retrieved chunks into SourceUnits
-        for idx, doc in enumerate(retrieved_docs[:16]):
-            raw_text = str(doc.get("text") or doc.get("content") or "").strip()
-            clean_text = sanitize_unit_text(raw_text)
-            if not clean_text:
-                continue
-            doc_id = str(doc.get("doc_id") or doc.get("title") or f"doc_{idx + 1}")
-            page_no = int(doc.get("page_no") or doc.get("page") or 1)
-            pages_covered.add(page_no)
-            orig_offset = doc.get("character_offset") or doc.get("start_offset") or doc.get("offset")
-            unit_offset = int(orig_offset) if orig_offset is not None else curr_offset
-            unit = SourceUnit(
-                id=str(doc.get("id") or f"{doc_id}_p{page_no}_u{idx + 1}"),
-                text=clean_text,
-                doc_id=doc_id,
-                page_no=page_no,
-                character_offset=unit_offset,
+        failed_pdfs: list[dict[str, str]] = []
+        if allow_pdf_fallback and not ordered_units and pdf_paths:
+            failed_pdfs, extra_merged, curr_offset = ingest_pdf_fallbacks(
+                pdf_paths,
+                ordered_units=ordered_units,
+                units_by_content_hash=by_hash,
+                pages_covered=pages_covered,
+                curr_offset=curr_offset,
+                chunk_loader=load_or_parse_selected_pdf,
+                text_cleaner=sanitize_unit_text,
+                max_units_per_pdf=10,
+                deduplicate=True,
             )
-            source_units.append(unit.to_dict())
-            curr_offset = unit_offset + len(clean_text) + 1
+            merged_dups += extra_merged
 
-        # 2. Fallback if retrieved_docs was empty but pdf_paths exist
-        if allow_pdf_fallback and not source_units and pdf_paths:
-            for p in pdf_paths:
-                if not p or not os.path.exists(p):
-                    continue
-                pdf_chunks = load_or_parse_selected_pdf(p)
-                for idx, ch in enumerate(pdf_chunks[:10]):
-                    raw_text = str(ch.get("text", "")).strip()
-                    clean_text = sanitize_unit_text(raw_text)
-                    if not clean_text:
-                        continue
-                    orig_offset = ch.get("character_offset") or ch.get("start_offset") or ch.get("offset")
-                    unit_offset = int(orig_offset) if orig_offset is not None else curr_offset
-                    unit = SourceUnit(
-                        id=str(ch.get("id", f"u_{len(source_units) + 1}")),
-                        text=clean_text,
-                        doc_id=str(ch.get("doc_id", os.path.basename(p))),
-                        page_no=int(ch.get("page_no", 1)),
-                        character_offset=unit_offset,
-                    )
-                    source_units.append(unit.to_dict())
-                    curr_offset = unit_offset + len(clean_text) + 1
+        source_units = [u.to_dict() for u in ordered_units]
 
         document_schema = {
             "doc_id": source_units[0]["doc_id"] if source_units else "unknown",
             "pages_covered": sorted(list(pages_covered)),
             "engine": "Sanitized_SourceUnit_Pipeline",
             "total_units": len(source_units),
+            "failed_pdfs": failed_pdfs,
+            "dedup_merged_count": merged_dups,
         }
 
         trace = self.log_action(
@@ -130,6 +114,9 @@ class CPUMinReaderAgent(BaseAgent):
                 "engine": "Sanitized_SourceUnit_Pipeline",
                 "total_source_units": len(source_units),
                 "pages_covered": sorted(list(pages_covered)),
+                "dedup_merged_count": merged_dups,
+                "failed_pdf_count": len(failed_pdfs),
+                "failed_pdfs": failed_pdfs,
             },
         )
 

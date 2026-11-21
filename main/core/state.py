@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import operator
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Annotated, Any, Literal, Optional, TypedDict
 
 
@@ -22,9 +22,15 @@ def compute_context_hash(text: str, doc_id: str = "", page_no: int = 0) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
+def compute_content_hash(text: str) -> str:
+    """Computes a whitespace-normalized SHA-256 hash for exact-text deduplication across PDFs."""
+    normalized = " ".join((text or "").split())
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
+
+
 @dataclass
 class SourceUnit:
-    """Verbatim text unit extracted directly from a source document."""
+    """Verbatim text unit extracted directly from a source document with multi-source provenance."""
     id: str
     text: str
     doc_id: str = "unknown"
@@ -32,10 +38,44 @@ class SourceUnit:
     bbox: Optional[list[float]] = None
     character_offset: int = 0
     context_hash: str = ""
+    provenance: list[dict[str, Any]] = field(default_factory=list)
 
     def __post_init__(self):
         if not self.context_hash:
             self.context_hash = compute_context_hash(self.text, self.doc_id, self.page_no)
+        primary = {
+            "doc_id": self.doc_id,
+            "page_no": self.page_no,
+            "unit_id": self.id,
+            "context_hash": self.context_hash,
+        }
+        if not self.provenance:
+            self.provenance = [primary]
+        else:
+            keys = {(p.get("doc_id"), p.get("page_no"), p.get("unit_id")) for p in self.provenance if isinstance(p, dict)}
+            if (self.doc_id, self.page_no, self.id) not in keys:
+                self.provenance.insert(0, primary)
+
+    def merge_provenance(self, other: "SourceUnit") -> None:
+        """Retains provenance pointers from another identical-text SourceUnit without altering primary context_hash."""
+        existing_keys = {
+            (p.get("doc_id"), p.get("page_no"), p.get("unit_id"))
+            for p in self.provenance
+            if isinstance(p, dict)
+        }
+        other_entries = other.provenance or [{
+            "doc_id": other.doc_id,
+            "page_no": other.page_no,
+            "unit_id": other.id,
+            "context_hash": other.context_hash,
+        }]
+        for entry in other_entries:
+            if not isinstance(entry, dict):
+                continue
+            key = (entry.get("doc_id"), entry.get("page_no"), entry.get("unit_id"))
+            if key not in existing_keys:
+                existing_keys.add(key)
+                self.provenance.append(dict(entry))
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
