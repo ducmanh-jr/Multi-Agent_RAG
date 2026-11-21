@@ -329,6 +329,7 @@ def load_factcheck_model():
 class RouterRequest(BaseModel):
     query: str
     adapter: str = "router"
+    max_new_tokens: int = 512
 
 class SummarizeRequest(BaseModel):
     query: str
@@ -470,7 +471,8 @@ def router_endpoint(req: RouterRequest, response: Response = None):
         "Analyze the user query and output a JSON object with: intent, sub_queries, alpha (0.0 to 1.0), top_k (1 to 15), and reasoning.\n\n"
         f"Query: {req.query}\nOutput JSON:"
     )
-    raw = generate_with_qwen(prompt, adapter="router", max_new_tokens=512, temperature=0.1, response=response)
+    token_limit = max(8, min(int(req.max_new_tokens or 512), 512))
+    raw = generate_with_qwen(prompt, adapter="router", max_new_tokens=token_limit, temperature=0.1, response=response)
     try:
         m = re.search(r"\{.*\}", raw, re.DOTALL)
         if m:

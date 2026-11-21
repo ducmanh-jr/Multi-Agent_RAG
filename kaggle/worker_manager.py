@@ -701,7 +701,7 @@ class WorkerManager:
                                 adapters_ok = all(ad in loaded_adapters for ad in mandatory_adapters)
                                 models_ok = ("factcheck" in active_models) and ("qwen_cluster" in active_models)
                                 probe_path = f"{url}/api/router"
-                                probe_payload = {"query": "healthcheck", "adapter": "router"}
+                                probe_payload = {"query": "healthcheck", "adapter": "router", "max_new_tokens": 16}
 
                             # P1-1: models_ok strictly included in readiness decision
                             if status_ok and models_ok and adapters_ok and (mandatory_ready or data.get("ready") is True):
@@ -710,7 +710,7 @@ class WorkerManager:
                                     test_resp = await client.post(
                                         probe_path,
                                         json=probe_payload,
-                                        timeout=4.0
+                                        timeout=30.0
                                     )
                                     if test_resp.status_code == 200:
                                         return True
