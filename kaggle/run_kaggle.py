@@ -5,6 +5,7 @@ file extraction, per-GPU VRAM usage) while keeping the caller notebook to just 3
 """
 
 import os
+import signal
 import sys
 import subprocess
 import shutil
@@ -341,20 +342,25 @@ def run():
     # -------------------------------------------------------------------------
     # Pre-fetch Base Model into local HF cache so Step 4 startup is fast and progress is visible
     # -------------------------------------------------------------------------
+    worker_profile = os.environ.get("KAGGLE_WORKER_PROFILE", "gpu_finetune").strip().lower()
+    load_qwen_fallback = os.environ.get("HYBRID_LOAD_QWEN_FALLBACK", "false").strip().lower() in ("true", "1", "yes")
     base_model_spec = m_data.get("base_models", {}).get("qwen_7b_base", {})
     base_model_id = os.environ.get("BASE_QWEN_MODEL_ID", base_model_spec.get("model_id", "Qwen/Qwen2.5-7B-Instruct"))
-    print(f"\n    🌐 Đồng bộ Base Model {base_model_id} từ Hugging Face Hub:")
-    try:
-        from huggingface_hub import snapshot_download
-        print(f"      • Bắt đầu tải/kiểm tra cache các shard của {base_model_id}...")
-        snapshot_download(
-            repo_id=base_model_id,
-            allow_patterns=["*.json", "*.safetensors", "*.txt", "tokenizer*"],
-            ignore_patterns=["*.bin", "*.pt", "*.msgpack"],
-        )
-        print(f"      ✔ Base Model {base_model_id} đã sẵn sàng 100% trong cache!")
-    except Exception as e:
-        print(f"      ⚠️ Cảnh báo tải trước Base Model: {e}. Tiến trình Worker sẽ tự tải khi khởi động.")
+    if worker_profile == "hybrid_specialist" and not load_qwen_fallback:
+        print(f"\n    ⚡ Profile 'hybrid_specialist' (HYBRID_LOAD_QWEN_FALLBACK=false): Bỏ qua tải trước {base_model_id} (~15 GB) để khởi động nhanh.")
+    else:
+        print(f"\n    🌐 Đồng bộ Base Model {base_model_id} từ Hugging Face Hub:")
+        try:
+            from huggingface_hub import snapshot_download
+            print(f"      • Bắt đầu tải/kiểm tra cache các shard của {base_model_id}...")
+            snapshot_download(
+                repo_id=base_model_id,
+                allow_patterns=["*.json", "*.safetensors", "*.txt", "tokenizer*"],
+                ignore_patterns=["*.bin", "*.pt", "*.msgpack"],
+            )
+            print(f"      ✔ Base Model {base_model_id} đã sẵn sàng 100% trong cache!")
+        except Exception as e:
+            print(f"      ⚠️ Cảnh báo tải trước Base Model: {e}. Tiến trình Worker sẽ tự tải khi khởi động.")
 
     # -------------------------------------------------------------------------
     # 4. Start Master Supervisor Gateway & Load Dual GPU VRAM
@@ -364,16 +370,18 @@ def run():
     os.environ["PROJECT_DIR"] = repo_dir
 
     # Load optional tokens from Kaggle Secrets (never printed/logged) and enforce public tunnel auth
-    load_kaggle_secret_into_env("SUPERVISOR_ADMIN_TOKEN")
-    load_kaggle_secret_into_env("SUPERVISOR_API_TOKEN")
+    loaded_admin_secret = load_kaggle_secret_into_env("SUPERVISOR_ADMIN_TOKEN")
+    loaded_api_secret = load_kaggle_secret_into_env("SUPERVISOR_API_TOKEN")
     if os.environ.get("WORKER_LOAD_GEMINI_SECRET", "false").strip().lower() == "true":
         load_kaggle_secret_into_env("GEMINI_API_KEY")
 
     admin_token = os.environ.get("SUPERVISOR_ADMIN_TOKEN")
+    token_auto_generated = False
     if not admin_token:
         import secrets
         admin_token = secrets.token_hex(16)
         os.environ["SUPERVISOR_ADMIN_TOKEN"] = admin_token
+        token_auto_generated = True
     if not os.environ.get("SUPERVISOR_API_TOKEN"):
         os.environ["SUPERVISOR_API_TOKEN"] = admin_token
     os.environ.setdefault("PUBLIC_TUNNEL", "true")
@@ -476,19 +484,23 @@ def run():
     # -------------------------------------------------------------------------
     # 6. Beautiful Link Output Banner
     # -------------------------------------------------------------------------
+    display_token = admin_token if token_auto_generated else "<da nap tu Kaggle Secrets / env>"
     print("\n" + "╔" + "═" * 76 + "╗")
     print("║  🚀 THÔNG TIN KẾT NỐI CHO MULTI-AGENT RAG (HÃY SAO CHÉP CÁC DÒNG DƯỚI)   ║")
     print("╠" + "═" * 76 + "╣")
     print(f"║                                                                            ║")
     print(f"║    REMOTE_INFERENCE_URL={tunnel_url.ljust(51)}║")
-    print(f"║    SUPERVISOR_ADMIN_TOKEN={admin_token.ljust(49)}║")
+    print(f"║    REMOTE_INFERENCE_TOKEN={display_token.ljust(49)}║")
     print(f"║                                                                            ║")
     print("╚" + "═" * 76 + "╝")
     print("\n📌 HƯỚNG DẪN TIẾP THEO:")
     print(f"  1. Sao chép dòng: REMOTE_INFERENCE_URL={tunnel_url}")
-    print(f"  2. Sao chép dòng: SUPERVISOR_ADMIN_TOKEN={admin_token}")
+    if token_auto_generated:
+        print(f"  2. Sao chép dòng: REMOTE_INFERENCE_TOKEN={admin_token}")
+    else:
+        print("  2. Dùng đúng SUPERVISOR_API_TOKEN (hoặc SUPERVISOR_ADMIN_TOKEN) đã đặt trong Kaggle Secrets cho REMOTE_INFERENCE_TOKEN.")
     print(f"  3. Dán vào file .env trên máy của bạn (hoặc dán trực tiếp trên Web Demo2).")
-    print(f"  4. Cụm 7 Mô Hình SOTA đang trực tuyến và chạy trên Dual T4.")
+    print(f"  4. Profile đang chạy: {worker_profile} trên Dual T4.")
     print(f"  5. Muốn đổi sang Đại Mô Hình 32B AWQ: Chỉ cần 1-click trên Web Demo2!")
     print("─" * 78)
     print("🟢 Máy chủ đang giữ kết nối... Vui lòng để ô code này tiếp tục chạy.\n")

@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 REPO_URL="https://github.com/ducmanh-jr/Multi-Agent_RAG.git"
-BRANCH="${BRANCH:-refactor/assistant-core-reconstruction}"
+BRANCH="${BRANCH:-tatmanh}"
 TARGET_DIR="/kaggle/working/Multi-Agent_RAG"
 
 echo "=========================================================================="
