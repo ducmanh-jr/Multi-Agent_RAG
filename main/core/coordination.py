@@ -5,12 +5,12 @@ from hashlib import sha256
 import json
 from typing import Any, Iterable, Literal
 
-from core.config import settings
+from core.config import get_run_settings
 from core.state import AgentState
 
 
 Sender = Literal["summarizer", "fact_checker"]
-Recipient = Literal["retrieval", "reader", "summarizer"]
+Recipient = Literal["retrieval", "reader", "summarizer", "scout"]
 
 
 @dataclass(frozen=True)
@@ -40,7 +40,7 @@ class Handoff:
 
 
 def reflection_limit(state: AgentState) -> int:
-    cap = max(0, settings.MAX_ORCHESTRATOR_RETRY)
+    cap = max(0, get_run_settings().MAX_ORCHESTRATOR_RETRY)
     requested = state.get("max_reflection_loops")
     if requested is None:
         requested = state.get("max_iterations")
@@ -84,6 +84,10 @@ def _context_request(sender: Sender, state: AgentState, focus: tuple[str, ...]) 
     if unread:
         return Handoff(sender, "reader", "unread_chunks", focus, unread)
     if state.get("no_new_evidence"):
+        # When local documents are exhausted and auto_scout is enabled, Fact Checker can ask Scout
+        # to discover additional literature on the specific evidence gap (strictly bounded).
+        if sender == "fact_checker" and state.get("allow_scout_handoff"):
+            return Handoff("fact_checker", "scout", "discover_additional_literature", focus)
         return None
     return Handoff(sender, "retrieval", "missing_evidence", focus)
 

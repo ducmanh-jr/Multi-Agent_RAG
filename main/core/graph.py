@@ -1,10 +1,15 @@
+import asyncio
 from functools import partial
 from typing import Any, Callable, Optional
 from langgraph.graph import END, START, StateGraph
 
 from agents.agent0_scout.node import ScoutAgent
-from core.citation_audit import write_with_citation_audit
-from core.config import settings
+from core.citation_audit import citation_location, get_citation_audit, write_with_citation_audit
+from core.comparison_plan import (
+    compare_documents, comparison_schedule, get_comparison_budget, incomplete_comparison, review_comparison,
+    run_coro_sync,
+)
+from core.config import RunConfig, agent_inference_mode, use_run_config
 from core.coordination import decide_handoff, fact_check_accepted
 from core.figure_qa import (
     add_figure_evidence, attach_answer_figures, check_visual_answer,
@@ -13,7 +18,7 @@ from core.figure_qa import (
 from core.handoff_inputs import prepare_handoff_input
 from core.state import AgentState
 from core.supervisor import supervisor_planner
-from modes.registry import get_active_agents, get_agent_runners, normalize_mode
+from modes.registry import get_active_agents, get_agent_runners, normalize_mode, resolve_agent_modes
 from utils.logger import logger
 
 
@@ -168,7 +173,9 @@ def _handoff_for(state: AgentState, role: str, key: str) -> dict[str, Any] | Non
 
 def route_after_scout(state: AgentState) -> str:
     trace = state.get("reasoning_trace") or []
-    if trace and trace[-1].get("action") in {"discovery_clarify", "discovery_rejected"}:
+    if trace and trace[-1].get("action") in {
+        "discovery_clarify", "discovery_rejected", "discovery_failed", "download_failed", "waiting_for_document",
+    }:
         return END
     return "retrieval_node"
 
@@ -190,25 +197,154 @@ def route_after_fact_check(state: AgentState) -> str:
 _agents: dict[str, Any] = {}
 
 
-def build_research_rag_graph(mode: Optional[str] = None):
+def build_research_rag_graph(
+    mode: Optional[str] = None, *, run_config: RunConfig | None = None, auto_scout: bool = True,
+    parallel_retrieval: bool = False, comparison_plan: bool = False,
+):
     """Build a run-local team. Only the two reviewing roles can initiate corrective work."""
-    run_agents = get_agent_runners(mode)
-    reader_mode = normalize_mode(mode or settings.get_agent_mode("reader") or settings.EXECUTION_MODE)
-    scout = ScoutAgent()
+    run_config = run_config or RunConfig.capture()
+    with use_run_config(run_config):
+        run_agents = get_agent_runners(mode)
+        reader_mode = normalize_mode(mode or run_config.get_agent_mode("reader") or run_config.EXECUTION_MODE)
+        scout = ScoutAgent(auto_scout=auto_scout)
+        scout_mode = normalize_mode(mode or run_config.EXECUTION_MODE)
+        agent_modes = resolve_agent_modes(run_config, mode)
+        pilot_enabled = parallel_retrieval and agent_modes["retrieval"] == "cpu_min"
+        is_cpu_min_team = set(agent_modes.values()) == {"cpu_min"}
+        comparison_enabled = bool(comparison_plan)
+    if comparison_enabled:
+        from modes.cpu_min.reader import read_comparison_document
+
+    def _read_comparison_generic(query: str, path: str, ranking: list[dict[str, Any]]) -> dict[str, Any]:
+        from core.citation_audit import evidence_quote
+        from core.state import compute_context_hash
+        ranked_locs = {citation_location(chunk) for chunk in ranking if citation_location(chunk)}
+        ranked_ids = {chunk.get("id") for chunk in ranking if chunk.get("id")}
+        result = run_agents["reader"]({
+            "query": query, "pdf_path": path, "pdf_paths": [path], "retrieved_docs": ranking,
+        })
+        units = []
+        for unit in result.get("source_units") or []:
+            location = citation_location(unit)
+            text = evidence_quote(unit)
+            if not location or not text.strip() or location not in ranked_locs:
+                continue
+            if unit.get("id") not in ranked_ids and not str(unit.get("id") or "").startswith("table_"):
+                continue
+            unit_hash = unit.get("context_hash") or compute_context_hash(text, *location)
+            units.append({**unit, "context_hash": unit_hash, "source_path": path})
+        if not units:
+            raise ValueError("Reader returned no traceable evidence from the selected document.")
+        return {**result, "source_units": units}
+
+    def run_comparison_step(role, inputs, plan, previous):
+        reader = (
+            partial(read_comparison_document, run_agents["reader"], inputs.get("query", ""))
+            if is_cpu_min_team
+            else partial(_read_comparison_generic, inputs.get("query", ""))
+        )
+        top_k = max(len(plan.paths), min(int(inputs.get("top_k") or 8), 10))
+        if role == "retrieval":
+            if is_cpu_min_team:
+                update = run_agents[role](inputs, comparison=plan, comparison_reader=reader)
+            else:
+                per_doc_k = max(2, min(top_k, 8))
+
+                def rank_single_doc(path: str) -> list[dict[str, Any]]:
+                    res = run_agents["retrieval"]({
+                        **inputs,
+                        "pdf_path": path,
+                        "pdf_paths": [path],
+                        "top_k": per_doc_k,
+                    })
+                    return list(res.get("retrieved_docs") or [])
+
+                update = run_coro_sync(compare_documents(
+                    plan, rank_single_doc, reader, top_k,
+                    retry_count=inputs.get("retry_count", 0), read_only=False,
+                ))
+        else:
+            source_by_path = dict(zip(plan.paths, previous["required_sources"], strict=True))
+
+            def reuse_ranking(path):
+                return [chunk for chunk in inputs.get("retrieved_docs") or [] if chunk.get("doc_id") == source_by_path[path]]
+
+            update = run_coro_sync(compare_documents(
+                plan, reuse_ranking, reader, top_k,
+                retry_count=inputs.get("retry_count", 0), read_only=True,
+            ))
+        if comparison_schedule(update["reasoning_trace"])["status"] == "COMPLETED":
+            budget = get_comparison_budget()
+            if budget:
+                budget.remaining()
+            update = add_figure_evidence(inputs, update, reader_mode)
+        return update
+
+    def _run_scout(state: AgentState) -> dict[str, Any]:
+        request = _handoff_for(state, "scout", "recipient")
+        if not request:
+            return scout.run(state)
+        existing_paths = list(dict.fromkeys(
+            state.get("pdf_paths") or ([state["pdf_path"]] if state.get("pdf_path") else [])
+        ))
+        focus = [item for item in request.get("focus") or [] if isinstance(item, str) and item.strip()]
+        discovery_query = focus[0] if focus else state.get("query", "")
+        discovery_state = {**state, "query": discovery_query, "pdf_path": None, "pdf_paths": []}
+        update = scout.run(discovery_state)
+        trace = [
+            {
+                "action": "agent_handoff_received",
+                "agent": "scout",
+                "sender": request["sender"],
+                "recipient": "scout",
+                "reason": request["reason"],
+                "signature": request["signature"],
+                "retry_count": request["retry_count"],
+            },
+            *(update.get("reasoning_trace") or []),
+        ]
+        new_paths = list(dict.fromkeys(
+            update.get("pdf_paths") or ([update["pdf_path"]] if update.get("pdf_path") else [])
+        ))
+        merged_paths = list(dict.fromkeys([*existing_paths, *new_paths]))
+        if new_paths and merged_paths:
+            return {
+                **update,
+                "pdf_path": merged_paths[0],
+                "pdf_paths": merged_paths,
+                "no_new_evidence": False,
+                "reasoning_trace": trace,
+            }
+        # If discovery found no new PDF, preserve existing paths and let retrieval/escalation close cleanly
+        return {
+            "pdf_path": existing_paths[0] if existing_paths else None,
+            "pdf_paths": existing_paths,
+            "no_new_evidence": True,
+            "reasoning_trace": trace,
+        }
 
     def run_specialist(role: str, state: AgentState) -> dict[str, Any]:
         request = _handoff_for(state, role, "recipient")
         inputs = prepare_handoff_input(state, request) if request else state
         visual = figure_context(inputs).get("explicit", False)
+        previous = comparison_schedule(state.get("reasoning_trace") or []) if comparison_enabled and role == "reader" else None
+        comparison = (
+            supervisor_planner.plan_document_comparison(inputs)
+            if comparison_enabled and (role == "retrieval" or (previous and request)) else None
+        )
         if visual and role == "summarizer":
             update = draft_visual_answer(inputs)
         elif visual and role == "fact_checker":
             update = check_visual_answer(inputs)
+        elif comparison is not None:
+            update = run_comparison_step(role, inputs, comparison, previous)
+        elif pilot_enabled and role == "retrieval":
+            update = run_agents[role](inputs, parallel_search=True)
         else:
             update = run_agents[role](inputs)
-        if role == "reader":
+        if role == "reader" and comparison is None:
             update = add_figure_evidence(inputs, update, reader_mode)
-        if role == "reader" and state.get("retry_count") and state.get("source_units"):
+        if role == "reader" and comparison is None and state.get("retry_count") and state.get("source_units"):
             # A corrective read supplements the evidence already gathered for this question.
             units = []
             seen = set()
@@ -245,7 +381,12 @@ def build_research_rag_graph(mode: Optional[str] = None):
             }
 
         if not visual and role in {"summarizer", "fact_checker"}:
-            reviewed = {**state, **update, "reasoning_trace": [*(state.get("reasoning_trace") or []), *trace]}
+            reviewed = {
+                **state,
+                **update,
+                "allow_scout_handoff": bool(auto_scout),
+                "reasoning_trace": [*(state.get("reasoning_trace") or []), *trace],
+            }
             decision = decide_handoff(role, reviewed)
             if decision is not None:
                 attempt = state.get("retry_count", 0) + 1
@@ -257,33 +398,74 @@ def build_research_rag_graph(mode: Optional[str] = None):
     def _writer_node(state: AgentState) -> dict[str, Any]:
         writer = write_visual_answer if figure_context(state).get("explicit") else run_agents["writer"]
         result = write_with_citation_audit(state, writer)
+        comparison = comparison_schedule(state.get("reasoning_trace") or []) if comparison_enabled else None
+        if comparison:
+            references = get_citation_audit(result["reasoning_trace"]).get("references", [])
+            cited = {location[0] for ref in references if (location := citation_location(ref))}
+            if not cited.issuperset(comparison["required_sources"]):
+                return incomplete_comparison("missing_audited_source")
         if state.get("critic_action") == "lower_confidence":
             result["confidence"] = "low"
         else:
             result.setdefault("confidence", "high" if state.get("verified_claims") else "low")
         return attach_answer_figures(state, result)
 
+    def _escalation(state: AgentState) -> dict[str, Any]:
+        return attach_answer_figures(state, _write_escalated_report(state, run_agents["writer"]))
+
+    def _comparison_review(state: AgentState) -> dict[str, Any]:
+        evidence = comparison_schedule(state.get("reasoning_trace") or [])
+        return run_coro_sync(review_comparison(state, evidence["required_sources"], run_specialist, _writer_node))
+
+    def _after_comparison_review(state: AgentState) -> str:
+        last = state["reasoning_trace"][-1]
+        if last.get("action") != "agent_handoff":
+            return END
+        return "comparison_review_node" if last["recipient"] == "summarizer" else f"{last['recipient']}_node"
+
+    def _after_retrieval(state: AgentState) -> str:
+        schedule = comparison_schedule(state.get("reasoning_trace") or [])
+        if schedule is None:
+            return "reader_node"
+        return "comparison_review_node" if schedule["status"] == "COMPLETED" else END
+
+    def _after_reader(state: AgentState) -> str:
+        schedule = comparison_schedule(state.get("reasoning_trace") or [])
+        if schedule is None:
+            return "summarizer_node"
+        return "comparison_review_node" if schedule["status"] == "COMPLETED" else END
+
     workflow = StateGraph(AgentState)
 
-    workflow.add_node("orchestrator_router", orchestrator_router_node)
-    workflow.add_node("scout_node", scout.run)
+    # Bind the snapshot at the node boundary, including when LangGraph runs in an executor.
+    workflow.add_node("orchestrator_router", use_run_config(run_config)(orchestrator_router_node))
+    workflow.add_node("scout_node", use_run_config(run_config)(agent_inference_mode(scout_mode)(_run_scout)))
     for role in ("retrieval", "reader", "summarizer", "fact_checker"):
-        workflow.add_node(f"{role}_node", partial(run_specialist, role))
-    workflow.add_node("escalation_node", lambda state: attach_answer_figures(state, _write_escalated_report(state, run_agents["writer"])))
-    workflow.add_node("writer_node", _writer_node)
+        workflow.add_node(f"{role}_node", use_run_config(run_config)(partial(run_specialist, role)))
+    workflow.add_node("escalation_node", use_run_config(run_config)(_escalation))
+    workflow.add_node("writer_node", use_run_config(run_config)(_writer_node))
 
     workflow.add_edge(START, "orchestrator_router")
     workflow.add_edge("orchestrator_router", "scout_node")
     workflow.add_conditional_edges("scout_node", route_after_scout, ["retrieval_node", END])
-    workflow.add_edge("retrieval_node", "reader_node")
-    workflow.add_edge("reader_node", "summarizer_node")
+    if comparison_enabled:
+        workflow.add_node("comparison_review_node", use_run_config(run_config)(_comparison_review))
+        workflow.add_conditional_edges("retrieval_node", _after_retrieval, ["reader_node", "comparison_review_node", END])
+        workflow.add_conditional_edges("reader_node", _after_reader, ["summarizer_node", "comparison_review_node", END])
+        workflow.add_conditional_edges(
+            "comparison_review_node", _after_comparison_review,
+            ["retrieval_node", "reader_node", "comparison_review_node", "scout_node", END],
+        )
+    else:
+        workflow.add_edge("retrieval_node", "reader_node")
+        workflow.add_edge("reader_node", "summarizer_node")
 
     correction_targets = ["retrieval_node", "reader_node", "summarizer_node"]
     workflow.add_conditional_edges(
         "summarizer_node", route_after_summarizer, [*correction_targets, "fact_checker_node"]
     )
     workflow.add_conditional_edges(
-        "fact_checker_node", route_after_fact_check, [*correction_targets, "writer_node", "escalation_node"]
+        "fact_checker_node", route_after_fact_check, [*correction_targets, "scout_node", "writer_node", "escalation_node"]
     )
     workflow.add_edge("writer_node", END)
     workflow.add_edge("escalation_node", END)

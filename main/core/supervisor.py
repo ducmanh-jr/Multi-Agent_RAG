@@ -10,10 +10,14 @@ Provides:
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import Any, Optional
 
+from core.comparison_plan import ComparisonPlan, MAX_COMPARISON_DOCUMENTS
 from core.config import settings
 from core.schemas import RouterPlanOutput
+from core.state import AgentState
+from utils.json_repair import extract_and_parse_json
 from utils.logger import logger
 
 
@@ -34,6 +38,89 @@ class AgenticSupervisorPlanner:
     Unified Supervisor & Query Planner used by all 6 modes.
     Can run deterministically in < 2ms (for CPU Min / Hybrid fast-path) or refine via LLM.
     """
+
+    def plan_document_comparison(self, state: AgentState) -> ComparisonPlan | None:
+        paths = tuple(dict.fromkeys(state.get("pdf_paths") or []))
+        if (
+            state.get("is_comparative_query")
+            and 2 <= len(paths) <= MAX_COMPARISON_DOCUMENTS
+            and all(Path(path).suffix.lower() == ".pdf" for path in paths)
+        ):
+            return ComparisonPlan(paths)
+        return None
+
+    def plan_query_with_llm(
+        self,
+        query: str,
+        *,
+        evidence_gaps: Optional[list[dict[str, Any]]] = None,
+        retry_count: int = 0,
+        llm_fn: Any | None = None,
+    ) -> RouterPlanOutput:
+        """
+        Refines the deterministic Supervisor plan with an LLM DAG decomposition when an LLM
+        callable is supplied (e.g. Gemini or Kaggle Qwen Router), always failing open to
+        the deterministic plan_query() on malformed JSON or provider errors.
+        """
+        base = self.plan_query(query, evidence_gaps=evidence_gaps, retry_count=retry_count)
+        if llm_fn is None or not (query or "").strip():
+            return base
+        prompt = (
+            "Decompose this academic research query into a structured search plan. "
+            "Return ONLY a JSON object with keys: intent (compare|results|methodology|limitation|summarize|academic_research), "
+            "complexity (LOW|MEDIUM|HIGH), sub_queries (1 to 4 concise focused search strings preserving exact entities/numbers), "
+            "required_entities (array of up to 8 key terms/models/datasets), is_comparative_query (boolean), "
+            "is_numeric_query (boolean), alpha (float 0.0..1.0), top_k (int 4..10).\n"
+            f"Query: {query[:600]}"
+        )
+        try:
+            raw = llm_fn(prompt)
+            parsed = raw if isinstance(raw, dict) else extract_and_parse_json(str(raw or ""))
+            if not isinstance(parsed, dict):
+                return base
+            raw_subs = parsed.get("sub_queries")
+            llm_subs = [
+                str(s).strip() for s in raw_subs
+                if isinstance(s, str) and 3 <= len(s.strip()) <= 300
+            ] if isinstance(raw_subs, list) else []
+            merged_subs = list(dict.fromkeys([query.strip(), *llm_subs, *base.sub_queries]))[:4]
+            raw_ents = parsed.get("required_entities")
+            llm_ents = [
+                str(e).strip() for e in raw_ents
+                if isinstance(e, str) and 2 <= len(e.strip()) <= 80
+            ] if isinstance(raw_ents, list) else []
+            merged_ents = list(dict.fromkeys([*base.required_entities, *llm_ents]))[:8]
+
+            intent_val = str(parsed.get("intent") or base.intent).strip().lower()
+            valid_intents = {"compare", "results", "methodology", "limitation", "summarize", "academic_research"}
+            intent = intent_val if intent_val in valid_intents else base.intent
+            comp_val = str(parsed.get("complexity") or base.complexity).strip().upper()
+            complexity = comp_val if comp_val in {"LOW", "MEDIUM", "HIGH"} else base.complexity
+            is_comp = bool(parsed.get("is_comparative_query")) or base.is_comparative_query or intent == "compare"
+            is_num = bool(parsed.get("is_numeric_query")) or base.is_numeric_query or intent == "results"
+            try:
+                alpha = max(0.0, min(1.0, float(parsed.get("alpha", base.alpha))))
+            except (TypeError, ValueError):
+                alpha = base.alpha
+            try:
+                top_k = max(4, min(10, int(parsed.get("top_k", base.top_k))))
+            except (TypeError, ValueError):
+                top_k = base.top_k
+
+            return RouterPlanOutput(
+                intent=intent,
+                complexity=complexity,  # type: ignore[arg-type]
+                sub_queries=merged_subs,
+                required_entities=merged_ents,
+                is_numeric_query=is_num,
+                is_comparative_query=is_comp,
+                alpha=alpha,
+                top_k=top_k,
+                reasoning=f"LLM-Refined Supervisor: Intent={intent}, Complexity={complexity}, SubQueries={len(merged_subs)}",
+            )
+        except Exception as exc:
+            logger.debug("[SupervisorPlanner] LLM refinement fallback to deterministic plan: %s", exc)
+            return base
 
     def plan_query(
         self,
