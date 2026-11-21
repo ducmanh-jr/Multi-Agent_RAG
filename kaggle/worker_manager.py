@@ -851,7 +851,7 @@ class WorkerManager:
                     "--port", "8002",
                 ]
                 self._proc = self._spawn_process(cmd, "worker_max.log")
-                max_timeout = int(os.environ.get("WORKER_MAX_TIMEOUT", "300"))
+                max_timeout = int(os.environ.get("WORKER_MAX_TIMEOUT", "600"))
                 online = await self._poll_worker_ready("gpu_max", "http://127.0.0.1:8002", timeout_seconds=max_timeout)
             else:
                 cmd = [
