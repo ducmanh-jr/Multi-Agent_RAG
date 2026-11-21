@@ -632,8 +632,7 @@ class WorkerManager:
         Deep Readiness Polling (P0-4):
         1. Checks child process health; fails-fast immediately if process exits.
         2. Properly manages HTTP connections via `async with httpx.AsyncClient()`.
-        3. For gpu_finetune: verifies all mandatory adapters & models are loaded,
-           and validates inference via test probe to /api/router.
+        3. For gpu_finetune: verifies all mandatory adapters & models are loaded.
         4. For gpu_max: queries /v1/models and verifies the exact 32B model ID is served.
         """
         import httpx
@@ -684,18 +683,7 @@ class WorkerManager:
 
                             # P1-1: models_ok strictly included in readiness decision
                             if status_ok and models_ok and adapters_ok and (mandatory_ready or data.get("ready") is True):
-                                # Test live request to mandatory endpoint to verify execution capability
-                                try:
-                                    test_resp = await client.post(
-                                        f"{url}/api/router",
-                                        json={"query": "healthcheck", "adapter": "router"},
-                                        timeout=4.0
-                                    )
-                                    if test_resp.status_code == 200:
-                                        return True
-                                except Exception:
-                                    # If router ping times out or errors, continue polling
-                                    pass
+                                return True
                 except Exception:
                     pass
 

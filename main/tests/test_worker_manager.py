@@ -555,6 +555,29 @@ def test_healthcheck_rejects_finetune_if_mandatory_adapters_missing(worker_manag
     asyncio.run(_test())
 
 
+def test_readiness_poll_success_when_models_and_adapters_ready(worker_manager):
+    """Verify _poll_worker_ready succeeds immediately when all mandatory models and adapters are present."""
+    async def _test():
+        mock_health_data = {
+            "status": "online",
+            "ready": True,
+            "mandatory_ready": True,
+            "loaded_adapters": ["router", "generator", "critic", "writer"],
+            "active_models": ["qwen_cluster", "factcheck"],
+        }
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = mock_health_data
+
+        with patch("httpx.AsyncClient.get", return_value=mock_resp), \
+             patch("asyncio.sleep", new_callable=AsyncMock):
+
+            is_ready = await worker_manager._poll_worker_ready("gpu_finetune", "http://127.0.0.1:8001", timeout_seconds=1)
+            assert is_ready is True
+
+    asyncio.run(_test())
+
+
 def test_readiness_poll_requires_models_ok(worker_manager):
     """
     CRITICAL P1-1: Verify _poll_worker_ready rejects Finetune worker if active_models
