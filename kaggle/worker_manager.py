@@ -457,6 +457,8 @@ class WorkerManager:
         # Wait up to 8s for graceful process exit
         poll_start = time.time()
         while time.time() - poll_start < 8.0:
+            if self._proc:
+                self._proc.poll()
             if not is_process_group_alive(pgid) and (self._proc is None or self._proc.poll() is not None):
                 break
             await asyncio.sleep(0.2)
@@ -467,9 +469,19 @@ class WorkerManager:
             kill_process_group(pgid, SIGKILL)
             kill_start = time.time()
             while time.time() - kill_start < 5.0:
+                if self._proc:
+                    self._proc.poll()
                 if not is_process_group_alive(pgid):
                     break
                 await asyncio.sleep(0.2)
+
+        # Ensure direct child process is reaped from kernel table before final PGID check
+        if self._proc:
+            try:
+                self._proc.poll()
+                self._proc.wait(timeout=2.0)
+            except Exception:
+                pass
 
         # Strict Verification 1: Process group must NOT be alive
         if pgid and is_process_group_alive(pgid):
