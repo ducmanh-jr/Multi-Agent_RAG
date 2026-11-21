@@ -1,0 +1,43 @@
+name: Research V2 baseline
+
+on:
+  push:
+    branches:
+      - 'codex/research-v2-*'
+  pull_request:
+    branches:
+      - tatmanh
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      PYTHONUTF8: '1'
+      PYTHON_DOTENV_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11.9'
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-baseline.txt
+      - name: Install baseline dependencies
+        run: python -m pip install -r requirements.txt -c requirements-baseline.txt
+      - name: Offline unit and contract tests
+        run: python -m pytest -q -m "not integration"
+      - name: Offline graph integration tests
+        run: python -m pytest -q -m integration
+      - name: Four-question PDF smoke benchmark
+        run: python main/eval/run_benchmark.py --pilot --modes cpu_min --limit-per-cat 0 --output-dir "${{ runner.temp }}/research-baseline-pilot"
+      - name: Upload pilot results
+        uses: actions/upload-artifact@v4
+        with:
+          name: research-baseline-pilot
+          path: ${{ runner.temp }}/research-baseline-pilot

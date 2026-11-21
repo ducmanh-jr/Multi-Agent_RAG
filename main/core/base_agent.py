@@ -9,7 +9,7 @@ Every Agent class must implement:
 from abc import ABC, abstractmethod
 from typing import Any
 
-from core.config import agent_inference_mode, settings
+from core.config import agent_inference_mode, get_run_settings
 from core.state import AgentState
 from utils.logger import logger
 
@@ -19,11 +19,16 @@ class BaseAgent(ABC):
     Unified abstract base class for all 5 Agent nodes in the LangGraph StateGraph.
     """
 
-    def __init__(self, name: str, max_internal_retry: int = settings.DEFAULT_MAX_INTERNAL_RETRY):
+    def __init__(self, name: str, max_internal_retry: int | None = None):
         self.name = name
-        self.max_internal_retry = max_internal_retry
+        self.max_internal_retry = (
+            self.settings.DEFAULT_MAX_INTERNAL_RETRY if max_internal_retry is None else max_internal_retry
+        )
         self.logger = logger
-        self.settings = settings
+
+    @property
+    def settings(self):
+        return get_run_settings()
 
     @abstractmethod
     def run(self, state: AgentState) -> dict[str, Any]:

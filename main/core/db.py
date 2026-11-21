@@ -24,6 +24,8 @@ import sqlite3
 
 import threading
 
+import time
+
 import uuid
 
 from contextlib import contextmanager
@@ -160,6 +162,18 @@ def _create_tables(conn: sqlite3.Connection):
 
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_runs_session ON research_runs(session_id);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_runs_doc ON research_runs(document_id);")
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS run_documents (
+            run_id TEXT NOT NULL REFERENCES research_runs(id) ON DELETE CASCADE,
+            position INTEGER NOT NULL,
+            document_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            path TEXT NOT NULL,
+            sha256 TEXT NOT NULL,
+            PRIMARY KEY (run_id, position),
+            UNIQUE (run_id, document_id)
+        )
+    """)
 
     _migrate_orphan_runs(cursor)
 
@@ -211,6 +225,7 @@ def get_db_connection() -> sqlite3.Connection:
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = sqlite3.connect(DB_PATH, timeout=30.0, check_same_thread=False)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys=ON;")
     try:
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA busy_timeout=30000;")
@@ -243,6 +258,7 @@ def init_db():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = sqlite3.connect(DB_PATH, timeout=30.0, check_same_thread=False)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys=ON;")
     try:
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA busy_timeout=30000;")
@@ -451,6 +467,17 @@ def sync_uploads_to_db(upload_dir: Optional[str] = None) -> int:
 
 
 
+def _write_run_documents(conn: sqlite3.Connection, run_id: str, documents: list[dict[str, Any]]):
+    conn.execute("DELETE FROM run_documents WHERE run_id = ?", (run_id,))
+    conn.executemany("""
+        INSERT INTO run_documents (run_id, position, document_id, name, path, sha256)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (
+        (run_id, index, document["id"], document["name"], document["path"], document["sha256"])
+        for index, document in enumerate(documents)
+    ))
+
+
 def save_run(
     run_id: str,
     question: str,
@@ -463,195 +490,139 @@ def save_run(
     error: Optional[str] = None,
     document_id: Optional[str] = None,
     session_id: Optional[str] = None,
+    documents: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    conn = get_db_connection()
-    cursor = conn.cursor()
     now = datetime.datetime.now().isoformat()
+    session_id = session_id or f"session_{uuid.uuid4().hex[:10]}"
+    if documents is not None:
+        document_id = documents[0]["id"] if documents else None
 
-    if not session_id:
-        session_id = f"session_{uuid.uuid4().hex[:10]}"
+    title = (question or "Cuộc trò chuyện").strip()
+    if title.startswith("/"):
+        title = title.lstrip("/").replace("-", " ").capitalize()
+    if len(title) > 60:
+        title = title[:57] + "..."
 
-    cursor.execute("SELECT id FROM chat_sessions WHERE id = ?", (session_id,))
-    if not cursor.fetchone():
-        clean_title = (question or "Cuộc trò chuyện").strip()
-        if clean_title.startswith("/"):
-            clean_title = clean_title.lstrip("/").replace("-", " ").capitalize()
-        if len(clean_title) > 60:
-            clean_title = clean_title[:57] + "..."
-        cursor.execute("""
+    with db_session() as conn, conn:
+        conn.execute("""
             INSERT INTO chat_sessions (id, title, created_at, updated_at, document_id)
             VALUES (?, ?, ?, ?, ?)
-        """, (session_id, clean_title or "Đoạn nghiên cứu", now, now, document_id))
-    else:
-        cursor.execute("""
-            UPDATE chat_sessions SET updated_at = ?, document_id = COALESCE(?, document_id) WHERE id = ?
-        """, (now, document_id, session_id))
-
-    cursor.execute("""
-        INSERT OR REPLACE INTO research_runs (
-            id, question, status, created_at, final_report,
-            verified_claims, rejected_claims, evidence_spans, reasoning_trace, error, document_id, session_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        run_id,
-        question,
-        status,
-        now,
-        final_report,
-        json.dumps(verified_claims or [], ensure_ascii=False),
-        json.dumps(rejected_claims or [], ensure_ascii=False),
-        json.dumps(evidence_spans or [], ensure_ascii=False),
-        json.dumps(reasoning_trace or [], ensure_ascii=False),
-        error,
-        document_id,
-        session_id,
-    ))
-
-    conn.commit()
-    conn.close()
-
-    return get_run(run_id)
-
-
-
+            ON CONFLICT(id) DO UPDATE SET
+                updated_at = excluded.updated_at,
+                document_id = COALESCE(excluded.document_id, chat_sessions.document_id)
+        """, (session_id, title or "Đoạn nghiên cứu", now, now, document_id))
+        conn.execute("""
+            INSERT OR REPLACE INTO research_runs (
+                id, question, status, created_at, final_report,
+                verified_claims, rejected_claims, evidence_spans, reasoning_trace, error, document_id, session_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            run_id, question, status, now, final_report,
+            json.dumps(verified_claims or [], ensure_ascii=False),
+            json.dumps(rejected_claims or [], ensure_ascii=False),
+            json.dumps(evidence_spans or [], ensure_ascii=False),
+            json.dumps(reasoning_trace or [], ensure_ascii=False),
+            error, document_id, session_id,
+        ))
+        if documents is not None:
+            _write_run_documents(conn, run_id, documents)
+        return _read_runs(conn, "WHERE r.id = ?", (run_id,))[0]
 
 
 def update_run_result(
-
     run_id: str,
-
     status: str,
-
     final_report: str = "",
-
     verified_claims: list = None,
-
     rejected_claims: list = None,
-
     evidence_spans: list = None,
-
     reasoning_trace: list = None,
-
     error: Optional[str] = None,
-
-):
-
-    conn = get_db_connection()
-
-    cursor = conn.cursor()
-
-    cursor.execute("""
-
-        UPDATE research_runs SET
-
-            status = ?,
-
-            final_report = ?,
-
-            verified_claims = ?,
-
-            rejected_claims = ?,
-
-            evidence_spans = ?,
-
-            reasoning_trace = ?,
-
-            error = ?
-
-        WHERE id = ?
-
-    """, (
-
-        status,
-
-        final_report,
-
+    documents: list[dict[str, Any]] | None = None,
+    deadline_at: float | None = None,
+) -> bool:
+    """Write progress or a terminal result only while the run is processing."""
+    values = (
+        status, final_report,
         json.dumps(verified_claims or [], ensure_ascii=False),
-
         json.dumps(rejected_claims or [], ensure_ascii=False),
-
         json.dumps(evidence_spans or [], ensure_ascii=False),
-
         json.dumps(reasoning_trace or [], ensure_ascii=False),
+        error, run_id,
+    )
+    with db_session() as conn, conn:
+        if deadline_at is not None:
+            # Test the monotonic deadline after acquiring the SQLite write lock.
+            conn.execute("BEGIN IMMEDIATE")
+            if time.monotonic() >= deadline_at:
+                return False
+        cursor = conn.execute("""
+            UPDATE research_runs SET
+                status = ?, final_report = ?, verified_claims = ?, rejected_claims = ?,
+                evidence_spans = ?, reasoning_trace = ?, error = ?
+            WHERE id = ? AND status = 'processing'
+        """, values)
+        if not cursor.rowcount:
+            return False
+        if documents is not None:
+            _write_run_documents(conn, run_id, documents)
+            document_id = documents[0]["id"] if documents else None
+            conn.execute("UPDATE research_runs SET document_id = ? WHERE id = ?", (document_id, run_id))
+            if document_id:
+                conn.execute("""
+                    UPDATE chat_sessions SET document_id = ?
+                    WHERE id = (SELECT session_id FROM research_runs WHERE id = ?)
+                """, (document_id, run_id))
+        return True
 
-        error,
 
-        run_id,
-
-    ))
-
-    conn.commit()
-
-    conn.close()
+def run_is_processing(run_id: str) -> bool:
+    with db_session() as conn:
+        row = conn.execute("SELECT status FROM research_runs WHERE id = ?", (run_id,)).fetchone()
+    return row is not None and row["status"] == "processing"
 
 
+def cancel_run(run_id: str) -> str | None:
+    """Cancel atomically and return the actual status, preserving recorded progress."""
+    with db_session() as conn, conn:
+        conn.execute(
+            "UPDATE research_runs SET status = 'cancelled' WHERE id = ? AND status = 'processing'",
+            (run_id,),
+        )
+        row = conn.execute("SELECT status FROM research_runs WHERE id = ?", (run_id,)).fetchone()
+        return row["status"] if row else None
 
+
+def _read_runs(conn: sqlite3.Connection, clause: str, args: tuple = ()) -> list[dict[str, Any]]:
+    rows = conn.execute("""
+        SELECT r.*,
+            (SELECT json_group_array(json_object('id', document_id, 'name', name, 'sha256', sha256))
+             FROM (SELECT document_id, name, sha256 FROM run_documents
+                   WHERE run_id = r.id ORDER BY position)) AS documents
+        FROM research_runs r
+    """ + clause, args)
+    runs = []
+    for row in rows:
+        run = dict(row)
+        for key in ("verified_claims", "rejected_claims", "evidence_spans", "reasoning_trace", "documents"):
+            run[key] = json.loads(run.get(key) or "[]")
+        # Legacy runs only recorded a primary ID. Its historical bytes are unknown.
+        run["document_ids"] = [item["id"] for item in run["documents"]]
+        if not run["document_ids"] and run.get("document_id"):
+            run["document_ids"] = [run["document_id"]]
+        runs.append(run)
+    return runs
 
 
 def get_run(run_id: str) -> Optional[dict[str, Any]]:
-
-    conn = get_db_connection()
-
-    cursor = conn.cursor()
-
-    cursor.execute("SELECT * FROM research_runs WHERE id = ?", (run_id,))
-
-    row = cursor.fetchone()
-
-    conn.close()
-
-    if not row:
-
-        return None
-
-    d = dict(row)
-
-    d["verified_claims"] = json.loads(d.get("verified_claims") or "[]")
-
-    d["rejected_claims"] = json.loads(d.get("rejected_claims") or "[]")
-
-    d["evidence_spans"] = json.loads(d.get("evidence_spans") or "[]")
-
-    d["reasoning_trace"] = json.loads(d.get("reasoning_trace") or "[]")
-
-    return d
-
-
-
+    with db_session() as conn:
+        runs = _read_runs(conn, "WHERE r.id = ?", (run_id,))
+    return runs[0] if runs else None
 
 
 def list_runs() -> list[dict[str, Any]]:
-
-    conn = get_db_connection()
-
-    cursor = conn.cursor()
-
-    cursor.execute("SELECT * FROM research_runs ORDER BY created_at DESC, rowid DESC")
-
-    rows = cursor.fetchall()
-
-    conn.close()
-
-    result = []
-
-    for row in rows:
-
-        d = dict(row)
-
-        d["verified_claims"] = json.loads(d.get("verified_claims") or "[]")
-
-        d["rejected_claims"] = json.loads(d.get("rejected_claims") or "[]")
-
-        d["evidence_spans"] = json.loads(d.get("evidence_spans") or "[]")
-
-        d["reasoning_trace"] = json.loads(d.get("reasoning_trace") or "[]")
-
-        result.append(d)
-
-    return result
-
-
-
+    with db_session() as conn:
+        return _read_runs(conn, "ORDER BY r.created_at DESC, r.rowid DESC")
 
 
 def delete_run(run_id: str) -> bool:
@@ -783,20 +754,8 @@ def clear_all_sessions() -> int:
 
 
 def get_session_runs(session_id: str) -> list[dict[str, Any]]:
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM research_runs WHERE session_id = ? ORDER BY created_at ASC", (session_id,))
-    rows = cursor.fetchall()
-    conn.close()
-    result = []
-    for row in rows:
-        d = dict(row)
-        d["verified_claims"] = json.loads(d.get("verified_claims") or "[]")
-        d["rejected_claims"] = json.loads(d.get("rejected_claims") or "[]")
-        d["evidence_spans"] = json.loads(d.get("evidence_spans") or "[]")
-        d["reasoning_trace"] = json.loads(d.get("reasoning_trace") or "[]")
-        result.append(d)
-    return result
+    with db_session() as conn:
+        return _read_runs(conn, "WHERE r.session_id = ? ORDER BY r.created_at ASC", (session_id,))
 
 
 # ==================== LLM CACHE OPERATIONS ====================

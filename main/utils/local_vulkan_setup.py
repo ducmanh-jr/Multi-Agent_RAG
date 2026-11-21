@@ -12,7 +12,7 @@ import time
 from typing import Any, Optional
 import httpx
 
-from core.config import settings
+from core.config import get_run_settings
 from utils.logger import logger
 
 
@@ -23,26 +23,24 @@ os.environ.setdefault("OLLAMA_KEEP_ALIVE", "30m")
 os.environ.setdefault("OMP_NUM_THREADS", "8")
 
 
-_PROBE_CACHE: dict[str, Any] = {
-    "timestamp": 0.0,
-    "status": {},
-}
+_PROBE_CACHE: tuple[tuple[str, str, str, bool], float, dict[str, Any]] | None = None
 
 
 def get_local_hardware_profile() -> dict[str, Any]:
-    """Dynamically detects host hardware capabilities with platform & psutil."""
+    """Report host hardware and include psutil details when available."""
     import platform
-    import psutil
-
-    cpu_name = platform.processor() or platform.machine() or "Host Processor"
-    cores_physical = psutil.cpu_count(logical=False) or 4
-    cores_logical = psutil.cpu_count(logical=True) or 8
 
     try:
-        mem = psutil.virtual_memory()
-        ram_gb = round(mem.total / (1024 ** 3))
-    except Exception:
-        ram_gb = 16
+        import psutil
+    except ImportError:
+        psutil = None
+
+    cpu_name = platform.processor() or platform.machine() or "Host Processor"
+    cores_physical = psutil.cpu_count(logical=False) if psutil else None
+    cores_logical = os.cpu_count() or 1
+    core_count = f"{cores_physical}C/{cores_logical}T" if cores_physical else f"{cores_logical}T"
+
+    ram_gb = round(psutil.virtual_memory().total / (1024 ** 3)) if psutil else None
 
     node_name = platform.node() or "Local Host"
     system_os = f"{platform.system()} {platform.release()}"
@@ -58,7 +56,7 @@ def get_local_hardware_profile() -> dict[str, Any]:
     return {
         "device": node_name,
         "os": system_os,
-        "cpu": f"{cpu_name} ({cores_physical}C/{cores_logical}T)",
+        "cpu": f"{cpu_name} ({core_count})",
         "igpu": igpu_desc,
         "ram_gb": ram_gb,
         "ollama_vulkan_enabled": os.environ.get("OLLAMA_VULKAN") == "1",
@@ -69,6 +67,7 @@ def get_local_hardware_profile() -> dict[str, Any]:
 
 def probe_ollama_models(base_url: Optional[str] = None, timeout: float = 1.8) -> dict[str, Any]:
     """Checks if local Ollama server is running and lists installed models."""
+    settings = get_run_settings()
     url = (base_url or settings.LOCAL_CPU_URL or "http://localhost:11434").rstrip("/")
     try:
         resp = httpx.get(f"{url}/api/tags", timeout=timeout)
@@ -104,7 +103,7 @@ def probe_ollama_models(base_url: Optional[str] = None, timeout: float = 1.8) ->
 
 def probe_kaggle_worker(remote_url: Optional[str] = None, timeout: float = 5.0) -> dict[str, Any]:
     """Checks if the remote Kaggle GPU Worker (Multi-LoRA or vLLM 32B) is online."""
-    url = (remote_url or settings.REMOTE_INFERENCE_URL or "").rstrip("/")
+    url = (remote_url or get_run_settings().REMOTE_INFERENCE_URL or "").rstrip("/")
     if not url:
         return {"online": False, "url": "", "adapters": [], "has_vllm_32b": False}
 
@@ -159,13 +158,17 @@ def probe_all_capabilities(force_refresh: bool = False) -> dict[str, Any]:
     Cached capability probe (TTL = 10s) across Local CPU/Vulkan, Gemini API, and Kaggle GPU.
     Used by Hybrid Mode to dynamically route Generator and Cross-Model Verifier.
     """
-    now = time.time()
-    if not force_refresh and _PROBE_CACHE["status"] and (now - _PROBE_CACHE["timestamp"] < 10.0):
-        return _PROBE_CACHE["status"]
+    global _PROBE_CACHE
+    settings = get_run_settings()
+    gemini_ready = bool(settings.GEMINI_API_KEY and len(settings.GEMINI_API_KEY.strip()) > 10)
+    key = (settings.LOCAL_CPU_URL, settings.LOCAL_CPU_MODEL, settings.REMOTE_INFERENCE_URL, gemini_ready)
+    now = time.monotonic()
+    cached = _PROBE_CACHE
+    if not force_refresh and cached and cached[0] == key and now - cached[1] < 10.0:
+        return cached[2]
 
     ollama_info = probe_ollama_models()
     kaggle_info = probe_kaggle_worker()
-    gemini_ready = bool(settings.GEMINI_API_KEY and len(settings.GEMINI_API_KEY.strip()) > 10)
 
     # Check remaining Gemini quota today
     gemini_used_today = 0
@@ -210,6 +213,5 @@ def probe_all_capabilities(force_refresh: bool = False) -> dict[str, Any]:
             "has_vllm_32b": kaggle_info.get("has_vllm_32b", False),
         },
     }
-    _PROBE_CACHE["timestamp"] = now
-    _PROBE_CACHE["status"] = status
+    _PROBE_CACHE = (key, now, status)
     return status

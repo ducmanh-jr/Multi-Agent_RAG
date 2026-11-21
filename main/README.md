@@ -16,7 +16,7 @@
 | [`api/`](api/) | **FastAPI Backend** (`app.py`): Quản lý phiên làm việc, tải lên PDF, cấu hình động từng Agent, kiểm tra trạng thái phần cứng (`/api/capabilities`). |
 | [`web_demo2/`](web_demo2/) | **Giao diện Web Nghiên cứu chính**: Hỗ trợ chọn tài liệu PDF, xem trích dẫn trực tiếp, chọn chế độ thực thi nhanh hoặc tùy biến từng Agent. |
 | [`eval/`](eval/) | **Bộ Benchmark 120 câu hỏi song ngữ**: Chứa `benchmark_120.jsonl`, `metrics.py`, `run_benchmark.py` và báo cáo `benchmark_report.md`. |
-| [`tests/`](tests/) | **Bộ Kiểm Thử Toàn Diện**: Chứa `system_sanity_check.py` (kiểm tra 35 cặp agent), `test_hybrid_resilience.py` (kiểm tra 4 kịch bản chịu lỗi) và `test_gpu_ft_live.py`. |
+| [`tests/`](tests/) | **Kiểm thử Research V2** gồm các ca kiểm tra hợp đồng và các ca tích hợp graph chạy offline. |
 | [`utils/`](utils/) | Tiện ích hệ thống: `llm_client.py` (kết nối Ollama Vulkan, Gemini, Kaggle), `local_vulkan_setup.py` (thăm dò tài nguyên phần cứng), `bilingual.py`. |
 | `uploads/` & `data/` | Thư mục lưu trữ tài liệu PDF người dùng tải lên và cơ sở dữ liệu SQLite (`workspace.db`, `corpus.jsonl`). |
 
@@ -25,6 +25,9 @@
 ## 🚀 Các Lệnh Vận Hành Chính
 
 ### 1. Khởi chạy Web Workspace (`http://localhost:8000/demo2/`)
+
+Đặt `APP_AUTH_PASSWORD` trong `.env` rồi đăng nhập tại `/demo2/`. Trình duyệt dùng cookie phiên để xem PDF, hình và tải báo cáo. API client lấy token từ `POST /api/auth/login` và gửi `Authorization: Bearer <token>`. Phiên hết hạn sau 12 giờ và được lưu trong tiến trình API. Khi chạy local, `APP_DEV_MODE=true` cho phép truy cập không mật khẩu qua loopback nếu `APP_AUTH_PASSWORD` đang trống.
+
 ```bash
 cd main
 py -3.10 -X utf8 main.py --serve
@@ -42,11 +45,27 @@ py -3.10 -X utf8 main/main.py --query "Deep learning for image recognition overv
 py -3.10 -X utf8 main/main.py --query "What is quantum computing overview?" --mode cpu_min
 ```
 
-### 3. Chạy bộ kiểm thử tự phục hồi & ổn định hệ thống
-```bash
-# Kiểm tra tính toàn vẹn và khả năng khởi tạo của toàn bộ 7 chế độ:
-python main/tests/system_sanity_check.py
+### 3. Tái chạy baseline Research V2
 
-# Kiểm tra 4 kịch bản tự phục hồi lỗi và suy thoái mềm của chế độ Hybrid:
-python main/tests/test_hybrid_resilience.py
+Chạy từ thư mục gốc của repo với Python 3.11.9 trên Windows. CI dùng bộ phiên bản trong [`requirements-baseline.txt`](../requirements-baseline.txt). Các lệnh kiểm thử dùng PDF fixture và provider giả lập khi cần.
+
+```powershell
+python -m pip install -r requirements.txt -c requirements-baseline.txt
+$env:PYTHON_DOTENV_DISABLED = '1'
+python -m pytest -q -m "not integration"
+python -m pytest -q -m integration
 ```
+
+Pilot tự tạo PDF từ fixture và chạy graph thật ở `cpu_min`. Bốn câu dùng để kiểm tra đường chạy và tái hiện lỗi đã biết.
+
+```powershell
+python main/eval/run_benchmark.py --pilot --modes cpu_min --limit-per-cat 0 --output-dir "$env:TEMP\research-baseline-pilot"
+```
+
+CI chạy hai nhóm test và lưu báo cáo Markdown cùng kết quả từng câu dạng JSON làm artifact. [Workflow Research V2 baseline](../.github/workflows/research-baseline.yml)
+
+### 4. Vòng đời research run
+
+`POST /api/runs` nhận `document_ids` có thứ tự và `auto_scout`. Khi thiếu tài liệu hợp lệ, bật Auto-Scout để tìm nguồn và tiếp tục kiểm chứng trong cùng run. Ba API `/api/runs`, `/api/research` và `/api/research/stream` lưu kết quả qua cùng service. API legacy mặc định bật Scout khi thiếu tài liệu. Client có thể truyền `auto_scout: false` để tắt.
+
+`GET /api/runs/{id}` trả về `document_ids` và danh sách `documents` có tên và SHA-256 đã ghi nhận. SQLite tự tạo bảng `run_documents` khi khởi động. Run cũ giữ ID tài liệu chính đã lưu. `POST /api/runs/{id}/cancel` trả về trạng thái thực tế của run. Các bước đã lưu được giữ lại và trạng thái kết thúc ghi trước được bảo toàn.

@@ -17,20 +17,28 @@ import time
 from typing import Any, Optional
 import httpx
 
-from core.config import settings
+from core.config import get_run_settings
 from core.db import get_cached_llm, log_api_usage, set_cached_llm
 from core.schemas import canonical_adapter_name
+from core.token_usage import TokenBudgetStop, metered_post
+from core.worker_observations import record_worker_observation
 from utils.local_vulkan_setup import probe_ollama_models
 from utils.logger import logger
+
+
+_REMOTE_MODES = {"model", "kaggle", "kaggle_fn", "kaggle_max", "kaggle_gpu", "gpu_max", "gpu_finetune", "gpu_ft"}
 
 
 class UnifiedLLMClient:
     """Client for generating completions, structured JSON, and routing remote/local inference."""
 
     def __init__(self):
-        self.settings = settings
         self.http_client = httpx.Client(timeout=120.0)
-        self._circuit_breaker_until: float = 0.0
+        self._circuit_breaker_until: dict[str, float] = {}
+
+    @property
+    def settings(self):
+        return get_run_settings()
 
     def generate(
         self,
@@ -42,18 +50,23 @@ class UnifiedLLMClient:
         agent: Optional[str] = None,
     ) -> str:
         """Main generation entry point with Semantic SQLite Cache and multi-tier fallback."""
-        target_mode = self.settings.get_inference_mode(agent)
+        config = self.settings
+        target_mode = config.get_inference_mode(agent)
         target_mode = (target_mode or "cpu_max").lower()
 
         cache_key_str = json.dumps([
             target_mode, agent, prompt, system_instruction, json_mode, temperature, max_tokens,
-            self.settings.LOCAL_CPU_URL, self.settings.LOCAL_CPU_MODEL, self.settings.REMOTE_INFERENCE_URL,
-            self.settings.DEFAULT_LLM_MODEL, self.settings.FALLBACK_LLM_MODEL,
+            config.LOCAL_CPU_URL, config.LOCAL_CPU_MODEL, config.REMOTE_INFERENCE_URL,
+            config.DEFAULT_LLM_MODEL, config.FALLBACK_LLM_MODEL,
+            config.GEMINI_API_KEY, config.DEEPSEEK_API_KEY, config.OPENAI_API_KEY,
         ], ensure_ascii=False)
         cache_key = hashlib.sha256(cache_key_str.encode("utf-8")).hexdigest()
         cached = get_cached_llm(cache_key)
         if cached:
             logger.info(f"LLM Semantic Cache Hit [{cache_key[:8]}]. Saved 1 external API/GPU call.")
+            if target_mode in _REMOTE_MODES:
+                adapter = "none" if target_mode == "gpu_max" else canonical_adapter_name(agent)
+                record_worker_observation("generate", adapter, status="cache_hit")
             return cached
 
         response_text = ""
@@ -72,6 +85,8 @@ class UnifiedLLMClient:
                     agent=agent,
                     model_tier=model_tier,
                 )
+            except TokenBudgetStop:
+                raise
             except Exception as e:
                 logger.info(
                     f"[CPU Mode: {target_mode}] Local Ollama server is offline ({e}). "
@@ -84,7 +99,7 @@ class UnifiedLLMClient:
             return response_text
 
         # 1. Remote Kaggle Worker (Explicit Kaggle FN, Kaggle Max, or GPU Finetune mode)
-        elif target_mode in ["model", "kaggle", "kaggle_fn", "kaggle_max", "kaggle_gpu", "gpu_max", "gpu_finetune", "gpu_ft"]:
+        elif target_mode in _REMOTE_MODES:
             if not self.settings.REMOTE_INFERENCE_URL:
                 raise RuntimeError(
                     f"Kaggle mode '{target_mode}' requires REMOTE_INFERENCE_URL to be set in environment or settings."
@@ -103,6 +118,8 @@ class UnifiedLLMClient:
                         "mode": target_mode,
                     },
                 )
+            except TokenBudgetStop:
+                raise
             except Exception as e:
                 logger.warning(f"Kaggle remote for agent '{agent}' failed ({e}). Cascading to Cloud Foundation Model for high-fidelity generative synthesis...")
                 response_text = ""
@@ -116,6 +133,8 @@ class UnifiedLLMClient:
                 response_text = self._call_gemini(
                     prompt, system_instruction, temperature, max_tokens, json_mode
                 )
+            except TokenBudgetStop:
+                raise
             except Exception as e:
                 logger.warning(f"Gemini API call failed: {e}. Trying fallback provider...")
 
@@ -125,6 +144,8 @@ class UnifiedLLMClient:
                 response_text = self._call_openai_compatible(
                     prompt, system_instruction, temperature, max_tokens, json_mode
                 )
+            except TokenBudgetStop:
+                raise
             except Exception as e:
                 logger.error(f"Fallback OpenAI/DeepSeek API failed: {e}")
 
@@ -155,6 +176,20 @@ class UnifiedLLMClient:
         )
         return self._clean_and_parse_json(response)
 
+    def _post_worker(
+        self, base_url: str, endpoint: str, payload: dict[str, Any], timeout: float, adapter: str | None,
+    ) -> httpx.Response:
+        try:
+            response = metered_post(
+                self.http_client.post, f"{base_url}/{endpoint}", provider="kaggle", operation=endpoint,
+                protocol="openai" if endpoint == "v1/chat/completions" else "worker", json=payload, timeout=timeout,
+            )
+        except httpx.RequestError:
+            record_worker_observation(endpoint, adapter)
+            raise
+        record_worker_observation(endpoint, adapter, response)
+        return response
+
     def call_kaggle_specialist(
         self,
         endpoint: str,
@@ -163,6 +198,7 @@ class UnifiedLLMClient:
         fallback_system: str = "",
         adapter: str = "generator",
         timeout: Optional[float] = None,
+        allow_generate_fallback: bool = True,
     ) -> dict[str, Any]:
         """
         Calls dedicated training_lab endpoints on Kaggle Multi-LoRA Worker:
@@ -179,17 +215,24 @@ class UnifiedLLMClient:
         canon_adapter = canonical_adapter_name(adapter)
         clean_ep = endpoint.lstrip("/")
         try:
-            url = f"{base_url}/{clean_ep}"
             effective_timeout = float(timeout if timeout is not None else self.settings.REMOTE_TIMEOUT_SECONDS)
-            resp = self.http_client.post(url, json=payload, timeout=effective_timeout)
+            resp = self._post_worker(base_url, clean_ep, payload, effective_timeout, canon_adapter)
             if resp.status_code == 200:
                 data = resp.json()
                 if isinstance(data, dict):
                     return data
+        except TokenBudgetStop:
+            raise
         except Exception as exc:
+            if not allow_generate_fallback:
+                logger.info("[Kaggle Specialist] Invalid or unavailable /%s (%s)", clean_ep, type(exc).__name__)
+                return {}
             logger.info(f"[Kaggle Specialist] Dedicated endpoint /{clean_ep} fallback to /generate ({exc})")
             if "timeout" in str(exc).lower() or "timed out" in str(exc).lower():
                 raise exc
+
+        if not allow_generate_fallback:
+            return {}
 
         # Fallback to /generate with canonical adapter name ('router', 'generator', 'critic')
         raw_out = self._call_remote_kaggle(
@@ -310,8 +353,8 @@ class UnifiedLLMClient:
                     "Content-Type": "application/json",
                     "x-goog-api-key": self.settings.GEMINI_API_KEY or "",
                 }
-                resp = self.http_client.post(
-                    url,
+                resp = metered_post(
+                    self.http_client.post, url, provider="gemini", operation="generateContent", protocol="gemini",
                     json=payload,
                     headers=headers,
                     timeout=35.0,
@@ -331,6 +374,8 @@ class UnifiedLLMClient:
                     continue
                 else:
                     resp.raise_for_status()
+            except TokenBudgetStop:
+                raise
             except Exception as e:
                 last_error = e
                 logger.warning(f"Gemini call to {model} failed: {e}. Trying fallback...")
@@ -375,8 +420,10 @@ class UnifiedLLMClient:
         if json_mode:
             payload["response_format"] = {"type": "json_object"}
 
-        resp = self.http_client.post(
-            f"{base_url}/chat/completions",
+        resp = metered_post(
+            self.http_client.post, f"{base_url}/chat/completions",
+            provider="deepseek" if self.settings.DEEPSEEK_API_KEY else "openai",
+            operation="chat/completions", protocol="openai",
             json=payload,
             headers={"Authorization": f"Bearer {api_key}"},
         )
@@ -428,7 +475,10 @@ class UnifiedLLMClient:
         if json_mode:
             payload["format"] = "json"
 
-        resp = self.http_client.post(ollama_url, json=payload, timeout=75.0)
+        resp = metered_post(
+            self.http_client.post, ollama_url, provider="ollama", operation="api/chat",
+            protocol="ollama", json=payload, timeout=75.0,
+        )
         if resp.status_code == 200:
             data = resp.json()
             content = data.get("message", {}).get("content", "")
@@ -447,7 +497,10 @@ class UnifiedLLMClient:
         if json_mode:
             compat_payload["response_format"] = {"type": "json_object"}
 
-        resp = self.http_client.post(compat_url, json=compat_payload, timeout=75.0)
+        resp = metered_post(
+            self.http_client.post, compat_url, provider="local_openai", operation="chat/completions",
+            protocol="openai", json=compat_payload, timeout=75.0,
+        )
         resp.raise_for_status()
         data = resp.json()
         return data["choices"][0]["message"]["content"]
@@ -465,20 +518,24 @@ class UnifiedLLMClient:
 
         # Circuit Breaker: Fail fast in 0.001s if remote recently timed out
         now = time.time()
-        if now < self._circuit_breaker_until:
-            rem = int(self._circuit_breaker_until - now)
+        blocked_until = self._circuit_breaker_until.get(base_url, 0.0)
+        if now < blocked_until:
+            rem = int(blocked_until - now)
+            endpoint = "generate" if task == "generate" else f"api/{task}"
+            record_worker_observation(endpoint, payload.get("adapter", "generator"), status="circuit_open")
             raise RuntimeError(f"Kaggle GPU Worker đang offline hoặc không phản hồi (Circuit Breaker active {rem}s).")
 
         # Normalize adapter name so 'generator_qlora' -> 'generator', 'critic_qlora' -> 'critic', etc.
         if "adapter" in payload and payload["adapter"] not in (None, "none"):
             payload["adapter"] = canonical_adapter_name(str(payload["adapter"]))
+        adapter = payload.get("adapter", "generator")
 
         # 1. Try /generate (primary endpoint in kaggle_worker.ipynb)
         if task == "generate":
             try:
-                resp = self.http_client.post(f"{base_url}/generate", json=payload, timeout=timeout)
+                resp = self._post_worker(base_url, "generate", payload, timeout, adapter)
                 if resp.status_code == 200:
-                    self._circuit_breaker_until = 0.0  # Reset breaker on success
+                    self._circuit_breaker_until.pop(base_url, None)
                     result = resp.json()
                     if isinstance(result, dict):
                         return (
@@ -489,26 +546,28 @@ class UnifiedLLMClient:
                         )
                     return str(result)
             except (httpx.TimeoutException, httpx.ConnectError) as exc:
-                self._circuit_breaker_until = time.time() + 10.0
+                self._circuit_breaker_until[base_url] = time.time() + 10.0
                 raise RuntimeError(f"Không thể kết nối tới Kaggle GPU Worker tại {base_url}.") from exc
+            except TokenBudgetStop:
+                raise
             except Exception:
                 pass
         else:
             try:
-                url = f"{base_url}/api/{task}"
-                resp = self.http_client.post(url, json=payload, timeout=timeout)
+                resp = self._post_worker(base_url, f"api/{task}", payload, timeout, adapter)
                 if resp.status_code == 200:
-                    self._circuit_breaker_until = 0.0  # Reset breaker on success
+                    self._circuit_breaker_until.pop(base_url, None)
                     result = resp.json()
                     return result.get("output", result)
             except (httpx.TimeoutException, httpx.ConnectError) as exc:
-                self._circuit_breaker_until = time.time() + 10.0
+                self._circuit_breaker_until[base_url] = time.time() + 10.0
                 raise RuntimeError(f"Không thể kết nối tới Kaggle GPU Worker tại {base_url}.") from exc
+            except TokenBudgetStop:
+                raise
             except Exception:
                 pass
 
         # 2. Try direct vLLM OpenAI-compatible endpoint (/v1/chat/completions) for 32B AWQ
-        v1_url = f"{base_url}/v1/chat/completions"
         messages = []
         if payload.get("system_instruction"):
             messages.append({"role": "system", "content": payload["system_instruction"]})
@@ -524,18 +583,20 @@ class UnifiedLLMClient:
         if payload.get("json_mode"):
             v1_payload["response_format"] = {"type": "json_object"}
         try:
-            resp = self.http_client.post(v1_url, json=v1_payload, timeout=timeout)
+            resp = self._post_worker(base_url, "v1/chat/completions", v1_payload, timeout, adapter)
             if resp.status_code == 200:
-                self._circuit_breaker_until = 0.0
+                self._circuit_breaker_until.pop(base_url, None)
                 data = resp.json()
                 return data["choices"][0]["message"]["content"]
         except (httpx.TimeoutException, httpx.ConnectError) as exc:
-            self._circuit_breaker_until = time.time() + 10.0
+            self._circuit_breaker_until[base_url] = time.time() + 10.0
             raise RuntimeError(f"Không thể kết nối tới Kaggle GPU Worker tại {base_url}.") from exc
+        except TokenBudgetStop:
+            raise
         except Exception:
             pass
 
-        self._circuit_breaker_until = time.time() + 10.0
+        self._circuit_breaker_until[base_url] = time.time() + 10.0
         raise RuntimeError(f"Không thể kết nối tới Kaggle GPU Worker tại {base_url}.")
 
     def _clean_and_parse_json(self, raw_text: str) -> dict[str, Any]:

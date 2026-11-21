@@ -9,7 +9,10 @@ Supports:
 import os
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
+from threading import RLock
+from types import MappingProxyType
+from typing import Mapping
 from dotenv import load_dotenv
 
 _core_dir = os.path.dirname(os.path.abspath(__file__))
@@ -25,6 +28,15 @@ else:
 
 
 _inference_mode: ContextVar[str | None] = ContextVar("agent_inference_mode", default=None)
+_run_config: ContextVar["RunConfig | None"] = ContextVar("run_config", default=None)
+run_defaults_lock = RLock()
+_AGENT_MODE_FIELDS = {
+    "retrieval": "AGENT_RETRIEVAL_MODE",
+    "reader": "AGENT_READER_MODE",
+    "summarizer": "AGENT_SUMMARIZER_MODE",
+    "factchecker": "AGENT_FACTCHECKER_MODE",
+    "writer": "AGENT_WRITER_MODE",
+}
 
 
 @contextmanager
@@ -37,8 +49,23 @@ def agent_inference_mode(mode: str):
         _inference_mode.reset(token)
 
 
+class _AgentModeSettings:
+    def get_agent_mode(self, agent_name: str) -> str:
+        key = agent_name.lower().replace("agent", "").replace("_", "").strip()
+        return getattr(self, _AGENT_MODE_FIELDS.get(key, f"AGENT_{key.upper()}_MODE"), "api")
+
+    def get_inference_mode(self, agent_name: str | None = None) -> str:
+        mode = _inference_mode.get()
+        if mode is not None:
+            return mode
+        return self.get_agent_mode(agent_name) if agent_name else self.EXECUTION_MODE
+
+    def get_all_agent_modes(self) -> dict[str, str]:
+        return {role: getattr(self, name) for role, name in _AGENT_MODE_FIELDS.items()}
+
+
 @dataclass
-class Settings:
+class Settings(_AgentModeSettings):
     # Execution Mode: "local_api" | "kaggle_gpu" | "local_gpu"
     EXECUTION_MODE: str = field(
         default_factory=lambda: os.getenv("EXECUTION_MODE", "local_api").lower()
@@ -75,47 +102,12 @@ class Settings:
         default_factory=lambda: os.getenv("AGENT_WRITER_MODE", "api").lower()
     )
 
-    def get_agent_mode(self, agent_name: str) -> str:
-        """Returns 'api' or 'model' for the specified agent."""
-        clean_name = agent_name.lower().replace("agent", "").replace("_", "").strip()
-        name_map = {
-            "retrieval": "AGENT_RETRIEVAL_MODE",
-            "reader": "AGENT_READER_MODE",
-            "summarizer": "AGENT_SUMMARIZER_MODE",
-            "factchecker": "AGENT_FACTCHECKER_MODE",
-            "writer": "AGENT_WRITER_MODE",
-        }
-        attr = name_map.get(clean_name, f"AGENT_{clean_name.upper()}_MODE")
-        return getattr(self, attr, "api")
-
-    def get_inference_mode(self, agent_name: str | None = None) -> str:
-        mode = _inference_mode.get()
-        if mode is not None:
-            return mode
-        return self.get_agent_mode(agent_name) if agent_name else self.EXECUTION_MODE
-
     def set_agent_mode(self, agent_name: str, mode: str):
         """Sets 'api' or 'model' for the specified agent."""
         clean_name = agent_name.lower().replace("agent", "").replace("_", "").strip()
-        name_map = {
-            "retrieval": "AGENT_RETRIEVAL_MODE",
-            "reader": "AGENT_READER_MODE",
-            "summarizer": "AGENT_SUMMARIZER_MODE",
-            "factchecker": "AGENT_FACTCHECKER_MODE",
-            "writer": "AGENT_WRITER_MODE",
-        }
-        attr = name_map.get(clean_name, f"AGENT_{clean_name.upper()}_MODE")
+        attr = _AGENT_MODE_FIELDS.get(clean_name, f"AGENT_{clean_name.upper()}_MODE")
         if hasattr(self, attr):
             setattr(self, attr, mode.lower())
-
-    def get_all_agent_modes(self) -> dict[str, str]:
-        return {
-            "retrieval": self.AGENT_RETRIEVAL_MODE,
-            "reader": self.AGENT_READER_MODE,
-            "summarizer": self.AGENT_SUMMARIZER_MODE,
-            "factchecker": self.AGENT_FACTCHECKER_MODE,
-            "writer": self.AGENT_WRITER_MODE,
-        }
 
     # API Keys for Cloud Foundation Models
     GEMINI_API_KEY: str = field(default_factory=lambda: os.getenv("GEMINI_API_KEY", ""))
@@ -134,6 +126,33 @@ class Settings:
     # Embedding & Retrieval Models
     EMBEDDING_MODEL: str = field(
         default_factory=lambda: os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
+    )
+    GPU_FINETUNE_DENSE_ENABLED: bool = field(
+        default_factory=lambda: os.getenv("GPU_FINETUNE_DENSE_ENABLED", "false").strip().lower() == "true"
+    )
+    GPU_FINETUNE_PAGE_DIVERSITY_ENABLED: bool = field(
+        default_factory=lambda: os.getenv("GPU_FINETUNE_PAGE_DIVERSITY_ENABLED", "false").strip().lower() == "true"
+    )
+    GPU_FINETUNE_RERANK_ENABLED: bool = field(
+        default_factory=lambda: os.getenv("GPU_FINETUNE_RERANK_ENABLED", "false").strip().lower() == "true"
+    )
+    GPU_FINETUNE_RERANK_KEEP_PREFIX: int = field(
+        default_factory=lambda: int(os.getenv("GPU_FINETUNE_RERANK_KEEP_PREFIX", "0"))
+    )
+    HYBRID_DENSE_ENABLED: bool = field(
+        default_factory=lambda: os.getenv("HYBRID_DENSE_ENABLED", "true").strip().lower() == "true"
+    )
+    HYBRID_RERANK_ENABLED: bool = field(
+        default_factory=lambda: os.getenv("HYBRID_RERANK_ENABLED", "true").strip().lower() == "true"
+    )
+    HYBRID_RERANK_KEEP_PREFIX: int = field(
+        default_factory=lambda: int(os.getenv("HYBRID_RERANK_KEEP_PREFIX", "3"))
+    )
+    GEMINI_DENSE_ENABLED: bool = field(
+        default_factory=lambda: os.getenv("GEMINI_DENSE_ENABLED", "false").strip().lower() == "true"
+    )
+    GEMINI_EMBEDDING_MODEL: str = field(
+        default_factory=lambda: os.getenv("GEMINI_EMBEDDING_MODEL", "text-embedding-004")
     )
     FALLBACK_EMBEDDING_MODEL: str = field(
         default_factory=lambda: os.getenv("FALLBACK_EMBEDDING_MODEL", "BAAI/bge-large-en-v1.5")
@@ -172,5 +191,60 @@ class Settings:
         )
     )
 
+    @property
+    def FIGURE_VISION_PROVIDER(self) -> str:
+        return os.getenv("FIGURE_VISION_PROVIDER", "").strip().lower()
+
+    @property
+    def FIGURE_VISION_MODEL(self) -> str:
+        return os.getenv("FIGURE_VISION_MODEL", "").strip()
+
+    @property
+    def FIGURE_OCR_LANGUAGE(self) -> str:
+        return os.getenv("FIGURE_OCR_LANGUAGE", "eng")
+
 
 settings = Settings()
+
+
+@dataclass(frozen=True, eq=False)
+class RunConfig(_AgentModeSettings):
+    """Read-only copy of the settings consumed by an admitted research run."""
+
+    _values: Mapping[str, str | int] = field(repr=False)
+
+    def __post_init__(self):
+        object.__setattr__(self, "_values", MappingProxyType(dict(self._values)))
+
+    def __getattr__(self, name: str):
+        try:
+            return object.__getattribute__(self, "_values")[name]
+        except KeyError:
+            raise AttributeError(name) from None
+
+    @classmethod
+    def capture(
+        cls, *, remote_inference_url: str | None = None, corpus_path: str | None = None,
+    ) -> "RunConfig":
+        with run_defaults_lock:
+            values = {entry.name: getattr(settings, entry.name) for entry in fields(settings)}
+            for name in ("FIGURE_VISION_PROVIDER", "FIGURE_VISION_MODEL", "FIGURE_OCR_LANGUAGE"):
+                values[name] = getattr(settings, name)
+            if remote_inference_url is not None:
+                values["REMOTE_INFERENCE_URL"] = remote_inference_url
+            if corpus_path is not None:
+                values["CORPUS_PATH"] = corpus_path
+            return cls(values)
+
+
+def get_run_settings() -> RunConfig | Settings:
+    return _run_config.get() or settings
+
+
+@contextmanager
+def use_run_config(config: RunConfig):
+    token = _run_config.set(config)
+    try:
+        yield
+    finally:
+        _run_config.reset(token)

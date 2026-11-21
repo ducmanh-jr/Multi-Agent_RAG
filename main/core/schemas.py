@@ -199,6 +199,10 @@ class SummarizerCriticOutput:
             missing = [str(missing)]
 
         issues = data.get("issues_found")
+        if "issues_found" in data and (
+            not isinstance(issues, list) or any(not isinstance(issue, str) for issue in issues)
+        ):
+            return cls()
         issues = [u for u in issues if isinstance(u, str) and u.strip()] if isinstance(issues, list) else []
         raw_action = str(data.get("action") or data.get("critic_action") or "").lower().strip()
         if raw_action == "accept":
