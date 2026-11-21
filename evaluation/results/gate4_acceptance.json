@@ -1,0 +1,57 @@
+{
+  "metadata": {
+    "generated_at": "2026-11-21T15:53:30.268721+00:00",
+    "git_commit": "5c93d21fb706e8398e6108469e07dbd6f20c04fd",
+    "target_url": "https://britney-sacramento-commentary-dark.trycloudflare.com",
+    "verifier": "Gate4SwitchVerifier_v2_Hardened"
+  },
+  "summary": {
+    "total_tests": 5,
+    "passed_tests": 5,
+    "failed_tests": 0,
+    "pass_percentage": 100.0,
+    "all_passed": true
+  },
+  "test_results": [
+    {
+      "id": "D01",
+      "stage": "Gateway Switch",
+      "component": "POST /api/admin/switch_mode",
+      "latency": "0.35s",
+      "passed": true,
+      "details": "HTTP 202, status=accepted"
+    },
+    {
+      "id": "D02",
+      "stage": "Lifecycle Drain",
+      "component": "Process & VRAM Reclaim",
+      "latency": "139.27s",
+      "passed": true,
+      "details": "lowest: G0=0.0GB, G1=0.0GB, drain_seen=True"
+    },
+    {
+      "id": "D03",
+      "stage": "VRAM Probe",
+      "component": "Dual GPU Baseline Reclaim",
+      "latency": "N/A",
+      "passed": true,
+      "details": "Baseline VRAM observed on both GPUs: G0=0.0GB, G1=0.0GB (<= 2.5GB req)"
+    },
+    {
+      "id": "D04",
+      "stage": "Worker Readiness",
+      "component": "GPU_MAX Online Check",
+      "latency": "139.27s",
+      "passed": true,
+      "details": "target=gpu_max, ready=True, final_state=ready, elapsed=139.3s"
+    },
+    {
+      "id": "D05",
+      "stage": "Worker Inference",
+      "component": "POST /generate",
+      "latency": "26.34s",
+      "passed": true,
+      "details": "output_len=554 chars, HTTP 200"
+    }
+  ]
+}

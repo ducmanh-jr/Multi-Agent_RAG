@@ -1,0 +1,132 @@
+{
+  "metadata": {
+    "generated_at": "2026-11-21T16:06:17.558029+00:00",
+    "git_commit": "70ba3f9800d5ff0951eb72d9f48480589ceca6c1",
+    "target_url": "https://britney-sacramento-commentary-dark.trycloudflare.com",
+    "verifier": "Gate5and6Verifier_v2_Hardened"
+  },
+  "summary": {
+    "total_tests": 11,
+    "passed_tests": 11,
+    "failed_tests": 0,
+    "pass_percentage": 100.0,
+    "all_passed": true
+  },
+  "vram_profile": {
+    "initial": {
+      "gpu_0": 12.0,
+      "gpu_1": 12.0,
+      "active_worker": "gpu_max"
+    },
+    "lowest_observed": {
+      "gpu_0": 0.0,
+      "gpu_1": 0.0
+    },
+    "final": {
+      "gpu_0": 6.83,
+      "gpu_1": 1.18,
+      "active_worker": "gpu_finetune"
+    }
+  },
+  "test_results": [
+    {
+      "id": "E01",
+      "gate": "Gate 5 (32B Proxy)",
+      "component": "Direct 32B Generation (/generate)",
+      "latency": "10.14s",
+      "latency_sec": 10.135,
+      "passed": true,
+      "details": "HTTP 200, len=186 chars: 'Trí tuệ nhân tạo là một lĩnh vực của khoa học...'"
+    },
+    {
+      "id": "E02",
+      "gate": "Gate 5 (32B Proxy)",
+      "component": "Router Proxy (/api/router)",
+      "latency": "25.21s",
+      "latency_sec": 25.208,
+      "passed": true,
+      "details": "HTTP 200, intent='information_search', sub_q=2, alpha=0.7"
+    },
+    {
+      "id": "E03",
+      "gate": "Gate 5 (32B Proxy)",
+      "component": "Generator Proxy (/api/summarize/generator)",
+      "latency": "20.60s",
+      "latency_sec": 20.604,
+      "passed": true,
+      "details": "HTTP 200, ans_len=168, claims=2"
+    },
+    {
+      "id": "E04",
+      "gate": "Gate 5 (32B Proxy)",
+      "component": "Writer Proxy (/api/writer)",
+      "latency": "88.14s",
+      "latency_sec": 88.144,
+      "passed": true,
+      "details": "HTTP 200, report_len=2591, markdown_struct=True"
+    },
+    {
+      "id": "E05",
+      "gate": "Gate 5 (32B Proxy)",
+      "component": "Critic Proxy (/api/summarize/critic)",
+      "latency": "22.16s",
+      "latency_sec": 22.159,
+      "passed": true,
+      "details": "HTTP 200, action='rewrite', critique_len=289"
+    },
+    {
+      "id": "E06",
+      "gate": "Gate 5 (Zero-Gemini)",
+      "component": "Zero-Gemini Fallback Policy Contract",
+      "latency": "2.13s",
+      "latency_sec": 2.132,
+      "passed": true,
+      "details": "Deterministic fallback len=358, verified mock_gemini.assert_not_called()"
+    },
+    {
+      "id": "F01",
+      "gate": "Gate 6 (Concurrency)",
+      "component": "Worker Lease Concurrency",
+      "latency": "3.28s",
+      "latency_sec": 3.276,
+      "passed": true,
+      "details": "3/3 requests HTTP 200, lease monitor probe=(3, 0)"
+    },
+    {
+      "id": "F02",
+      "gate": "Gate 6 (Lifecycle)",
+      "component": "Switch Request to gpu_finetune",
+      "latency": "0.34s",
+      "latency_sec": 0.341,
+      "passed": true,
+      "details": "HTTP 202, status=accepted"
+    },
+    {
+      "id": "F03",
+      "gate": "Gate 6 (Lifecycle)",
+      "component": "Dual-GPU VRAM Drain & Reclaim",
+      "latency": "94.39s",
+      "latency_sec": 94.395,
+      "passed": true,
+      "details": "lowest: G0=0.0GB, G1=0.0GB (<=2.5GB req), drain_seen=True"
+    },
+    {
+      "id": "F04",
+      "gate": "Gate 6 (Lifecycle)",
+      "component": "Finetune Worker Restored",
+      "latency": "94.39s",
+      "latency_sec": 94.395,
+      "passed": true,
+      "details": "active_worker='gpu_finetune', ready=True, final_state=ready, elapsed=94.4s"
+    },
+    {
+      "id": "F05",
+      "gate": "Gate 6 (Health)",
+      "component": "4 LoRA Adapters Restored & Live Probe",
+      "latency": "14.15s",
+      "latency_sec": 14.15,
+      "passed": true,
+      "details": "All 4 adapters active ({'router': True, 'generator': True, 'critic': True, 'writer': True, 'fact_checker_nli': True, 'layout_reader': False, 'reranker': False, 'vllm_32b_awq': False, 'embedding': False}), live /api/router probe HTTP 200"
+    }
+  ]
+}
