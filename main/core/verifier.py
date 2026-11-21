@@ -16,7 +16,7 @@ import re
 from typing import Any, Optional, Callable
 
 from core.schemas import SummarizerCriticOutput
-from core.state import AtomicClaim, ClaimCheckResult, EvidenceGap, EvidenceSpan
+from core.state import AtomicClaim, ClaimCheckResult, EvidenceGap, EvidenceSpan, compute_context_hash
 from utils.bilingual import expand_bilingual_tokens
 from utils.domain_guard import check_out_of_domain
 from utils.logger import logger
@@ -69,7 +69,7 @@ BẮT BUỘC trả về kết quả hoàn toàn bằng định dạng JSON hợp
 
 
 _QUANTIFIED_SINGLE_DIGIT_RE = re.compile(
-    r"(?<!\d)(\d)\s*(?:"
+    r"(?<![\d.,])(\d)\s*(?:"
     r"%|x|×|k\b|m\b|b\b|gb\b|mb\b|ms\b|s\b|hz\b|khz\b|mhz\b|ghz\b|"
     r"days?\b|hours?\b|mins?\b|minutes?\b|seconds?\b|weeks?\b|months?\b|years?\b|"
     r"layers?\b|blocks?\b|heads?\b|epochs?\b|steps?\b|stages?\b|tiers?\b|phases?\b|"
@@ -210,12 +210,125 @@ def check_entity_value_binding(claim_text: str, evidence_text: str) -> tuple[boo
     return True, []
 
 
+_UNIT_CANONICAL_MAP: dict[str, str] = {
+    "%": "%", "percent": "%", "pct": "%", "phần trăm": "%", "phan tram": "%",
+    # Compound rate / speed units (matched before bare units)
+    "km/h": "km/h", "kmh": "km/h", "kph": "km/h", "km/giờ": "km/h", "km/gio": "km/h",
+    "m/h": "m/h", "m/giờ": "m/h", "m/gio": "m/h",
+    "m/s": "m/s", "mps": "m/s", "m/giây": "m/s",
+    "km/s": "km/s",
+    "tokens/s": "tokens/s", "token/s": "tokens/s", "tok/s": "tokens/s", "toks/s": "tokens/s",
+    "mb/s": "mb/s", "mbps": "mb/s", "gb/s": "gb/s", "gbps": "gb/s", "kb/s": "kb/s",
+    "req/s": "req/s", "qps": "req/s", "fps": "fps",
+    # Distance / length
+    "km": "km", "kilometer": "km", "kilometers": "km", "kilomet": "km",
+    "m": "m", "meter": "m", "meters": "m", "mét": "m", "met": "m",
+    "cm": "cm", "mm": "mm",
+    # Time
+    "ms": "ms", "millisecond": "ms", "milliseconds": "ms",
+    "s": "s", "sec": "s", "secs": "s", "second": "s", "seconds": "s", "giây": "s",
+    "min": "min", "mins": "min", "minute": "min", "minutes": "min", "phút": "min",
+    "h": "h", "hr": "h", "hrs": "h", "hour": "h", "hours": "h", "giờ": "h",
+    "day": "day", "days": "day", "ngày": "day",
+    # Storage / compute / frequency
+    "tb": "tb", "gb": "gb", "mb": "mb", "kb": "kb",
+    "ghz": "ghz", "mhz": "mhz", "khz": "khz", "hz": "hz",
+    # Mass & currency
+    "kg": "kg", "g": "g", "mg": "mg",
+    "usd": "usd", "$": "usd", "vnd": "vnd",
+    # Count / architecture units
+    "layer": "layer", "layers": "layer", "lớp": "layer", "tầng": "layer",
+    "epoch": "epoch", "epochs": "epoch",
+    "gpu": "gpu", "gpus": "gpu", "cpu": "cpu", "cpus": "cpu",
+    "head": "head", "heads": "head",
+    "bit": "bit", "bits": "bit",
+}
+
+_UNIT_PATTERN = re.compile(
+    r"(?<!\d)(\d+(?:[.,]\d+)?)\s*("
+    r"km/h|kmh|kph|km/giờ|km/gio|m/h|m/giờ|m/gio|m/s|mps|m/giây|km/s|"
+    r"tokens?/s|toks?/s|gb/s|gbps|mb/s|mbps|kb/s|req/s|qps|fps|"
+    r"%|phần\s+trăm|phan\s+tram|percent|pct|"
+    r"kilometers?|kilomet|km\b|meters?|mét|met|cm\b|mm\b|"
+    r"milliseconds?|ms\b|seconds?|secs?\b|giây|minutes?|mins?\b|phút|hours?|hrs?\b|giờ|days?\b|ngày|"
+    r"ghz\b|mhz\b|khz\b|hz\b|tb\b|gb\b|mb\b|kb\b|kg\b|mg\b|usd\b|vnd\b|\$|"
+    r"layers?\b|lớp|tầng|epochs?\b|gpus?\b|cpus?\b|heads?\b|bits?\b|"
+    r"m\b|s\b|g\b|h\b"
+    r")?",
+    re.IGNORECASE,
+)
+
+_METRIC_ANCHOR_WORDS = {
+    "accuracy", "f1", "bleu", "rouge", "precision", "recall", "latency",
+    "throughput", "memory", "loss", "perplexity", "mrr", "ndcg", "auc",
+    "bert", "roberta", "llama", "qwen", "gpt", "transformer", "lora",
+}
+
+
+def _canonicalize_unit(raw_unit: Optional[str]) -> str:
+    if not raw_unit:
+        return ""
+    cleaned = re.sub(r"\s+", " ", raw_unit.strip().lower())
+    return _UNIT_CANONICAL_MAP.get(cleaned, cleaned)
+
+
+def extract_numbers_with_units(text: str) -> list[tuple[str, str, int]]:
+    """
+    Extracts (normalized_number, canonical_unit, char_index) tuples from text, supporting
+    compound units (km/h vs m/h, tokens/s, mb/s) and quantified single digits (3 layers, 2 GPUs).
+    Ignores citation brackets [1], list ordinals, page/section/table/figure indices, and arXiv IDs.
+    """
+    raw_text = text or ""
+    cleaned = re.sub(r"(?m)^\s*(?:\(\d{1,2}\)|\d{1,2}[.)])\s+", " ", raw_text)
+    cleaned = re.sub(r"\[\d{1,3}\]", " ", cleaned)
+    cleaned = re.sub(r"(?i)\b(?:trang|page|mục|section|hình|figure|fig\.?|table|tab\.?|bảng)\s*\d+\b", " ", cleaned)
+    cleaned = re.sub(r"\b\d{4}\.\d{4,5}(?:v\d+)?\b", " ", cleaned)
+
+    results: list[tuple[str, str, int]] = []
+    seen: set[tuple[str, str]] = set()
+    for m in _UNIT_PATTERN.finditer(cleaned):
+        norm_num = m.group(1).replace(",", ".")
+        canon_unit = _canonicalize_unit(m.group(2))
+        if len(norm_num) == 1 and norm_num.isdigit() and not canon_unit:
+            continue
+        key = (norm_num, canon_unit)
+        if key not in seen:
+            seen.add(key)
+            results.append((norm_num, canon_unit, m.start()))
+
+    # Include any quantified single digits caught by extended domain units (e.g., "top-3", "k=5", "5 nhóm")
+    existing_nums = {num for num, _, _ in results}
+    for match in _QUANTIFIED_SINGLE_DIGIT_RE.finditer(cleaned):
+        digit = match.group(1)
+        if digit not in existing_nums:
+            existing_nums.add(digit)
+            results.append((digit, "", match.start()))
+    for match in _INLINE_PARAM_DIGIT_RE.finditer(cleaned):
+        digit = match.group(1)
+        if digit not in existing_nums:
+            existing_nums.add(digit)
+            results.append((digit, "", match.start()))
+    return results
+
+
+def _extract_context_matches(full_context_text: str) -> list[tuple[str, str, int]]:
+    """Extracts all (normalized_number, canonical_unit, char_index) occurrences in context."""
+    ctx = full_context_text or ""
+    out: list[tuple[str, str, int]] = []
+    for m in _UNIT_PATTERN.finditer(ctx):
+        norm_num = m.group(1).replace(",", ".")
+        canon_unit = _canonicalize_unit(m.group(2))
+        out.append((norm_num, canon_unit, m.start()))
+    return out
+
+
 def check_numerical_and_date_consistency(claim_text: str, full_context_text: str) -> tuple[bool, bool, list[str]]:
     """
-    Deterministic Numerical & Date Guard:
-    Verifies whether numbers and 4-digit years stated in `claim_text` appear in `full_context_text`.
-    If `claim_text` is an explicit negative/abstention statement ("không đề cập", "không chứa", etc.),
-    numbers echoed from the user's question are not treated as hallucinations.
+    Unit-Aware & Context-Aware Deterministic Numerical & Date Guard:
+      - `85%` matches `85%`, `85 percent`, `85 phần trăm`, NOT bare `85`.
+      - `85 km/h` matches `85 km/h`, NOT `85 m/h` or `85 m/s`.
+      - `2025` matches `2025`, NOT `2024`.
+      - Catches fabricated single-digit experimental counts (`7 layers` vs `3 layers`).
     Returns (numerical_passed, dates_passed, missing_numbers).
     """
     lower_claim = (claim_text or "").lower()
@@ -236,36 +349,138 @@ def check_numerical_and_date_consistency(claim_text: str, full_context_text: str
     ):
         return True, True, []
 
-    claim_nums = extract_numbers_and_years(claim_text)
-    if not claim_nums:
+    claim_items = extract_numbers_with_units(claim_text)
+    if not claim_items:
         return True, True, []
 
-    ctx_norm = (full_context_text or "").replace(",", ".")
+    ctx_text = full_context_text or ""
+    ctx_lower = ctx_text.lower()
+    ctx_matches = _extract_context_matches(ctx_text)
+
+    claim_tokens = set(re.findall(r"[a-z0-9_]+", lower_claim))
+    shared_anchors = {a for a in (_METRIC_ANCHOR_WORDS & claim_tokens) if a in ctx_lower}
+
     missing_nums: list[str] = []
     dates_passed = True
     numerical_passed = True
 
-    for num in claim_nums:
-        # Check exact or comma/dot equivalent presence in context with word boundaries
-        clean_num = num.rstrip("%")
-        raw_variants = {num, clean_num, clean_num.replace(".", ","), clean_num.replace(",", ".")}
+    for norm_num, claim_unit, _ in claim_items:
+        candidates = [
+            (c_num, c_unit, c_pos)
+            for (c_num, c_unit, c_pos) in ctx_matches
+            if c_num == norm_num
+        ]
+        unit_matched_positions: list[int] = []
+        for _, c_unit, c_pos in candidates:
+            if claim_unit:
+                if c_unit == claim_unit:
+                    unit_matched_positions.append(c_pos)
+                elif not c_unit and claim_unit not in {"%", "km/h", "m/h", "m/s", "km/s", "km", "m", "cm", "mm", "ms", "s", "gb", "mb", "kb", "tb", "kg", "g", "mg", "usd", "vnd"}:
+                    # Allow soft count words like "3 layers" when context writes bare "3" with non-conflicting unit
+                    unit_matched_positions.append(c_pos)
+            else:
+                if c_unit != "%":
+                    unit_matched_positions.append(c_pos)
+
         found = False
-        for v in raw_variants:
-            if not v:
-                continue
-            # Regex boundary so '10' does not match '2010' or '100'
-            pat = r"(?<!\d)" + re.escape(v) + r"(?!\d)"
-            if re.search(pat, ctx_norm) or re.search(pat, full_context_text or ""):
+        if unit_matched_positions:
+            if not shared_anchors or len(ctx_text) <= 180:
                 found = True
-                break
+            else:
+                for pos in unit_matched_positions:
+                    win_start = max(0, pos - 140)
+                    win_end = min(len(ctx_lower), pos + 140)
+                    window = ctx_lower[win_start:win_end]
+                    if all(re.search(rf"\b{re.escape(anchor)}\b", window) for anchor in shared_anchors):
+                        found = True
+                        break
+
         if not found:
-            missing_nums.append(num)
-            if re.match(r"^(?:19\d\d|20\d\d)$", num):
+            display = f"{norm_num}%" if claim_unit == "%" else (f"{norm_num} {claim_unit}" if claim_unit else norm_num)
+            missing_nums.append(display)
+            if not claim_unit and re.match(r"^(?:19\d\d|20\d\d)$", norm_num):
                 dates_passed = False
             else:
                 numerical_passed = False
 
     return numerical_passed, dates_passed, missing_nums
+
+
+def verify_evidence_span_provenance(
+    span: dict[str, Any],
+    source_units: list[dict[str, Any]],
+) -> tuple[bool, str]:
+    """
+    Independent Citation Provenance Verifier:
+    Validates that an EvidenceSpan matches a real SourceUnit (or one of its merged
+    multi-source provenance records) on:
+      1. doc_id
+      2. page_no
+      3. unit_id (when specified)
+      4. quote substring presence in source text
+      5. context_hash integrity (when provided)
+    """
+    if not isinstance(span, dict):
+        return False, "Evidence span is not a dict."
+    quote = str(span.get("quote") or span.get("text") or "").strip()
+    doc_id = str(span.get("doc_id") or "").strip()
+    unit_id = str(span.get("source_unit_id") or span.get("unit_id") or "").strip()
+    raw_page = span.get("page_no")
+    span_hash = str(span.get("context_hash") or "").strip()
+
+    if not quote or not doc_id:
+        return False, "Evidence span missing quote or doc_id."
+
+    try:
+        if isinstance(raw_page, bool):
+            raise ValueError("bool page_no")
+        page_no = int(raw_page)
+    except Exception:
+        return False, f"Invalid page_no in evidence span: {raw_page!r}"
+
+    expected_quote_hash = compute_context_hash(quote, doc_id, page_no) if span_hash else ""
+    norm_quote = re.sub(r"\s+", " ", quote).lower()
+
+    for unit in source_units or []:
+        if not isinstance(unit, dict):
+            continue
+        u_text = str(unit.get("text") or unit.get("content") or "")
+        norm_u_text = re.sub(r"\s+", " ", u_text).lower()
+        if norm_quote not in norm_u_text:
+            continue
+
+        prov_list = [p for p in (unit.get("provenance") or []) if isinstance(p, dict)]
+        prov_list.append({
+            "doc_id": str(unit.get("doc_id") or "").strip(),
+            "page_no": unit.get("page_no"),
+            "unit_id": str(unit.get("id") or "").strip(),
+            "context_hash": str(unit.get("context_hash") or "").strip(),
+        })
+
+        for prov in prov_list:
+            p_doc = str(prov.get("doc_id") or "").strip()
+            try:
+                p_page = int(prov.get("page_no"))
+            except Exception:
+                continue
+            p_uid = str(prov.get("unit_id") or "").strip()
+            if p_doc != doc_id or p_page != page_no:
+                continue
+            if unit_id and unit_id not in ("unknown", "u1") and p_uid and p_uid != unit_id:
+                if str(unit.get("id") or "").strip() != unit_id:
+                    continue
+            if span_hash:
+                valid_hashes = {
+                    expected_quote_hash,
+                    compute_context_hash(u_text, p_doc, p_page),
+                    str(prov.get("context_hash") or "").strip(),
+                    str(unit.get("context_hash") or "").strip(),
+                }
+                if span_hash not in valid_hashes:
+                    continue
+            return True, "verified"
+
+    return False, f"Unverified evidence span provenance for doc_id={doc_id!r}, page_no={page_no}."
 
 
 def split_answer_into_atomic_claims(
@@ -579,7 +794,12 @@ def review_claims(state, reviewer: Optional[Callable] = None):
     if not claims and answer.strip():
         claims = [{"id": "claim_1", "text": answer.strip()}]
     verified, rejected, gaps = [], [], []
-    spans = {s.get("id"): s.get("source_unit_id") for s in state.get("evidence_spans") or [] if isinstance(s, dict)}
+    raw_spans = [s for s in state.get("evidence_spans") or [] if isinstance(s, dict)]
+    spans = {
+        s.get("id"): s.get("source_unit_id")
+        for s in raw_spans
+        if s.get("id") and (not s.get("doc_id") or verify_evidence_span_provenance(s, units)[0])
+    }
     units_by_id = {u.get("id"): u for u in units if u.get("id")}
     for begin in range(0, len(claims), 4):
         batch = claims[begin:begin + 4]
