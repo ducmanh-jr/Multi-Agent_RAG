@@ -50,3 +50,19 @@ kaggle/
 - Khi khởi động: Mặc định nạp **Cụm 7 Mô Hình SOTA** trên Dual T4.
 - Khi muốn chuyển sang **GPU Max 32B AWQ**: Bấm chọn `[GPU Max]` trực tiếp trên giao diện **Web Demo2**. Hệ thống tự động thu hồi VRAM và nạp Qwen-32B qua vLLM. Các nút GPU còn lại trên Web tự động mờ đi và khóa lại để chống tràn bộ nhớ.
 - Khi muốn quay về: Bấm `[Đổi về 7 Mô Hình (SOTA)]` ngay trên thanh thông báo ở Web Demo2!
+
+## Nghiệm thu phiên bản model và trích dẫn
+
+Bộ kiểm tra offline dùng worker giả lập, đồ thị nghiên cứu thật, một PDF tổng hợp và SQLite tạm.
+
+```powershell
+python -m pytest -q main/tests/test_worker_provenance_smoke.py
+```
+
+Khi worker GPU Finetune đã chạy mã ghi phiên bản checkpoint, dùng tệp cấu hình chứa `REMOTE_INFERENCE_URL` để nghiệm thu qua endpoint thật.
+
+```powershell
+python main/eval/smoke_worker_provenance.py --env-file .env
+```
+
+Lệnh in một bản ghi JSON. Mã thoát 0 xác nhận run đã lưu phiên bản Qwen base, SHA-256 của LoRA Generator và NLI, cùng trích dẫn trang 1 gắn với mã băm PDF. Mã thoát 1 kèm trường `failed_check` chỉ ra điều kiện chưa đạt. Worker nhận câu hỏi và đoạn trích từ PDF tổng hợp.
