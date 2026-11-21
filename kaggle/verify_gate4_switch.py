@@ -13,12 +13,33 @@ Strict Assertions Enforced:
 """
 
 import argparse
+from datetime import datetime, timezone
 import json
 import os
+import subprocess
 import sys
 import time
 from typing import Any, Dict, List, Optional
 import httpx
+
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
+
+def get_git_commit_sha() -> str:
+    """Retrieves current git commit hash for reproducible audit logging."""
+    try:
+        res = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=5.0
+        )
+        if res.returncode == 0:
+            return res.stdout.strip()
+    except Exception:
+        pass
+    return "unknown"
 
 
 class Gate4SwitchVerifier:
@@ -224,6 +245,35 @@ class Gate4SwitchVerifier:
         print("─" * 96 + "\n")
         return passed == total and total > 0
 
+    def export_evidence_artifact(self, output_path: str):
+        """Exports a machine-readable JSON artifact with commit SHA, timestamp, and test results."""
+        os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+        commit_sha = get_git_commit_sha()
+        total = len(self.results)
+        passed = sum(1 for r in self.results if r["passed"])
+        pct = (passed / total) * 100 if total > 0 else 0.0
+
+        artifact = {
+            "metadata": {
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "git_commit": commit_sha,
+                "target_url": self.base_url,
+                "verifier": "Gate4SwitchVerifier_v2_Hardened",
+            },
+            "summary": {
+                "total_tests": total,
+                "passed_tests": passed,
+                "failed_tests": total - passed,
+                "pass_percentage": round(pct, 2),
+                "all_passed": (passed == total and total > 0),
+            },
+            "test_results": self.results,
+        }
+
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(artifact, f, indent=2, ensure_ascii=False)
+        print(f"📁 Machine-readable evidence artifact đã được lưu tại:\n   {os.path.abspath(output_path)}")
+
 
 def main():
     parser = argparse.ArgumentParser(description="Multi-Agent RAG Gate 4 Switch Verifier (v2 Hardened)")
@@ -239,6 +289,11 @@ def main():
     )
     parser.add_argument("--target", default="gpu_max", help="Target mode: gpu_max or gpu_finetune")
     parser.add_argument("--max-wait", type=float, default=400.0, help="Max wait seconds for transition")
+    parser.add_argument(
+        "--json-out",
+        default="",
+        help="Optional path to export machine-readable JSON acceptance evidence"
+    )
     args = parser.parse_args()
 
     if not args.token:
@@ -248,6 +303,8 @@ def main():
     verifier = Gate4SwitchVerifier(base_url=args.url, admin_token=args.token, max_wait_seconds=args.max_wait)
     verifier.run_gate4_test(target_mode=args.target)
     all_ok = verifier.print_summary_table()
+    if args.json_out:
+        verifier.export_evidence_artifact(args.json_out)
 
     if not all_ok:
         sys.exit(1)
