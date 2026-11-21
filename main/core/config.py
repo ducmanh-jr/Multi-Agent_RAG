@@ -75,6 +75,9 @@ class Settings(_AgentModeSettings):
     REMOTE_INFERENCE_URL: str = field(
         default_factory=lambda: os.getenv("REMOTE_INFERENCE_URL", "").rstrip("/")
     )
+    REMOTE_INFERENCE_TOKEN: str = field(
+        default_factory=lambda: os.getenv("REMOTE_INFERENCE_TOKEN", "").strip()
+    )
     REMOTE_TIMEOUT_SECONDS: int = int(os.getenv("REMOTE_TIMEOUT_SECONDS", "90"))
 
     # Local CPU Inference Engine (Ollama / Llama.cpp / GGUF on user's PC)

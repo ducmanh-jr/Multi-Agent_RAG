@@ -17,6 +17,7 @@ Fully integrated with WorkerManager for:
 from __future__ import annotations
 
 import asyncio
+import hmac
 import os
 import signal
 import subprocess
@@ -48,38 +49,102 @@ if not os.path.exists(PROJECT_DIR):
 worker_manager = WorkerManager(project_dir=PROJECT_DIR)
 _http_client = httpx.AsyncClient(timeout=180.0)
 
-# Optional Bearer Token Authentication for Admin Endpoints
+# Bearer Token Authentication for Admin & Inference Proxy Endpoints
 ADMIN_TOKEN = os.environ.get("SUPERVISOR_ADMIN_TOKEN") or os.environ.get("ADMIN_API_KEY")
+INFERENCE_TOKEN = (
+    os.environ.get("SUPERVISOR_API_TOKEN")
+    or os.environ.get("REMOTE_INFERENCE_TOKEN")
+    or ADMIN_TOKEN
+)
+PUBLIC_TUNNEL = os.environ.get("PUBLIC_TUNNEL", "false").strip().lower() in ("true", "1", "yes")
 
 
-def verify_admin_auth(request: Request):
-    """
-    Guards admin endpoints with Bearer Token auth if SUPERVISOR_ADMIN_TOKEN or ADMIN_API_KEY is set.
-    """
-    if not ADMIN_TOKEN:
-        return
+def _active_admin_token() -> str:
+    return (ADMIN_TOKEN or os.environ.get("SUPERVISOR_ADMIN_TOKEN") or os.environ.get("ADMIN_API_KEY") or "").strip()
+
+
+def _active_inference_token() -> str:
+    return (
+        INFERENCE_TOKEN
+        or os.environ.get("SUPERVISOR_API_TOKEN")
+        or os.environ.get("REMOTE_INFERENCE_TOKEN")
+        or _active_admin_token()
+    ).strip()
+
+
+def _is_public_tunnel() -> bool:
+    return PUBLIC_TUNNEL or os.environ.get("PUBLIC_TUNNEL", "false").strip().lower() in ("true", "1", "yes")
+
+
+def _check_bearer_token(request: Request, expected: str, *, role_label: str) -> None:
     auth_header = request.headers.get("authorization", "")
     if not auth_header.startswith("Bearer "):
         raise HTTPException(
             status_code=401,
-            detail="Thiếu hoặc sai định dạng header Authorization. Yêu cầu 'Bearer <token>'."
+            detail="Thiếu hoặc sai định dạng header Authorization. Yêu cầu 'Bearer <token>'.",
         )
-    token = auth_header.split(" ", 1)[1].strip()
-    if token != ADMIN_TOKEN:
+    provided = auth_header.split(" ", 1)[1].strip()
+    if not provided or not hmac.compare_digest(provided, expected):
         raise HTTPException(
             status_code=403,
-            detail="Forbidden: Admin token không hợp lệ."
+            detail=f"Forbidden: {role_label} token không hợp lệ.",
         )
 
+
+def verify_admin_auth(request: Request):
+    """
+    Guards admin endpoints with Bearer Token auth (mandatory when PUBLIC_TUNNEL=true or token is set).
+    """
+    expected = _active_admin_token()
+    if not expected:
+        if _is_public_tunnel():
+            raise HTTPException(
+                status_code=503,
+                detail="Public tunnel yêu cầu cấu hình SUPERVISOR_ADMIN_TOKEN hoặc SUPERVISOR_API_TOKEN.",
+            )
+        return
+    _check_bearer_token(request, expected, role_label="Admin")
+
+
+def verify_inference_auth(request: Request):
+    """
+    Guards reverse-proxy inference endpoints with Bearer Token auth.
+    Mandatory whenever SUPERVISOR_API_TOKEN / REMOTE_INFERENCE_TOKEN is configured or PUBLIC_TUNNEL=true.
+    """
+    expected = _active_inference_token()
+    if not expected:
+        if _is_public_tunnel():
+            raise HTTPException(
+                status_code=503,
+                detail="Public tunnel yêu cầu cấu hình SUPERVISOR_API_TOKEN trước khi mở proxy inference.",
+            )
+        return
+    _check_bearer_token(request, expected, role_label="Inference")
+
+
+_DEFAULT_ALLOWED_ORIGINS = [
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+_raw_origins = os.environ.get("ALLOWED_ORIGINS", "").strip()
+ALLOWED_ORIGINS = (
+    [origin.strip() for origin in _raw_origins.split(",") if origin.strip() and origin.strip() != "*"]
+    if _raw_origins
+    else list(_DEFAULT_ALLOWED_ORIGINS)
+)
 
 app = FastAPI(title="Kaggle Master Process Supervisor Gateway", version="2.2.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=bool(ALLOWED_ORIGINS),
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept"],
 )
 
 
@@ -216,7 +281,7 @@ async def get_logs():
 # REVERSE PROXY ROUTER (Guarded by Worker Lease & vLLM Adapter)
 # ==============================================================================
 
-@app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
+@app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE"], dependencies=[Depends(verify_inference_auth)])
 async def proxy_all(request: Request, path: str):
     # 1. State check: fail closed if actively transitioning
     if worker_manager.transition_state in ("draining", "stopping", "reclaiming_vram", "spawning"):
@@ -246,6 +311,7 @@ async def proxy_all(request: Request, path: str):
             body = await request.body()
             headers = dict(request.headers)
             headers.pop("host", None)
+            headers.pop("authorization", None)
 
             # Adapt generation/summarization/routing payloads for vLLM when active worker is gpu_max
             if worker_manager.active_worker == "gpu_max":

@@ -6,6 +6,7 @@ from typing import Any
 
 import httpx
 
+from core.config import get_run_settings
 from core.token_usage import metered_post
 
 
@@ -25,11 +26,14 @@ def rerank_passages(
     clean_query = query.strip()[:MAX_TEXT_LENGTH]
     if not clean_query or not all(texts):
         raise RerankError("missing_rerank_input")
+    token = (getattr(get_run_settings(), "REMOTE_INFERENCE_TOKEN", "") or "").strip()
+    req_kwargs: dict[str, Any] = {"json": {"query": clean_query, "candidates": texts}, "timeout": timeout}
+    if token:
+        req_kwargs["headers"] = {"Authorization": f"Bearer {token}"}
     try:
         response = metered_post(
             client.post, f"{url.rstrip('/')}/api/rerank", provider="kaggle", operation="api/rerank", protocol="worker",
-            json={"query": clean_query, "candidates": texts},
-            timeout=timeout,
+            **req_kwargs,
         )
     except httpx.TimeoutException as exc:
         raise RerankError("reranker_timeout") from exc

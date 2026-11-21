@@ -8,6 +8,7 @@ from typing import Any
 import httpx
 import numpy as np
 
+from core.config import get_run_settings
 from core.token_usage import metered_post
 
 
@@ -36,10 +37,14 @@ class RemoteDenseRetriever:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise DenseRetrievalError("embedding_timeout")
+        token = (getattr(get_run_settings(), "REMOTE_INFERENCE_TOKEN", "") or "").strip()
+        req_kwargs: dict[str, Any] = {"json": {"texts": texts}, "timeout": remaining}
+        if token:
+            req_kwargs["headers"] = {"Authorization": f"Bearer {token}"}
         try:
             response = metered_post(
                 client.post, f"{url}/api/embed", provider="kaggle", operation="api/embed",
-                protocol="worker", json={"texts": texts}, timeout=remaining,
+                protocol="worker", **req_kwargs,
             )
         except httpx.TimeoutException as exc:
             raise DenseRetrievalError("embedding_timeout") from exc

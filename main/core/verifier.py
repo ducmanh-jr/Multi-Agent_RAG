@@ -17,6 +17,7 @@ from typing import Any, Optional, Callable
 
 from core.schemas import SummarizerCriticOutput
 from core.state import AtomicClaim, ClaimCheckResult, EvidenceGap, EvidenceSpan
+from utils.bilingual import expand_bilingual_tokens
 from utils.domain_guard import check_out_of_domain
 from utils.logger import logger
 
@@ -339,27 +340,70 @@ def split_answer_into_atomic_claims(
     return claims_out
 
 
+_MATCH_STOPWORDS = frozenset({
+    "the", "and", "for", "with", "that", "this", "these", "those", "from", "into", "onto",
+    "of", "in", "on", "to", "at", "by", "as", "or", "an", "it", "if", "so", "up", "no",
+    "we", "he", "she", "they", "you", "do", "my", "his", "her", "us",
+    "was", "were", "are", "is", "be", "been", "being", "have", "has", "had", "does", "did",
+    "will", "would", "could", "should", "may", "might", "can", "about", "over", "under",
+    "between", "through", "during", "before", "after", "above", "below", "than", "then",
+    "only", "also", "very", "more", "most", "such", "their", "there", "here", "where",
+    "when", "which", "what", "who", "whom", "whose", "while", "because", "although", "but",
+    "not", "all", "any", "each", "some", "other", "both", "same", "just", "its", "our",
+    "của", "và", "cho", "với", "trong", "trên", "dưới", "các", "những", "được", "không",
+    "là", "có", "từ", "về", "để", "này", "đó", "một", "khi", "như", "thì", "mà", "tại",
+    "theo", "bởi", "đã", "đang", "sẽ", "cũng", "nhưng", "hoặc", "nếu", "vì", "do", "bị",
+    "rất", "hơn", "nhất", "đều", "còn", "sau", "trước", "giữa", "qua", "ra", "vào",
+})
+
+
 def find_best_supporting_unit(
     claim_text: str,
     source_units: list[dict[str, Any]],
+    *,
+    min_overlap: float = 0.15,
 ) -> Optional[dict[str, Any]]:
-    """Finds the SourceUnit with highest lexical + numeric overlap with `claim_text`."""
-    if not source_units:
+    """
+    Finds the SourceUnit with highest meaningful lexical + numeric overlap with `claim_text`.
+    Filters common Vietnamese/English stopwords and returns None when no unit reaches a
+    meaningful support threshold (never silently defaulting to source_units[0]).
+    """
+    if not source_units or not (claim_text or "").strip():
         return None
-    c_tokens = set(re.findall(r"\w+", (claim_text or "").lower()))
+    raw_c_tokens = set(re.findall(r"\w+", claim_text.lower()))
+    c_content = {t for t in raw_c_tokens if len(t) >= 2 and t not in _MATCH_STOPWORDS}
     c_nums = set(extract_numbers_and_years(claim_text))
+    if not c_content and not c_nums:
+        return None
 
-    best_unit = source_units[0]
-    best_score = -1.0
+    c_bilingual = expand_bilingual_tokens(claim_text, c_content) - _MATCH_STOPWORDS
+
+    best_unit: Optional[dict[str, Any]] = None
+    best_score = 0.0
     for u in source_units:
         u_text = str(u.get("text") or u.get("content") or "")
-        u_tokens = set(re.findall(r"\w+", u_text.lower()))
-        if not c_tokens:
+        if not u_text.strip():
             continue
-        overlap = len(c_tokens & u_tokens) / max(len(c_tokens), 1)
+        # Direct verbatim substring match always qualifies at maximum confidence
+        if _verbatim(claim_text, u_text):
+            return u
+        u_raw = set(re.findall(r"\w+", u_text.lower()))
+        u_content = {t for t in u_raw if len(t) >= 2 and t not in _MATCH_STOPWORDS}
         u_nums = set(extract_numbers_and_years(u_text))
-        num_bonus = 0.35 * len(c_nums & u_nums) if c_nums else 0.0
-        score = overlap + num_bonus
+
+        exact_hits = len(c_content & u_content)
+        bilingual_extra = len((c_bilingual - c_content) & u_content)
+        denom = max(len(c_content), 1)
+        overlap = (exact_hits + 0.7 * bilingual_extra) / denom
+        num_hits = len(c_nums & u_nums) if c_nums else 0
+
+        # Require meaningful content overlap OR numeric match backed by content context
+        meaningful_lexical = (exact_hits + bilingual_extra) >= 1 and overlap >= min_overlap
+        meaningful_numeric = num_hits >= 1 and ((exact_hits + bilingual_extra) >= 1 or len(c_content) <= 2)
+        if not (meaningful_lexical or meaningful_numeric):
+            continue
+
+        score = overlap + (0.35 * num_hits)
         if score > best_score:
             best_score = score
             best_unit = u
@@ -555,7 +599,11 @@ def review_claims(state, reviewer: Optional[Callable] = None):
             except Exception as exc:
                 logger.warning("NLI service unavailable (%s); using source text.", type(exc).__name__)
         for claim, unit in zip(batch, premises):
-            if rows is None:
+            if unit is None:
+                checked = _local_check(claim, units)
+                if checked["status"] != "CONTRADICT" and checked["status"] != "SUPPORT":
+                    checked = _result(claim, "NOT_ENOUGH_INFO", "Không tìm thấy đoạn bằng chứng phù hợp trong tài liệu nguồn.")
+            elif rows is None:
                 checked = _local_check(claim, units)
             else:
                 match = [row for row in rows if isinstance(row, dict) and row.get("claim_id") == claim["id"]]

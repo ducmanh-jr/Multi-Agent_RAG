@@ -176,13 +176,21 @@ class UnifiedLLMClient:
         )
         return self._clean_and_parse_json(response)
 
+    def _worker_headers(self) -> dict[str, str]:
+        token = (getattr(self.settings, "REMOTE_INFERENCE_TOKEN", "") or "").strip()
+        return {"Authorization": f"Bearer {token}"} if token else {}
+
     def _post_worker(
         self, base_url: str, endpoint: str, payload: dict[str, Any], timeout: float, adapter: str | None,
     ) -> httpx.Response:
+        headers = self._worker_headers()
+        kwargs: dict[str, Any] = {"json": payload, "timeout": timeout}
+        if headers:
+            kwargs["headers"] = headers
         try:
             response = metered_post(
                 self.http_client.post, f"{base_url}/{endpoint}", provider="kaggle", operation=endpoint,
-                protocol="openai" if endpoint == "v1/chat/completions" else "worker", json=payload, timeout=timeout,
+                protocol="openai" if endpoint == "v1/chat/completions" else "worker", **kwargs,
             )
         except httpx.RequestError:
             record_worker_observation(endpoint, adapter)
