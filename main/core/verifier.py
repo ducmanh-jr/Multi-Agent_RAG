@@ -272,17 +272,22 @@ def _canonicalize_unit(raw_unit: Optional[str]) -> str:
     return _UNIT_CANONICAL_MAP.get(cleaned, cleaned)
 
 
+def _clean_claim_for_numeric_extraction(text: str) -> str:
+    raw_text = text or ""
+    cleaned = re.sub(r"(?m)^\s*(?:\(\d{1,2}\)|\d{1,2}[.)])\s+", " ", raw_text)
+    cleaned = re.sub(r"\[\d{1,3}\]", " ", cleaned)
+    cleaned = re.sub(r"(?i)\b(?:trang|page|mục|section|hình|figure|fig\.?|table|tab\.?|bảng)\s*\d+\b", " ", cleaned)
+    cleaned = re.sub(r"\b\d{4}\.\d{4,5}(?:v\d+)?\b", " ", cleaned)
+    return cleaned
+
+
 def extract_numbers_with_units(text: str) -> list[tuple[str, str, int]]:
     """
     Extracts (normalized_number, canonical_unit, char_index) tuples from text, supporting
     compound units (km/h vs m/h, tokens/s, mb/s) and quantified single digits (3 layers, 2 GPUs).
     Ignores citation brackets [1], list ordinals, page/section/table/figure indices, and arXiv IDs.
     """
-    raw_text = text or ""
-    cleaned = re.sub(r"(?m)^\s*(?:\(\d{1,2}\)|\d{1,2}[.)])\s+", " ", raw_text)
-    cleaned = re.sub(r"\[\d{1,3}\]", " ", cleaned)
-    cleaned = re.sub(r"(?i)\b(?:trang|page|mục|section|hình|figure|fig\.?|table|tab\.?|bảng)\s*\d+\b", " ", cleaned)
-    cleaned = re.sub(r"\b\d{4}\.\d{4,5}(?:v\d+)?\b", " ", cleaned)
+    cleaned = _clean_claim_for_numeric_extraction(text)
 
     results: list[tuple[str, str, int]] = []
     seen: set[tuple[str, str]] = set()
@@ -353,18 +358,16 @@ def check_numerical_and_date_consistency(claim_text: str, full_context_text: str
     if not claim_items:
         return True, True, []
 
+    cleaned_lower = _clean_claim_for_numeric_extraction(claim_text).lower()
     ctx_text = full_context_text or ""
     ctx_lower = ctx_text.lower()
     ctx_matches = _extract_context_matches(ctx_text)
-
-    claim_tokens = set(re.findall(r"[a-z0-9_]+", lower_claim))
-    shared_anchors = {a for a in (_METRIC_ANCHOR_WORDS & claim_tokens) if a in ctx_lower}
 
     missing_nums: list[str] = []
     dates_passed = True
     numerical_passed = True
 
-    for norm_num, claim_unit, _ in claim_items:
+    for norm_num, claim_unit, claim_pos in claim_items:
         candidates = [
             (c_num, c_unit, c_pos)
             for (c_num, c_unit, c_pos) in ctx_matches
@@ -382,16 +385,20 @@ def check_numerical_and_date_consistency(claim_text: str, full_context_text: str
                 if c_unit != "%":
                     unit_matched_positions.append(c_pos)
 
+        local_win = cleaned_lower[max(0, claim_pos - 100) : min(len(cleaned_lower), claim_pos + 100)]
+        local_tokens = set(re.findall(r"[a-z0-9_]+", local_win))
+        local_anchors = {a for a in (_METRIC_ANCHOR_WORDS & local_tokens) if a in ctx_lower}
+
         found = False
         if unit_matched_positions:
-            if not shared_anchors or len(ctx_text) <= 180:
+            if not local_anchors or len(ctx_text) <= 180:
                 found = True
             else:
                 for pos in unit_matched_positions:
                     win_start = max(0, pos - 140)
                     win_end = min(len(ctx_lower), pos + 140)
                     window = ctx_lower[win_start:win_end]
-                    if all(re.search(rf"\b{re.escape(anchor)}\b", window) for anchor in shared_anchors):
+                    if all(re.search(rf"\b{re.escape(anchor)}\b", window) for anchor in local_anchors):
                         found = True
                         break
 
