@@ -25,7 +25,7 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from core.config import settings
+from core.config import get_run_settings
 from utils.logger import logger
 
 
@@ -40,6 +40,172 @@ def clear_pdf_cache() -> None:
         _PDF_CHUNK_CACHE.clear()
 
 
+_SECTION_HEADING_RE = re.compile(
+    r"^(?:(?:\d+(?:\.\d+)*|[IVX]+)[.)]?\s+[A-ZÀ-Ỹ][^\n]{2,90}"
+    r"|(?:Abstract|Introduction|Related Work|Background|Methodology|Method|Methods|Approach|"
+    r"Experiments?|Experimental Results?|Evaluation|Results?|Discussion|Limitations?|Conclusion|Conclusions|References|"
+    r"Tóm tắt|Giới thiệu|Tổng quan|Phương pháp|Thực nghiệm|Kết quả|Thảo luận|Hạn chế|Kết luận|Tài liệu tham khảo))\s*$",
+    re.IGNORECASE,
+)
+_TABLE_CAPTION_RE = re.compile(
+    r"^\s*(?:Table|Tab\.|Bảng)\s*[A-Z]?\d+(?:[.-]\d+)*\b",
+    re.IGNORECASE,
+)
+
+
+def _extract_page_text_layout_aware(page: Any) -> str:
+    """
+    Extracts page text while preserving reading order on 2-column academic layouts.
+    Falls back to standard page.get_text("text") on single-column pages so existing
+    plain-text documents keep identical chunking behavior.
+    """
+    try:
+        page_rect = page.rect
+        page_w = float(page_rect.width) if page_rect else 0.0
+        raw_blocks = page.get_text("blocks") or []
+    except Exception:
+        return page.get_text("text") or ""
+
+    text_blocks = [
+        (float(b[0]), float(b[1]), float(b[2]), float(b[3]), str(b[4]).strip())
+        for b in raw_blocks
+        if len(b) >= 7 and int(b[6]) == 0 and str(b[4]).strip()
+    ]
+    if page_w <= 0 or len(text_blocks) < 4:
+        return page.get_text("text") or ""
+
+    mid_x = page_w * 0.5
+    left_col: list[tuple[float, float, float, float, str]] = []
+    right_col: list[tuple[float, float, float, float, str]] = []
+    spanning: list[tuple[float, float, float, float, str]] = []
+
+    for blk in text_blocks:
+        x0, y0, x1, y1, _ = blk
+        w = x1 - x0
+        if w > page_w * 0.58 or (x0 < mid_x * 0.85 and x1 > mid_x * 1.15):
+            spanning.append(blk)
+        elif x1 <= mid_x * 1.08:
+            left_col.append(blk)
+        elif x0 >= mid_x * 0.92:
+            right_col.append(blk)
+        else:
+            spanning.append(blk)
+
+    # Only switch to column-sorted reading order when a genuine 2-column layout is present
+    if len(left_col) < 2 or len(right_col) < 2:
+        return page.get_text("text") or ""
+
+    left_col.sort(key=lambda b: (b[1], b[0]))
+    right_col.sort(key=lambda b: (b[1], b[0]))
+    spanning.sort(key=lambda b: (b[1], b[0]))
+
+    col_top = min(left_col[0][1], right_col[0][1])
+    col_bottom = max(left_col[-1][3], right_col[-1][3])
+    header_blocks = [b for b in spanning if b[3] <= col_top + 12.0]
+    footer_blocks = [b for b in spanning if b[1] >= col_bottom - 12.0]
+    mid_spanning = [b for b in spanning if b not in header_blocks and b not in footer_blocks]
+
+    ordered = header_blocks + left_col + right_col + mid_spanning + footer_blocks
+    return "\n\n".join(b[4] for b in ordered if b[4])
+
+
+def _extract_page_table_chunks(
+    page: Any,
+    *,
+    doc_title: str,
+    page_no: int,
+    resolved: str,
+    section_title: str,
+) -> list[dict[str, Any]]:
+    """Extracts intact Markdown table chunks from a PDF page using PyMuPDF find_tables()."""
+    if not hasattr(page, "find_tables"):
+        return []
+    table_chunks: list[dict[str, Any]] = []
+    try:
+        tabs = page.find_tables()
+        tables = list(getattr(tabs, "tables", None) or [])
+    except Exception:
+        return []
+    if not tables:
+        return []
+
+    # Collect nearby caption candidates (Table N / Bảng N)
+    caption_blocks: list[tuple[float, float, float, float, str]] = []
+    try:
+        for b in page.get_text("blocks") or []:
+            if len(b) >= 7 and int(b[6]) == 0:
+                txt = re.sub(r"[ \t]+", " ", str(b[4]).replace("\n", " ")).strip()
+                if txt and _TABLE_CAPTION_RE.match(txt):
+                    caption_blocks.append((float(b[0]), float(b[1]), float(b[2]), float(b[3]), txt))
+    except Exception:
+        caption_blocks = []
+
+    for idx, tab in enumerate(tables, start=1):
+        try:
+            extracted_rows = tab.extract() or []
+            if len(extracted_rows) < 2:
+                continue
+            max_cols = max((len(r) for r in extracted_rows if isinstance(r, list)), default=0)
+            if max_cols < 2:
+                continue
+            non_empty_cells = sum(
+                1 for row in extracted_rows if isinstance(row, list)
+                for cell in row if cell is not None and str(cell).strip()
+            )
+            if non_empty_cells < 3:
+                continue
+            md = (tab.to_markdown() or "").strip()
+            if not md:
+                continue
+        except Exception:
+            continue
+
+        bbox = list(getattr(tab, "bbox", (0.0, 0.0, 0.0, 0.0)))
+        # Match closest Table caption within 65pt above or below the table
+        matched_caption = ""
+        best_dist = 65.0
+        for cx0, cy0, cx1, cy1, ctxt in caption_blocks:
+            dist_above = bbox[1] - cy1
+            dist_below = cy0 - bbox[3]
+            if -6.0 <= dist_above <= best_dist:
+                best_dist = max(0.0, dist_above)
+                matched_caption = ctxt
+            elif -6.0 <= dist_below <= best_dist:
+                best_dist = max(0.0, dist_below)
+                matched_caption = ctxt
+
+        table_body = f"{matched_caption}\n{md}" if matched_caption else md
+        cid = f"{doc_title}_p{page_no}_t{idx}"
+        table_chunks.append(
+            {
+                "id": cid,
+                "chunk_id": cid,
+                "doc_id": doc_title,
+                "title": doc_title,
+                "page_no": page_no,
+                "page": page_no,
+                "text": table_body,
+                "content": table_body,
+                "sentences": [line.strip() for line in table_body.splitlines() if line.strip()],
+                "source_path": resolved,
+                "is_selected_pdf": True,
+                "unit_type": "table",
+                "bbox": [round(float(v), 2) for v in bbox[:4]],
+                "section_title": section_title,
+            }
+        )
+    return table_chunks
+
+
+def _detect_section_heading(text: str, current_section: str) -> str:
+    """Scans leading lines of a page/chunk for an academic section heading."""
+    for line in (text or "").splitlines():
+        clean = re.sub(r"[ \t]+", " ", line).strip()
+        if 3 <= len(clean) <= 100 and _SECTION_HEADING_RE.match(clean):
+            return clean
+    return current_section
+
+
 def load_or_parse_selected_pdf(
     pdf_path: Optional[str],
     chunk_size_words: Any = 240,
@@ -47,9 +213,11 @@ def load_or_parse_selected_pdf(
     root_dir: Optional[str] = None,
 ) -> list[dict[str, Any]]:
     """
-    Dynamically parses and caches the user-selected PDF document with sentence-window preservation.
-    Guarantees that when a user selects a document in the UI, ALL 6 modes (CPU Min, CPU Max,
-    Gemini, Kaggle FN, Kaggle Max, Hybrid) retrieve directly from that document!
+    Dynamically parses and caches the user-selected PDF document with:
+      - 2-column academic reading-order preservation,
+      - intact Markdown table chunk extraction (unit_type='table'),
+      - section heading tracking, and sentence-window preservation.
+    Guarantees that when a user selects a document in the UI, ALL modes retrieve directly from it.
     """
     if not pdf_path:
         return []
@@ -65,7 +233,7 @@ def load_or_parse_selected_pdf(
 
     resolved = str(pdf_path).strip()
     if not os.path.exists(resolved):
-        candidate = os.path.join(settings.UPLOAD_DIR, os.path.basename(resolved))
+        candidate = os.path.join(get_run_settings().UPLOAD_DIR, os.path.basename(resolved))
         if os.path.exists(candidate):
             resolved = candidate
         elif root_dir and os.path.exists(os.path.join(root_dir, "uploads", os.path.basename(resolved))):
@@ -91,30 +259,69 @@ def load_or_parse_selected_pdf(
         import fitz  # PyMuPDF
 
         pdf_doc = fitz.open(resolved)
+        current_section = ""
         try:
             for page_idx, page in enumerate(pdf_doc):
                 page_no = page_idx + 1
-                raw_text = page.get_text("text") or ""
+                raw_text = _extract_page_text_layout_aware(page)
+                current_section = _detect_section_heading(raw_text, current_section)
                 clean_text = re.sub(r"[ \t]+", " ", raw_text).strip()
-                if not clean_text:
-                    continue
 
-                # Split into sentences first so chunks never cut mid-sentence
-                sentences = [
-                    s.strip()
-                    for s in re.split(r"(?<=[.!?।])\s+|\n{2,}", clean_text)
-                    if len(s.strip()) > 12
-                ]
-                if not sentences:
-                    sentences = [clean_text]
+                # Extract intact structured tables on this page first so row-column relations survive chunking
+                page_tables = _extract_page_table_chunks(
+                    page,
+                    doc_title=doc_title,
+                    page_no=page_no,
+                    resolved=resolved,
+                    section_title=current_section,
+                )
 
-                current_sents: list[str] = []
-                current_words = 0
-                sub_idx = 1
+                if clean_text:
+                    # Split into sentences first so chunks never cut mid-sentence
+                    sentences = [
+                        s.strip()
+                        for s in re.split(r"(?<=[.!?।])\s+|\n{2,}", clean_text)
+                        if len(s.strip()) > 12
+                    ]
+                    if not sentences:
+                        sentences = [clean_text]
 
-                for sent in sentences:
-                    w_count = len(sent.split())
-                    if current_words + w_count > chunk_size_words and current_sents:
+                    current_sents: list[str] = []
+                    current_words = 0
+                    sub_idx = 1
+
+                    for sent in sentences:
+                        current_section = _detect_section_heading(sent, current_section)
+                        w_count = len(sent.split())
+                        if current_words + w_count > chunk_size_words and current_sents:
+                            chunk_body = " ".join(current_sents).strip()
+                            cid = f"{doc_title}_p{page_no}_c{sub_idx}"
+                            chunks.append(
+                                {
+                                    "id": cid,
+                                    "chunk_id": cid,
+                                    "doc_id": doc_title,
+                                    "title": doc_title,
+                                    "page_no": page_no,
+                                    "page": page_no,
+                                    "text": chunk_body,
+                                    "content": chunk_body,
+                                    "sentences": list(current_sents),
+                                    "source_path": resolved,
+                                    "is_selected_pdf": True,
+                                    "unit_type": "text",
+                                    "section_title": current_section,
+                                }
+                            )
+                            sub_idx += 1
+                            # Keep last 2 sentences for sliding window overlap
+                            current_sents = current_sents[-2:] if len(current_sents) >= 2 else current_sents[-1:]
+                            current_words = sum(len(x.split()) for x in current_sents)
+
+                        current_sents.append(sent)
+                        current_words += w_count
+
+                    if current_sents:
                         chunk_body = " ".join(current_sents).strip()
                         cid = f"{doc_title}_p{page_no}_c{sub_idx}"
                         chunks.append(
@@ -130,34 +337,13 @@ def load_or_parse_selected_pdf(
                                 "sentences": list(current_sents),
                                 "source_path": resolved,
                                 "is_selected_pdf": True,
+                                "unit_type": "text",
+                                "section_title": current_section,
                             }
                         )
-                        sub_idx += 1
-                        # Keep last 2 sentences for sliding window overlap
-                        current_sents = current_sents[-2:] if len(current_sents) >= 2 else current_sents[-1:]
-                        current_words = sum(len(x.split()) for x in current_sents)
 
-                    current_sents.append(sent)
-                    current_words += w_count
-
-                if current_sents:
-                    chunk_body = " ".join(current_sents).strip()
-                    cid = f"{doc_title}_p{page_no}_c{sub_idx}"
-                    chunks.append(
-                        {
-                            "id": cid,
-                            "chunk_id": cid,
-                            "doc_id": doc_title,
-                            "title": doc_title,
-                            "page_no": page_no,
-                            "page": page_no,
-                            "text": chunk_body,
-                            "content": chunk_body,
-                            "sentences": list(current_sents),
-                            "source_path": resolved,
-                            "is_selected_pdf": True,
-                        }
-                    )
+                if page_tables:
+                    chunks.extend(page_tables)
         finally:
             pdf_doc.close()
     except Exception as exc:

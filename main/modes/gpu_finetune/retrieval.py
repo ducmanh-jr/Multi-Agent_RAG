@@ -3,8 +3,8 @@ GPU Finetune Mode - Agentic Retrieval Agent (7-Model SOTA Pipeline).
 Leverages Remote GPU Worker powered by:
   1. Fine-tuned 'router' (01_agent1_router) QLoRA on Qwen2.5-7B:
      - Predicts query intent, multi-angle sub-queries, dynamic alpha (dense/sparse weight), top_k.
-  2. Fine-tuned 'bge_m3_lora' (06_embedding_bge_m3) for high-density semantic embedding.
-  3. Fine-tuned 'reranker_bge_large' (07_reranker_bge_large) CoREB LoRA for cross-encoder reranking.
+  2. A versioned BGE-M3 dense encoder with FTS5/BM25 fallback.
+  3. A versioned BGE cross-encoder for optional reranking.
   4. Scopes strictly to user-selected PDF via load_or_parse_selected_pdf().
 """
 
@@ -17,6 +17,13 @@ from typing import Any
 from agents.agent1_retrieval.tools.bm25 import SimpleBM25
 from agents.agent1_retrieval.tools.fts5_search import SQLiteFTS5Searcher
 from agents.agent1_retrieval.tools.hybrid import reciprocal_rank_fusion
+from agents.agent1_retrieval.tools.remote_dense import (
+    DEFAULT_DENSE_RRF_K,
+    DEFAULT_DENSE_WEIGHT,
+    DenseRetrievalError,
+    RemoteDenseRetriever,
+)
+from agents.agent1_retrieval.tools.remote_rerank import MAX_CANDIDATES, RerankError, rerank_passages
 from core.base_agent import BaseAgent
 from core.schemas import RouterPlanOutput
 from core.state import AgentState
@@ -31,14 +38,50 @@ ROUTER_TRAINING_SYSTEM_PROMPT = (
 )
 
 
-class GPUFinetuneRetrievalAgent(BaseAgent):
-    """Retrieval Agent powered by Fine-Tuned Router + BGE-M3 + BGE-Reranker-Large."""
+def _prefer_distinct_pages(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep the first hit per document/page ahead of lower-ranked passages from that page."""
+    seen_pages = set()
+    first_hits = []
+    remaining = []
+    for chunk in chunks:
+        document = chunk.get("doc_id")
+        page = chunk.get("page_no") or chunk.get("page")
+        if document and page:
+            key = (document, page)
+            if key in seen_pages:
+                remaining.append(chunk)
+                continue
+            seen_pages.add(key)
+        first_hits.append(chunk)
+    return first_hits + remaining
 
-    def __init__(self, max_internal_retry: int = 2):
+
+class GPUFinetuneRetrievalAgent(BaseAgent):
+    """Scoped retrieval with optional dense embeddings and cross-encoder reranking."""
+
+    def __init__(
+        self, max_internal_retry: int = 2, *, enable_dense: bool | None = None,
+        enable_remote_router: bool = True, enable_rerank: bool | None = None, dense_weight: float = DEFAULT_DENSE_WEIGHT,
+        dense_rrf_k: int = DEFAULT_DENSE_RRF_K, page_diverse: bool | None = None,
+        rerank_keep_prefix: int | None = None,
+    ):
         super().__init__(name="GPUFinetuneRetrievalAgent", max_internal_retry=max_internal_retry)
         self.fts5_searcher = SQLiteFTS5Searcher()
         self.bm25_fallback = SimpleBM25()
         self.corpus_docs: list[dict[str, Any]] = []
+        if enable_dense is None:
+            enable_dense = self.settings.GPU_FINETUNE_DENSE_ENABLED
+        self.dense = RemoteDenseRetriever() if enable_dense else None
+        self.enable_remote_router = enable_remote_router
+        self.enable_rerank = self.settings.GPU_FINETUNE_RERANK_ENABLED if enable_rerank is None else enable_rerank
+        self.rerank_keep_prefix = (
+            self.settings.GPU_FINETUNE_RERANK_KEEP_PREFIX if rerank_keep_prefix is None else rerank_keep_prefix
+        )
+        if not 0 <= self.rerank_keep_prefix < MAX_CANDIDATES:
+            raise ValueError("Reranker protected prefix is outside the supported candidate budget")
+        self.dense_weight = dense_weight
+        self.dense_rrf_k = dense_rrf_k
+        self.page_diverse = self.settings.GPU_FINETUNE_PAGE_DIVERSITY_ENABLED if page_diverse is None else page_diverse
         self._load_corpus()
 
     def _load_corpus(self):
@@ -73,9 +116,7 @@ class GPUFinetuneRetrievalAgent(BaseAgent):
         top_k = int(state.get("top_k") or local_plan.top_k)
         intent = local_plan.intent
 
-        self.logger.info(f"[GPU Finetune Retrieval] Invoking Fine-Tuned Router for query: '{query[:65]}'")
-
-        if self.settings.REMOTE_INFERENCE_URL and retry_count == 0 and not sub_queries:
+        if self.enable_remote_router and self.settings.REMOTE_INFERENCE_URL and retry_count == 0 and not sub_queries:
             try:
                 router_res = llm_client.call_kaggle_specialist(
                     endpoint="api/router",
@@ -112,42 +153,77 @@ class GPUFinetuneRetrievalAgent(BaseAgent):
             active_pool = self.corpus_docs
 
         # 3. Multi-query hybrid search over FTS5 + BM25
+        candidate_limit = 2 * top_k if self.page_diverse else top_k
         candidate_lists = []
         for sq in sub_queries[:4]:
-            res_fts = active_fts.search(sq, top_k=top_k)
-            res_bm25 = active_bm25.search(sq, top_k=top_k)
+            res_fts = active_fts.search(sq, top_k=candidate_limit)
+            res_bm25 = active_bm25.search(sq, top_k=candidate_limit)
             if res_fts:
                 candidate_lists.append(res_fts)
             if res_bm25:
                 candidate_lists.append(res_bm25)
 
-        # 4. Hybrid Reciprocal Rank Fusion (RRF)
-        fused_docs = reciprocal_rank_fusion(candidate_lists, k=60) if candidate_lists else []
-        if not fused_docs and active_pool:
-            fused_docs = active_pool[:top_k]
-
-        # 5. Remote Reranker enhancement via 07_reranker_bge_large LoRA if available
-        if self.settings.REMOTE_INFERENCE_URL and fused_docs:
+        # 4. Fuse the lexical rankings, then combine them with scoped dense results.
+        fused_docs = reciprocal_rank_fusion(candidate_lists, k=60, top_n=candidate_limit) if candidate_lists else []
+        dense_trace = {"status": "disabled"}
+        sparse_hashes = None
+        if self.dense is not None:
             try:
-                candidate_texts = [d.get("text", "")[:500] for d in fused_docs[:15]]
-                rerank_resp = llm_client.http_client.post(
-                    f"{self.settings.REMOTE_INFERENCE_URL.rstrip('/')}/api/rerank",
-                    json={"query": query, "candidates": candidate_texts},
-                    timeout=float(self.settings.REMOTE_TIMEOUT_SECONDS) * 2,
+                if not self.settings.REMOTE_INFERENCE_URL:
+                    raise DenseRetrievalError("embedding_worker_not_configured")
+                dense_docs, revision = self.dense.rank(
+                    query, active_pool, top_k=candidate_limit, client=llm_client.http_client,
+                    url=self.settings.REMOTE_INFERENCE_URL, model=self.settings.EMBEDDING_MODEL,
+                    timeout=float(self.settings.REMOTE_TIMEOUT_SECONDS),
                 )
-                if rerank_resp.status_code == 200:
-                    reranked_data = rerank_resp.json()
-                    ranked_indices = reranked_data.get("ranked_indices", [])
-                    if ranked_indices:
-                        fused_docs = [fused_docs[i] for i in ranked_indices if i < len(fused_docs)]
-                        self.logger.info(f"[GPU Finetune Retrieval] Re-ordered top-{len(fused_docs)} with Fine-Tuned BGE-Reranker-Large")
-            except Exception as e:
-                self.logger.debug(f"[GPU Finetune Retrieval] Remote reranker skipped ({e}), maintaining RRF order.")
+            except DenseRetrievalError as exc:
+                dense_trace = {"status": "fallback", "reason": str(exc)}
+                self.logger.warning("[GPU Finetune Retrieval] Dense fallback to Sparse: %s", exc)
+            else:
+                sparse_hashes = {doc["context_hash"] for doc in fused_docs}
+                fusion_limit = 2 * candidate_limit if self.page_diverse else top_k
+                fused_docs = reciprocal_rank_fusion(
+                    [fused_docs, dense_docs], k=self.dense_rrf_k, top_n=fusion_limit, weights=[1.0, self.dense_weight],
+                )
+                dense_trace = {"status": "used", "model": self.settings.EMBEDDING_MODEL, "revision": revision}
+        if not fused_docs and active_pool:
+            fused_docs = active_pool[:candidate_limit]
+        if self.page_diverse:
+            unseen_docs = [doc for doc in fused_docs if doc.get("id") not in seen_chunks]
+            fused_docs = _prefer_distinct_pages(unseen_docs or fused_docs)[:top_k]
 
         # Deduplicate seen chunks
         final_docs = [d for d in fused_docs if d.get("id") not in seen_chunks][:top_k]
         if not final_docs and fused_docs:
             final_docs = fused_docs[:top_k]
+        if sparse_hashes is not None:
+            dense_trace["admitted_passages"] = sum(doc["context_hash"] not in sparse_hashes for doc in final_docs)
+
+        rerank_trace = {"status": "disabled"}
+        if self.enable_rerank:
+            if dense_trace["status"] == "fallback":
+                rerank_trace = {"status": "skipped", "reason": "dense_fallback"}
+            elif min(len(final_docs), MAX_CANDIDATES) - self.rerank_keep_prefix < 2:
+                rerank_trace = {"status": "skipped", "reason": "insufficient_candidates"}
+            else:
+                try:
+                    if not self.settings.REMOTE_INFERENCE_URL:
+                        raise RerankError("reranker_not_configured")
+                    final_docs, revision, changed = rerank_passages(
+                        query, final_docs, client=llm_client.http_client,
+                        url=self.settings.REMOTE_INFERENCE_URL, model=self.settings.RERANKER_MODEL,
+                        timeout=float(self.settings.REMOTE_TIMEOUT_SECONDS),
+                        keep_prefix=self.rerank_keep_prefix,
+                    )
+                except RerankError as exc:
+                    rerank_trace = {"status": "fallback", "reason": str(exc)}
+                    self.logger.warning("[GPU Finetune Retrieval] Keeping original ranking: %s", exc)
+                else:
+                    rerank_trace = {
+                        "status": "used", "model": self.settings.RERANKER_MODEL,
+                        "revision": revision, "changed": changed,
+                        "kept_prefix": self.rerank_keep_prefix,
+                    }
 
         new_seen = list(set(seen_chunks + [d.get("id") for d in final_docs if d.get("id")]))
 
@@ -160,6 +236,8 @@ class GPUFinetuneRetrievalAgent(BaseAgent):
                 "sub_queries": sub_queries,
                 "alpha": alpha,
                 "top_k": top_k,
+                "dense": dense_trace,
+                "rerank": rerank_trace,
             },
         )
 

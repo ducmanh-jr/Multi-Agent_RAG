@@ -18,6 +18,13 @@ from agents.agent1_retrieval.tools.bm25 import SimpleBM25
 from agents.agent1_retrieval.tools.fts5_search import SQLiteFTS5Searcher
 from agents.agent1_retrieval.tools.hybrid import reciprocal_rank_fusion
 from agents.agent1_retrieval.tools.perspective import generate_research_perspectives
+from agents.agent1_retrieval.tools.remote_dense import RemoteDenseRetriever
+from agents.agent1_retrieval.tools.semantic_pipeline import (
+    boost_entities_and_tables,
+    build_cross_lingual_subqueries,
+    enhance_with_dense_and_rerank,
+    extract_searchable_figure_chunks,
+)
 from core.base_agent import BaseAgent
 from core.schemas import RouterPlanOutput
 from core.state import AgentState
@@ -48,11 +55,24 @@ _EXPANSION_INSTRUCTION = (
 class HybridRetrievalAgent(BaseAgent):
     """Flagship Hybrid Retrieval: Gemini Router First -> GPU Finetune LoRA -> Local FTS5/BM25."""
 
-    def __init__(self, max_internal_retry: int = 2):
+    def __init__(
+        self,
+        max_internal_retry: int = 2,
+        *,
+        enable_dense: bool | None = None,
+        enable_rerank: bool | None = None,
+        rerank_keep_prefix: int | None = None,
+    ):
         super().__init__(name="HybridRetrievalAgent", max_internal_retry=max_internal_retry)
         self.fts5_searcher = SQLiteFTS5Searcher()
         self.bm25_fallback = SimpleBM25()
         self.corpus_docs: list[dict[str, Any]] = []
+        self.enable_dense = self.settings.HYBRID_DENSE_ENABLED if enable_dense is None else enable_dense
+        self.enable_rerank = self.settings.HYBRID_RERANK_ENABLED if enable_rerank is None else enable_rerank
+        self.rerank_keep_prefix = (
+            self.settings.HYBRID_RERANK_KEEP_PREFIX if rerank_keep_prefix is None else rerank_keep_prefix
+        )
+        self.dense = RemoteDenseRetriever()
         self._load_corpus()
 
     def _load_corpus(self):
@@ -145,6 +165,9 @@ class HybridRetrievalAgent(BaseAgent):
                 chunks = load_or_parse_selected_pdf(p)
                 if chunks:
                     pdf_chunks.extend(chunks)
+        figure_chunks = extract_searchable_figure_chunks(pdf_paths)
+        if figure_chunks:
+            pdf_chunks.extend(figure_chunks)
         if pdf_paths:
             active_fts = SQLiteFTS5Searcher()
             active_bm25 = SimpleBM25()
@@ -156,17 +179,22 @@ class HybridRetrievalAgent(BaseAgent):
             active_bm25 = self.bm25_fallback
             active_pool = self.corpus_docs
 
+        # Cross-lingual bilingual query bridging (Vietnamese <-> English)
+        bridged = build_cross_lingual_subqueries(query, active_pool)
+        search_queries = list(dict.fromkeys([*sub_queries, *bridged]))[:6]
+        candidate_limit = 2 * top_k
+
         # Multi-query FTS5 + BM25 search with weighted RRF
         all_lists = []
         list_weights = []
         lexical_weight = max(0.1, 1.0 - alpha)
         expansion_weight = max(0.1, alpha)
 
-        expansion_count = sum(q != query for q in sub_queries)
-        for q in sub_queries:
+        expansion_count = sum(q != query for q in search_queries)
+        for q in search_queries:
             weight = lexical_weight if q == query else expansion_weight / max(1, expansion_count)
-            res_fts = active_fts.search(q, top_k=top_k)
-            res_bm25 = active_bm25.search(q, top_k=top_k)
+            res_fts = active_fts.search(q, top_k=candidate_limit)
+            res_bm25 = active_bm25.search(q, top_k=candidate_limit)
             if res_fts:
                 all_lists.append(res_fts)
                 list_weights.append(weight)
@@ -174,23 +202,36 @@ class HybridRetrievalAgent(BaseAgent):
                 all_lists.append(res_bm25)
                 list_weights.append(weight)
 
-        fused = reciprocal_rank_fusion(all_lists, top_n=top_k + 4, weights=list_weights) if all_lists else []
-        if not fused and active_pool:
-            fused = active_pool[: min(top_k, len(active_pool))]
+        sparse_fused = reciprocal_rank_fusion(all_lists, top_n=candidate_limit, weights=list_weights) if all_lists else []
+        if not sparse_fused and active_pool:
+            sparse_fused = active_pool[: min(candidate_limit, len(active_pool))]
 
-        # Priority reranking via required entities
-        if fused and required_entities:
-            def _score_fn(idx_doc: tuple[int, dict[str, Any]]) -> float:
-                r_idx, d = idx_doc
-                txt_l = str(d.get("text", "")).lower()
-                ent_hits = sum(1 for e in required_entities if e.lower() in txt_l)
-                return (1.0 / (r_idx + 1)) + 0.40 * ent_hits
+        # Adaptive Dense (Kaggle BGE-M3 primary, optional Gemini embedding secondary) + Guarded MiniLM Rerank
+        use_kaggle_dense = bool(self.enable_dense and is_gpu_online and self.settings.REMOTE_INFERENCE_URL)
+        use_gemini_dense = bool(
+            self.enable_dense
+            and self.settings.GEMINI_DENSE_ENABLED
+            and caps.get("gemini", {}).get("online")
+            and self.settings.GEMINI_API_KEY
+        )
+        use_kaggle_rerank = bool(self.enable_rerank and is_gpu_online and self.settings.REMOTE_INFERENCE_URL)
 
-            indexed = list(enumerate(fused))
-            indexed.sort(key=_score_fn, reverse=True)
-            fused = [d for _, d in indexed[:top_k]]
-        else:
-            fused = fused[:top_k]
+        fused, dense_trace, rerank_trace = enhance_with_dense_and_rerank(
+            query,
+            sparse_fused,
+            active_pool,
+            top_k=max(top_k + 4, top_k),
+            http_client=llm_client.http_client,
+            dense_retriever=self.dense,
+            enable_kaggle_dense=use_kaggle_dense,
+            enable_gemini_dense=use_gemini_dense,
+            enable_rerank=use_kaggle_rerank,
+            keep_prefix=self.rerank_keep_prefix,
+            page_diverse=True,
+        )
+
+        # Priority reranking via required entities & intact tables
+        fused = boost_entities_and_tables(query, fused, required_entities, top_k)
 
         seen_ids = {c.get("id") for c in seen_chunks if isinstance(c, dict)}
         fresh_docs = [d for d in fused if d.get("id") not in seen_ids]
@@ -204,11 +245,14 @@ class HybridRetrievalAgent(BaseAgent):
         all_seen = list(seen_chunks) + [d for d in fresh_docs if d.get("id") not in seen_ids]
 
         trace = self.log_action(
-            f"Truy hồi FTS5 + BM25 ({planning_backend}) kết nối {len(merged_docs)} đoạn trích",
+            f"Truy hồi Hybrid ({planning_backend}) kết nối {len(merged_docs)} đoạn trích",
             {
                 "planning_backend": planning_backend,
                 "scoped_to_selected_pdf": bool(pdf_chunks),
-                "sub_queries": sub_queries,
+                "sub_queries": search_queries,
+                "cross_lingual_queries": bridged,
+                "dense": dense_trace,
+                "rerank": rerank_trace,
                 "retrieved_count": len(merged_docs),
                 "fresh_count": len(fresh_docs),
             },
@@ -217,7 +261,7 @@ class HybridRetrievalAgent(BaseAgent):
         return {
             "alpha": alpha,
             "perspectives": perspectives,
-            "sub_queries": sub_queries,
+            "sub_queries": search_queries,
             "required_entities": required_entities,
             "retrieved_docs": merged_docs[: top_k + 4],
             "seen_chunks": all_seen,

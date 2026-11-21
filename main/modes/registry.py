@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Optional
 from core.base_agent import BaseAgent
-from core.config import agent_inference_mode, settings
+from core.config import RunConfig, Settings, agent_inference_mode, get_run_settings
 from core.state import AgentState
 from utils.logger import logger
 
@@ -134,6 +134,7 @@ def get_agent_class(agent_name: str, mode: str):
 
 def get_agent(agent_name: str, mode: Optional[str] = None) -> BaseAgent:
     """Instantiate a single agent for a specific mode."""
+    settings = get_run_settings()
     target_mode = mode or settings.get_agent_mode(agent_name) or settings.EXECUTION_MODE
     cls = get_agent_class(agent_name, target_mode)
     return cls()
@@ -157,6 +158,7 @@ def get_active_agents() -> dict[str, BaseAgent]:
     Instantiate agents according to current settings:
     Allows per-agent custom configuration or unified configuration under settings.EXECUTION_MODE.
     """
+    settings = get_run_settings()
     global_mode = normalize_mode(settings.EXECUTION_MODE)
     agents = {}
     for agent_key in ["retrieval", "reader", "summarizer", "fact_checker", "writer"]:
@@ -167,12 +169,17 @@ def get_active_agents() -> dict[str, BaseAgent]:
     return agents
 
 
+def resolve_agent_modes(config: RunConfig | Settings, mode: str | None = None) -> dict[str, str]:
+    return {
+        role: normalize_mode(mode or configured_mode or config.EXECUTION_MODE)
+        for role, configured_mode in config.get_all_agent_modes().items()
+    }
+
+
 def get_agent_runners(mode: Optional[str] = None) -> dict[str, Callable[[AgentState], dict[str, Any]]]:
     """Capture both agent implementations and their inference routes for one compiled graph."""
     runners = {}
-    default_mode = settings.EXECUTION_MODE
-    for role, configured_mode in settings.get_all_agent_modes().items():
-        agent_mode = normalize_mode(mode or configured_mode or default_mode)
+    for role, agent_mode in resolve_agent_modes(get_run_settings(), mode).items():
         agent = get_agent(role, agent_mode)
         node_role = "fact_checker" if role == "factchecker" else role
         runners[node_role] = agent_inference_mode(agent_mode)(agent.run)

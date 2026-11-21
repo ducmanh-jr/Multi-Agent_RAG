@@ -9,6 +9,7 @@ Features:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -18,9 +19,14 @@ from agents.agent1_retrieval.tools.bm25 import SimpleBM25
 from agents.agent1_retrieval.tools.fts5_search import SQLiteFTS5Searcher
 from agents.agent1_retrieval.tools.hybrid import reciprocal_rank_fusion
 from core.base_agent import BaseAgent
+from core.comparison_plan import (
+    ComparisonPlan, ComparisonReader, compare_documents, get_comparison_budget, run_coro_sync,
+)
 from core.handoff_inputs import is_focused_retrieval
+from core.research_tasks import ResearchTask, TaskStatus
 from core.state import AgentState
 from core.supervisor import supervisor_planner
+from core.task_scheduler import TaskScheduler
 from core.tools import load_or_parse_selected_pdf
 
 
@@ -73,7 +79,95 @@ class CPUMinRetrievalAgent(BaseAgent):
             return []
         return reciprocal_rank_fusion(candidate_lists, top_n=top_k)
 
-    def run(self, state: AgentState) -> dict[str, Any]:
+    async def _scheduled_search(
+        self, queries: list[str], fts: SQLiteFTS5Searcher, bm25: SimpleBM25, top_k: int,
+    ) -> tuple[list[dict[str, Any]] | None, dict[str, Any]]:
+        engines = {"fts5": fts, "bm25": bm25}
+        tasks = [
+            ResearchTask("fts5"),
+            ResearchTask("bm25"),
+            ResearchTask("fuse", depends_on_success=tuple(engines)),
+        ]
+        scheduler = TaskScheduler(tasks, max_concurrency=2)
+
+        def search_all(engine):
+            return [engine.search(query, top_k=top_k) for query in queries]
+
+        async def execute(task, inputs):
+            if task.id in engines:
+                return await asyncio.to_thread(search_all, engines[task.id])
+            pairs = zip(inputs["fts5"].output, inputs["bm25"].output, strict=True)
+            candidates = [ranking for pair in pairs for ranking in pair if ranking]
+            return reciprocal_rank_fusion(candidates, top_n=top_k) if candidates else []
+
+        outcomes = await scheduler.run(execute)
+        merged = outcomes["fuse"]
+        event = self.log_action("retrieval_task_schedule", {
+            "status": "completed" if merged.status == TaskStatus.COMPLETED else "fallback",
+            "max_concurrency": 2,
+            "tasks": [
+                {
+                    "id": task.id, "status": outcomes[task.id].status.value,
+                    "depends_on_success": list(task.depends_on_success),
+                    "attempts": outcomes[task.id].attempts,
+                    "blocked_by": list(outcomes[task.id].blocked_by),
+                }
+                for task in tasks
+            ],
+        })
+        return merged.output, event
+
+    def run_comparison(self, state: AgentState, plan: ComparisonPlan, reader: ComparisonReader) -> dict[str, Any]:
+        query = state["query"]
+        queries = state.get("sub_queries") or [query]
+        top_k = max(len(plan.paths), min(int(state.get("top_k") or 8), 10))
+        # Parse PDFs before starting the parallel search tasks.
+        budget = get_comparison_budget()
+        chunks_by_path = {}
+        for path in plan.paths:
+            if budget:
+                budget.remaining()
+            chunks_by_path[path] = load_or_parse_selected_pdf(path) if os.path.isfile(path) else []
+
+        def rank_document(path):
+            if budget:
+                budget.remaining()
+            chunks = chunks_by_path[path]
+            if not chunks:
+                return []
+            fts = SQLiteFTS5Searcher()
+            try:
+                bm25 = SimpleBM25()
+                fts.fit(chunks)
+                bm25.fit(chunks)
+                if budget:
+                    budget.remaining()
+                return self._search_index(queries, fts, bm25, top_k=top_k)
+            finally:
+                fts.close()
+
+        retry_count = state.get("retry_count", 0)
+        result = run_coro_sync(compare_documents(plan, rank_document, reader, top_k, retry_count=retry_count))
+        ranked = result["retrieved_docs"]
+        if not ranked:
+            return result
+
+        seen = state.get("seen_chunks") or []
+        seen_ids = {item["id"] for item in seen if isinstance(item, dict) and "id" in item}
+        new = [item for item in ranked if item.get("id") not in seen_ids]
+        return {
+            **result, "seen_chunks": [*seen, *new],
+            "no_new_evidence": bool(retry_count and not new),
+        }
+
+    def run(
+        self, state: AgentState, *, parallel_search: bool = False, comparison: ComparisonPlan | None = None,
+        comparison_reader: ComparisonReader | None = None,
+    ) -> dict[str, Any]:
+        if comparison is not None:
+            if comparison_reader is None:
+                raise ValueError("Comparison requires a Reader.")
+            return self.run_comparison(state, comparison, comparison_reader)
         query = state.get("query", "")
         clean_q = (query or "").strip()
         pdf_path = state.get("pdf_path")
@@ -132,6 +226,17 @@ class CPUMinRetrievalAgent(BaseAgent):
             active_bm25 = self.bm25_fallback
             active_pool = self.corpus_docs
 
+        schedules = []
+
+        def search(queries, limit, stage):
+            if parallel_search:
+                ranking, event = asyncio.run(self._scheduled_search(queries, active_fts, active_bm25, limit))
+                event["details"].update(stage=stage, retry_count=retry_count)
+                schedules.append(event)
+                if ranking is not None:
+                    return ranking
+            return self._search_index(queries, active_fts, active_bm25, top_k=limit)
+
         # 2. Retrieval Strategy:
         # If this is a general summary/overview query: sample chunks distributed across ALL pages of ALL documents!
         if is_summary_query and active_pool and not is_focused_retrieval(state):
@@ -166,7 +271,7 @@ class CPUMinRetrievalAgent(BaseAgent):
             results = sampled_summary if sampled_summary else active_pool[: max(top_k, 20)]
         else:
             # First-pass multi-query lexical search
-            results = self._search_index(sub_queries, active_fts, active_bm25, top_k=top_k)
+            results = search(sub_queries, top_k, "primary")
 
         # 3. Internal Coverage Gate: Check if required_entities are covered
         if required_entities and results and not is_summary_query:
@@ -187,7 +292,7 @@ class CPUMinRetrievalAgent(BaseAgent):
                 pass
             if required_entities:
                 expanded_queries.append(" ".join(required_entities))
-            res_expanded = self._search_index(expanded_queries, active_fts, active_bm25, top_k=top_k + 2)
+            res_expanded = search(expanded_queries, top_k + 2, "coverage_expansion")
             if res_expanded:
                 results = res_expanded
 
@@ -221,5 +326,5 @@ class CPUMinRetrievalAgent(BaseAgent):
             "retrieved_docs": fresh_docs,
             "seen_chunks": all_seen,
             "no_new_evidence": no_new_evidence,
-            "reasoning_trace": [trace],
+            "reasoning_trace": [*schedules, trace],
         }

@@ -15,10 +15,17 @@ from typing import Any
 from agents.agent1_retrieval.tools.bm25 import SimpleBM25
 from agents.agent1_retrieval.tools.fts5_search import SQLiteFTS5Searcher
 from agents.agent1_retrieval.tools.hybrid import reciprocal_rank_fusion
+from agents.agent1_retrieval.tools.semantic_pipeline import (
+    boost_entities_and_tables,
+    build_cross_lingual_subqueries,
+    enhance_with_dense_and_rerank,
+    extract_searchable_figure_chunks,
+)
 from core.base_agent import BaseAgent
 from core.state import AgentState
 from core.supervisor import supervisor_planner
 from core.tools import load_or_parse_selected_pdf
+from utils.llm_client import llm_client
 
 
 class GeminiRetrievalAgent(BaseAgent):
@@ -76,6 +83,9 @@ class GeminiRetrievalAgent(BaseAgent):
                 chunks = load_or_parse_selected_pdf(p)
                 if chunks:
                     pdf_chunks.extend(chunks)
+        figure_chunks = extract_searchable_figure_chunks(pdf_paths)
+        if figure_chunks:
+            pdf_chunks.extend(figure_chunks)
         if pdf_chunks:
             active_fts = SQLiteFTS5Searcher()
             active_bm25 = SimpleBM25()
@@ -87,33 +97,39 @@ class GeminiRetrievalAgent(BaseAgent):
             active_bm25 = self.bm25_fallback
             active_pool = self.corpus_docs
 
-        # 2. Multi-query hybrid search over FTS5 + BM25
+        # 2. Cross-lingual bilingual bridging + multi-query hybrid search over FTS5 + BM25
+        bridged = build_cross_lingual_subqueries(query, active_pool)
+        search_queries = list(dict.fromkeys([*sub_queries[:4], *bridged]))[:6]
+        candidate_limit = 2 * top_k
+
         all_results = []
-        for sq in sub_queries[:4]:
-            res_fts = active_fts.search(sq, top_k=top_k)
-            res_bm25 = active_bm25.search(sq, top_k=top_k)
+        for sq in search_queries:
+            res_fts = active_fts.search(sq, top_k=candidate_limit)
+            res_bm25 = active_bm25.search(sq, top_k=candidate_limit)
             if res_fts:
                 all_results.append(res_fts)
             if res_bm25:
                 all_results.append(res_bm25)
 
-        fused = reciprocal_rank_fusion(all_results, top_n=top_k + 2) if all_results else []
-        if not fused and active_pool:
-            fused = active_pool[: min(top_k, len(active_pool))]
+        sparse_fused = reciprocal_rank_fusion(all_results, top_n=candidate_limit) if all_results else []
+        if not sparse_fused and active_pool:
+            sparse_fused = active_pool[: min(candidate_limit, len(active_pool))]
 
-        # 3. Entity & Numeric priority boost
-        if fused and required_entities:
-            def _score_fn(idx_doc: tuple[int, dict[str, Any]]) -> float:
-                r_idx, d = idx_doc
-                txt_l = str(d.get("text", "")).lower()
-                ent_hits = sum(1 for e in required_entities if e.lower() in txt_l)
-                return (1.0 / (r_idx + 1)) + 0.35 * ent_hits
+        # 3. Optional Gemini Dense Embedding + Page Diversity
+        fused, dense_trace, rerank_trace = enhance_with_dense_and_rerank(
+            query,
+            sparse_fused,
+            active_pool,
+            top_k=max(top_k + 2, top_k),
+            http_client=llm_client.http_client,
+            enable_kaggle_dense=False,
+            enable_gemini_dense=bool(self.settings.GEMINI_DENSE_ENABLED and self.settings.GEMINI_API_KEY),
+            enable_rerank=False,
+            page_diverse=True,
+        )
 
-            indexed = list(enumerate(fused))
-            indexed.sort(key=_score_fn, reverse=True)
-            fused = [d for _, d in indexed[:top_k]]
-        else:
-            fused = fused[:top_k]
+        # 4. Entity & Intact-Table priority boost
+        fused = boost_entities_and_tables(query, fused, required_entities, top_k)
 
         seen_ids = {c.get("id") for c in seen_chunks if isinstance(c, dict)}
         fresh_docs = [d for d in fused if d.get("id") not in seen_ids]
@@ -127,13 +143,16 @@ class GeminiRetrievalAgent(BaseAgent):
             "gemini_retrieval_completed",
             {
                 "scoped_to_selected_pdf": bool(pdf_chunks),
-                "sub_queries_count": len(sub_queries),
+                "sub_queries_count": len(search_queries),
+                "cross_lingual_queries": bridged,
+                "dense": dense_trace,
+                "rerank": rerank_trace,
                 "retrieved_count": len(fresh_docs),
             },
         )
 
         return {
-            "sub_queries": sub_queries,
+            "sub_queries": search_queries,
             "required_entities": required_entities,
             "retrieved_docs": fresh_docs,
             "seen_chunks": all_seen,

@@ -10,10 +10,11 @@ from __future__ import annotations
 
 import os
 import re
-from typing import Any
+from typing import Any, Callable
 
 from core.base_agent import BaseAgent
-from core.state import AgentState, SourceUnit
+from core.citation_audit import citation_location, evidence_quote
+from core.state import AgentState, SourceUnit, compute_context_hash
 from core.tools import extract_table_or_equations_tool, load_or_parse_selected_pdf
 
 
@@ -27,13 +28,38 @@ def sanitize_unit_text(text: str) -> str:
     return s.strip()
 
 
+def read_comparison_document(
+    reader: Callable[..., dict[str, Any]], query: str, path: str, ranking: list[dict[str, Any]],
+) -> dict[str, Any]:
+    ranked_text = {
+        (chunk["id"], citation_location(chunk)): sanitize_unit_text(evidence_quote(chunk)) for chunk in ranking
+    }
+    result = reader(
+        {"query": query, "pdf_path": path, "pdf_paths": [path], "retrieved_docs": ranking},
+        allow_pdf_fallback=False,
+    )
+    units = []
+    for unit in result.get("source_units") or []:
+        location = citation_location(unit)
+        text = evidence_quote(unit)
+        if (
+            not location or not text.strip() or text != ranked_text.get((unit.get("id"), location))
+            or unit.get("context_hash") != compute_context_hash(text, *location)
+        ):
+            raise ValueError("Reader returned evidence that cannot be traced to the ranked source.")
+        units.append({**unit, "source_path": path})
+    if not units:
+        raise ValueError("Reader returned no traceable evidence from the selected document.")
+    return {**result, "source_units": units}
+
+
 class CPUMinReaderAgent(BaseAgent):
     """Reader Agent optimized for CPU Min: Multi-document SourceUnit builder + clean text pipeline."""
 
     def __init__(self, max_internal_retry: int = 1):
         super().__init__(name="CPUMinReaderAgent", max_internal_retry=max_internal_retry)
 
-    def run(self, state: AgentState) -> dict[str, Any]:
+    def run(self, state: AgentState, *, allow_pdf_fallback: bool = True) -> dict[str, Any]:
         pdf_path = state.get("pdf_path")
         pdf_paths = state.get("pdf_paths") or ([pdf_path] if pdf_path else [])
         retrieved_docs = state.get("retrieved_docs", []) or []
@@ -69,7 +95,7 @@ class CPUMinReaderAgent(BaseAgent):
             curr_offset = unit_offset + len(clean_text) + 1
 
         # 2. Fallback if retrieved_docs was empty but pdf_paths exist
-        if not source_units and pdf_paths:
+        if allow_pdf_fallback and not source_units and pdf_paths:
             for p in pdf_paths:
                 if not p or not os.path.exists(p):
                     continue
