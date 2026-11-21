@@ -133,7 +133,7 @@ class Gate3E2EVerifier:
         c05_detail = f"report_len={len(final_report)} chars, confidence='{confidence}', has_markdown={has_sections}"
         self.record("C05", "Agent 5 Writer", "Publication Academic Report", 0.0, c05_detail, c05_passed and has_sections)
 
-    def print_summary_table(self):
+    def print_summary_table(self) -> bool:
         print("\n" + "─" * 96)
         print(" 📊 BẢNG TỔNG HỢP NGHIỆM THU GATE 3: FULL END-TO-END PIPELINE (DUAL TESLA T4)")
         print("─" * 96)
@@ -153,12 +153,21 @@ class Gate3E2EVerifier:
         else:
             print("🔴 CÓ GIAI ĐOẠN CHƯA HOÀN TẤT. Xem chi tiết ở bảng trên.")
         print("─" * 96 + "\n")
+        return passed == total and total > 0
 
 
 def main():
     parser = argparse.ArgumentParser(description="Multi-Agent RAG Gate 3 E2E Verifier")
-    parser.add_argument("--url", default="https://copying-commissions-cafe-bless.trycloudflare.com", help="Kaggle Gateway URL")
-    parser.add_argument("--token", default="a18ed487b2b2fbf276936db3befaffdf", help="Admin Token")
+    parser.add_argument(
+        "--url",
+        default=os.environ.get("REMOTE_INFERENCE_URL", "http://127.0.0.1:8000"),
+        help="Kaggle Gateway URL (defaults to REMOTE_INFERENCE_URL or http://127.0.0.1:8000)"
+    )
+    parser.add_argument(
+        "--token",
+        default=os.environ.get("SUPERVISOR_ADMIN_TOKEN", ""),
+        help="Admin Token (defaults to SUPERVISOR_ADMIN_TOKEN)"
+    )
     parser.add_argument("--pdf", default="main/uploads/Hu_2021_LoRA.pdf", help="Target PDF path relative to repo root")
     parser.add_argument("--query", default="Tóm tắt ý tưởng cốt lõi của phương pháp LoRA và phân tích ưu điểm so với full fine-tuning.", help="Query")
     parser.add_argument("--timeout", type=float, default=120.0, help="Timeout in seconds")
@@ -168,7 +177,7 @@ def main():
     try:
         final_state = verifier.run_e2e_pipeline(pdf_rel_path=args.pdf, query=args.query)
         verifier.audit_final_state(final_state)
-        verifier.print_summary_table()
+        all_ok = verifier.print_summary_table()
 
         # Print preview of final outputs
         print("\n" + "=" * 78)
@@ -177,6 +186,9 @@ def main():
         report = final_state.get("final_report", "")
         print(report[:1200] + ("\n... [TRUNCATED] ..." if len(report) > 1200 else ""))
         print("=" * 78 + "\n")
+
+        if not all_ok:
+            sys.exit(1)
 
     except Exception as e:
         print(f"\n❌ LỖI TRONG QUÁ TRÌNH KIỂM THỬ GATE 3: {e}")
