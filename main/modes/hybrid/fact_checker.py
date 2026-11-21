@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 from core.base_agent import BaseAgent
+from core.provider_router import provider_router
 from core.state import AgentState
 from core.verifier import review_abstention
 from modes.cpu_max.fact_checker import CPUMaxFactCheckerAgent
@@ -22,7 +23,7 @@ from utils.local_vulkan_setup import probe_all_capabilities
 
 
 class HybridFactCheckerAgent(BaseAgent):
-    """Flagship Hybrid Fact-Checker: SOTA BGE NLI Head First -> Local CPU -> Gemini Last Fallback."""
+    """Policy-driven Hybrid Fact-Checker: Local/Kaggle BGE NLI Head ALWAYS prioritized over Gemini."""
 
     def __init__(self, max_internal_retry: int = 2):
         super().__init__(name="HybridFactCheckerAgent", max_internal_retry=max_internal_retry)
@@ -38,42 +39,33 @@ class HybridFactCheckerAgent(BaseAgent):
 
         gen_family = str(state.get("generator_model_family") or "unknown").lower()
         caps = probe_all_capabilities()
+        chain = provider_router.resolve_chain("fact_checker", state=state, caps=caps)
+
+        fc_runners = {
+            "gpu_finetune": ("gpu_finetune_bge_nli_head", self._gpu_finetune_fc, "gpu_finetune"),
+            "cpu_max": ("local_cpu_minicheck_nli", self._cpu_max_fc, "cpu_max"),
+            "gpu_max": ("gpu_max_32b_cot_judge", self._gpu_max_fc, "gpu_max"),
+            "gemini": ("gemini_batch_nli_fallback", self._gemini_fc, "gemini"),
+        }
 
         selected_verifier = "cpu_max_minicheck"
         out: dict[str, Any] = {}
 
-        # Priority 1 (Cao nhất): Fine-Tuned BGE-Reranker-v2-m3 NLI Head on GPU Worker (Macro F1 = 1.0)
-        if caps.get("gpu_finetune", {}).get("online") or caps.get("gpu_ft", {}).get("online"):
+        for key in chain:
+            entry = fc_runners.get(key)
+            if not entry:
+                continue
+            label, runner, inf_mode = entry
             try:
-                selected_verifier = "gpu_finetune_bge_nli_head"
-                out = self._gpu_finetune_fc.run_in_mode(state, "gpu_finetune")
+                candidate = runner.run_in_mode(state, inf_mode)
+                if candidate and "fact_check_label" in candidate:
+                    selected_verifier = label
+                    out = candidate
+                    if key == "cpu_max":
+                        out.setdefault("verifier_model_family", "local_minicheck_nli")
+                    break
             except Exception as exc:
-                self.logger.warning(f"[Hybrid FactChecker] GPU Finetune NLI failed ({exc}), cascading...")
-
-        # Priority 2: Local CPU Max MiniCheck NLI + Deterministic Numerical Guard (100% offline)
-        if not out or "fact_check_label" not in out:
-            try:
-                selected_verifier = "local_cpu_minicheck_nli"
-                out = self._cpu_max_fc.run_in_mode(state, "cpu_max")
-                out["verifier_model_family"] = "local_minicheck_nli"
-            except Exception as exc:
-                self.logger.warning(f"[Hybrid FactChecker] Local CPU verifier failed ({exc}), cascading...")
-
-        # Priority 3: GPU Max 32B CoT Judge nếu online
-        if (not out or "fact_check_label" not in out) and caps.get("kaggle_max", {}).get("online") and caps.get("kaggle_max", {}).get("has_vllm_32b"):
-            try:
-                selected_verifier = "gpu_max_32b_cot_judge"
-                out = self._gpu_max_fc.run_in_mode(state, "gpu_max")
-            except Exception as exc:
-                self.logger.warning(f"[Hybrid FactChecker] GPU Max judge failed ({exc}), cascading...")
-
-        # Priority 4 (Ưu tiên CUỐI CÙNG): Gemini Batch NLI API (Chỉ khi GPU & Local CPU đều offline)
-        if (not out or "fact_check_label" not in out) and caps.get("gemini", {}).get("online"):
-            try:
-                selected_verifier = "gemini_batch_nli_fallback"
-                out = self._gemini_fc.run_in_mode(state, "gemini")
-            except Exception as exc:
-                self.logger.warning(f"[Hybrid FactChecker] Gemini verifier fallback failed ({exc})")
+                self.logger.warning(f"[Hybrid FactChecker] Backend '{key}' failed ({exc}), cascading...")
 
         # Emergency fallback: deterministic local verification
         if not out or "fact_check_label" not in out:

@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 from core.base_agent import BaseAgent
+from core.provider_router import provider_router
 from core.state import AgentState
 from modes.cpu_max.summarizer import CPUMaxSummarizerAgent
 from modes.gemini.summarizer import GeminiSummarizerAgent
@@ -21,7 +22,7 @@ from utils.local_vulkan_setup import probe_all_capabilities
 
 
 class HybridSummarizerAgent(BaseAgent):
-    """Flagship Hybrid Summarizer: SOTA GPU Finetune First -> Local CPU -> Gemini Last Fallback."""
+    """Policy-driven Hybrid Summarizer routing between Gemini 3.8 Flash, Kaggle Qwen 7B, GPU Max, and Local CPU."""
 
     def __init__(self, max_internal_retry: int = 2):
         super().__init__(name="HybridSummarizerAgent", max_internal_retry=max_internal_retry)
@@ -33,43 +34,33 @@ class HybridSummarizerAgent(BaseAgent):
     def run(self, state: AgentState) -> dict[str, Any]:
         complexity = str(state.get("complexity") or "MEDIUM").upper()
         caps = probe_all_capabilities()
+        chain = provider_router.resolve_chain("generator", state=state, caps=caps)
+
+        backend_runners = {
+            "gemini": ("gemini_primary", self._gemini, "gemini"),
+            "gpu_finetune": ("gpu_finetune_dual_qlora", self._gpu_finetune, "gpu_finetune"),
+            "gpu_max": ("gpu_max_32b", self._gpu_max, "gpu_max"),
+            "cpu_max": ("cpu_max_local", self._cpu_max, "cpu_max"),
+        }
 
         selected_backend = "cpu_max"
         out: dict[str, Any] = {}
 
-        # Priority 1: GPU Finetune Dual-QLoRA (Generator + Critic) on Kaggle GPU Worker
-        if caps.get("gpu_finetune", {}).get("online") or caps.get("gpu_ft", {}).get("online"):
+        for key in chain:
+            entry = backend_runners.get(key)
+            if not entry:
+                continue
+            label, runner, inf_mode = entry
             try:
-                selected_backend = "gpu_finetune_dual_qlora"
-                out = self._gpu_finetune.run_in_mode(state, "gpu_finetune")
+                candidate = runner.run_in_mode(state, inf_mode)
+                if candidate and candidate.get("answer"):
+                    selected_backend = label
+                    out = candidate
+                    break
             except Exception as exc:
-                self.logger.warning(f"[Hybrid Summarizer] GPU Finetune failed ({exc}), cascading...")
+                self.logger.warning(f"[Hybrid Summarizer] Backend '{key}' failed ({exc}), cascading...")
 
-        # Priority 2: GPU Max 32B Reasoning if available
-        if not out.get("answer") and caps.get("kaggle_max", {}).get("online") and caps.get("kaggle_max", {}).get("has_vllm_32b"):
-            try:
-                selected_backend = "gpu_max_32b"
-                out = self._gpu_max.run_in_mode(state, "gpu_max")
-            except Exception as exc:
-                self.logger.warning(f"[Hybrid Summarizer] GPU Max 32B failed ({exc}), cascading...")
-
-        # Priority 3: Local CPU Max (Radeon 780M Vulkan Ollama 7B or Local Extractive Synthesizer)
-        if not out.get("answer"):
-            try:
-                selected_backend = "cpu_max_local"
-                out = self._cpu_max.run_in_mode(state, "cpu_max")
-            except Exception as exc:
-                self.logger.warning(f"[Hybrid Summarizer] Local CPU Max failed ({exc}), cascading to Gemini fallback...")
-
-        # Priority 4 (Ưu tiên CUỐI CÙNG): Gemini 2.5 Flash API (chỉ khi GPU & Local CPU đều không khả dụng)
-        if not out.get("answer") and caps.get("gemini", {}).get("online"):
-            try:
-                selected_backend = "gemini_2.5_flash_fallback"
-                out = self._gemini.run_in_mode(state, "gemini")
-            except Exception as exc:
-                self.logger.warning(f"[Hybrid Summarizer] Gemini fallback failed ({exc})")
-
-        # Emergency fallback if all failed
+        # Emergency local fallback if every backend in chain failed
         if not out.get("answer"):
             out = self._cpu_max.run_in_mode(state, "cpu_max")
             selected_backend = "cpu_max_emergency"
@@ -78,6 +69,7 @@ class HybridSummarizerAgent(BaseAgent):
             f"Điều phối mô hình ({selected_backend}) tổng hợp luận điểm & Inner Critic",
             {
                 "selected_generator_backend": selected_backend,
+                "provider_chain": chain,
                 "generator_model_family": out.get("generator_model_family", selected_backend),
                 "complexity": complexity,
                 "critic_action": out.get("critic_action", "lower_confidence"),

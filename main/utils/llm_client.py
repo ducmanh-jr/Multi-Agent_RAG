@@ -317,20 +317,17 @@ class UnifiedLLMClient:
         max_tokens: int = 2048,
         json_mode: bool = False,
     ) -> str:
-        """Call Gemini REST API directly with automatic multi-model fallback."""
+        """Call Gemini REST API directly with config-driven model selection and bounded 429 retry."""
         raw_candidates = [
             self.settings.DEFAULT_LLM_MODEL,
-            "gemini-3.1-flash-lite",
-            "gemini-3.5-flash-lite",
-            "gemini-flash-lite-latest",
             self.settings.FALLBACK_LLM_MODEL,
-            "gemini-flash-latest",
+            "gemini-flash-lite-latest",
         ]
         candidate_models = []
         for m in raw_candidates:
             if m and m not in candidate_models:
                 candidate_models.append(m)
-        last_error = None
+        last_error: Optional[Exception] = None
 
         for model in candidate_models:
             if not model:
@@ -356,38 +353,50 @@ class UnifiedLLMClient:
                 "generationConfig": generation_config,
             }
 
-            try:
-                headers = {
-                    "Content-Type": "application/json",
-                    "x-goog-api-key": self.settings.GEMINI_API_KEY or "",
-                }
-                resp = metered_post(
-                    self.http_client.post, url, provider="gemini", operation="generateContent", protocol="gemini",
-                    json=payload,
-                    headers=headers,
-                    timeout=35.0,
-                )
-                if resp.status_code == 200:
-                    log_api_usage("gemini", model, "generateContent")
-                    data = resp.json()
-                    cands = data.get("candidates", [])
-                    if cands:
-                        content = cands[0].get("content", {})
-                        parts = content.get("parts", [])
-                        if parts and "text" in parts[0]:
-                            return parts[0]["text"]
-                    logger.warning(f"Gemini response has no text parts: {data}")
-                elif resp.status_code in [429, 503]:
-                    logger.warning(f"Gemini model {model} hit rate limit / HTTP {resp.status_code}. Trying next model...")
-                    continue
-                else:
-                    resp.raise_for_status()
-            except TokenBudgetStop:
-                raise
-            except Exception as e:
-                last_error = e
-                logger.warning(f"Gemini call to {model} failed: {e}. Trying fallback...")
-                continue
+            headers = {
+                "Content-Type": "application/json",
+                "x-goog-api-key": self.settings.GEMINI_API_KEY or "",
+            }
+            # Bounded single retry on transient 429/503 before cascading to next candidate model
+            for attempt in range(2):
+                try:
+                    resp = metered_post(
+                        self.http_client.post, url, provider="gemini", operation="generateContent", protocol="gemini",
+                        json=payload,
+                        headers=headers,
+                        timeout=35.0,
+                    )
+                    if resp.status_code == 200:
+                        log_api_usage("gemini", model, "generateContent")
+                        data = resp.json()
+                        cands = data.get("candidates", [])
+                        if cands:
+                            content = cands[0].get("content", {})
+                            parts = content.get("parts", [])
+                            if parts and "text" in parts[0]:
+                                return parts[0]["text"]
+                        logger.warning(f"Gemini response has no text parts: {data}")
+                        break
+                    elif resp.status_code in (429, 503):
+                        last_error = RuntimeError(f"Gemini HTTP {resp.status_code} on {model}")
+                        retry_after = 0.0
+                        try:
+                            retry_after = min(2.0, max(0.0, float(resp.headers.get("Retry-After", "0"))))
+                        except (TypeError, ValueError):
+                            retry_after = 0.0
+                        if attempt == 0 and retry_after > 0:
+                            time.sleep(retry_after)
+                            continue
+                        logger.warning(f"Gemini model {model} hit HTTP {resp.status_code}. Trying next model...")
+                        break
+                    else:
+                        resp.raise_for_status()
+                except TokenBudgetStop:
+                    raise
+                except Exception as e:
+                    last_error = e
+                    logger.warning(f"Gemini call to {model} failed: {e}. Trying fallback...")
+                    break
 
         if last_error:
             raise last_error

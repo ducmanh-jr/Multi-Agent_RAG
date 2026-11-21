@@ -12,6 +12,7 @@ from typing import Any
 
 from agents.agent5_writer.components.report_builder import build_academic_report
 from core.base_agent import BaseAgent
+from core.provider_router import provider_router
 from core.state import AgentState
 from modes.gpu_finetune.writer import GPUFinetuneWriterAgent
 from modes.gemini.writer import GeminiWriterAgent
@@ -19,7 +20,7 @@ from utils.local_vulkan_setup import probe_all_capabilities
 
 
 class HybridWriterAgent(BaseAgent):
-    """Flagship Hybrid Writer Agent: SOTA DoRA Writer First -> Local Report Builder -> Gemini Fallback."""
+    """Policy-driven Hybrid Writer routing between Gemini, Kaggle Qwen DoRA Writer, and Local Report Builder."""
 
     def __init__(self, max_internal_retry: int = 2):
         super().__init__(name="HybridWriterAgent", max_internal_retry=max_internal_retry)
@@ -37,22 +38,46 @@ class HybridWriterAgent(BaseAgent):
         ver_family = state.get("verifier_model_family", "cross_model_guard")
 
         caps = probe_all_capabilities()
+        chain = provider_router.resolve_chain("writer", state=state, caps=caps)
         final_report = ""
         report_data: dict[str, Any] = {}
         writer_backend = "local_report_builder"
 
-        # Priority 1 (Cao nhất): GPU Finetune DoRA + rsLoRA Writer Model (if online)
-        if caps.get("gpu_finetune", {}).get("online") or caps.get("gpu_ft", {}).get("online"):
-            try:
-                res = self._gpu_finetune_writer.run_in_mode(state, "gpu_finetune")
-                if res.get("final_report") and len(res["final_report"].strip()) > 100:
-                    final_report = res["final_report"]
-                    report_data = res.get("written_report_data", {})
-                    writer_backend = report_data.get("engine", "local_report_builder")
-            except Exception as e:
-                self.logger.warning(f"[Hybrid Writer] GPU Finetune Writer failed ({e}), falling back...")
+        for key in chain:
+            if key == "gemini":
+                try:
+                    res = self._gemini_writer.run_in_mode(state, "gemini")
+                    if res.get("final_report") and len(res["final_report"].strip()) > 60:
+                        final_report = res["final_report"]
+                        report_data = res.get("written_report_data", {})
+                        writer_backend = report_data.get("engine", "gemini_writer")
+                        break
+                except Exception as e:
+                    self.logger.warning(f"[Hybrid Writer] Gemini Writer failed ({e}), falling back...")
+            elif key == "gpu_finetune":
+                try:
+                    res = self._gpu_finetune_writer.run_in_mode(state, "gpu_finetune")
+                    if res.get("final_report") and len(res["final_report"].strip()) > 100:
+                        final_report = res["final_report"]
+                        report_data = res.get("written_report_data", {})
+                        writer_backend = report_data.get("engine", "gpu_finetune_dora_writer")
+                        break
+                except Exception as e:
+                    self.logger.warning(f"[Hybrid Writer] GPU Finetune Writer failed ({e}), falling back...")
+            elif key == "cpu_max":
+                final_report, report_data = build_academic_report(
+                    query=query,
+                    verified_claims=verified_claims,
+                    rejected_claims=rejected_claims,
+                    retrieved_docs=retrieved_docs,
+                    answer=answer,
+                    answer_status=state.get("answer_status"),
+                    evidence_spans=evidence_spans,
+                )
+                writer_backend = "local_report_builder"
+                break
 
-        # Priority 2: Local Structured Academic Report Builder (100% offline guarantee)
+        # Guaranteed offline local fallback
         if not final_report:
             final_report, report_data = build_academic_report(
                 query=query,
@@ -63,6 +88,7 @@ class HybridWriterAgent(BaseAgent):
                 answer_status=state.get("answer_status"),
                 evidence_spans=evidence_spans,
             )
+            writer_backend = "local_report_builder"
             writer_backend = "local_academic_report_builder"
 
         # Priority 3 (Cuối cùng): Gemini Writer fallback nếu cả 2 trên không tạo được báo cáo

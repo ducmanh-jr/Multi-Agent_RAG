@@ -118,12 +118,20 @@ class Settings(_AgentModeSettings):
     OPENAI_API_KEY: str = field(default_factory=lambda: os.getenv("OPENAI_API_KEY", ""))
     COHERE_API_KEY: str = field(default_factory=lambda: os.getenv("COHERE_API_KEY", ""))
 
-    # Foundation LLM Models
+    # Foundation LLM Models (configurable via env, never hardcoded in agents)
     DEFAULT_LLM_MODEL: str = field(
-        default_factory=lambda: os.getenv("DEFAULT_LLM_MODEL", "gemini-3.1-flash-lite")
+        default_factory=lambda: os.getenv("DEFAULT_LLM_MODEL", "gemini-3.8-flash")
     )
     FALLBACK_LLM_MODEL: str = field(
-        default_factory=lambda: os.getenv("FALLBACK_LLM_MODEL", "gemini-flash-lite-latest")
+        default_factory=lambda: os.getenv("FALLBACK_LLM_MODEL", "gemini-3.1-flash-lite")
+    )
+    # Hybrid Provider Routing Profile: "auto" | "gemini_first" | "local_only"
+    HYBRID_PROVIDER_PROFILE: str = field(
+        default_factory=lambda: os.getenv("HYBRID_PROVIDER_PROFILE", "auto").strip().lower()
+    )
+    # Optional JSON override mapping AgentRole -> ModelProvider (gemini | kaggle | local)
+    HYBRID_PROVIDER_POLICY: str = field(
+        default_factory=lambda: os.getenv("HYBRID_PROVIDER_POLICY", "").strip()
     )
 
     # Embedding & Retrieval Models
