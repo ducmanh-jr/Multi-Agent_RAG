@@ -16,7 +16,6 @@ from agents.agent0_scout.arxiv_client import search_arxiv_papers
 from agents.agent0_scout.paper_ranker import rank_and_select_papers
 from agents.agent0_scout.downloader import download_and_register_paper
 from agents.agent0_scout.gemini_scout import search_gemini_academic_papers
-from utils.logger import logger
 
 
 class ScoutAgent(BaseAgent):
@@ -27,23 +26,70 @@ class ScoutAgent(BaseAgent):
     downloads the primary paper, and registers it in the system workspace.
     """
 
-    def __init__(self):
+    def __init__(self, *, auto_scout: bool = True):
         super().__init__(name="LiteratureScout")
+        self.auto_scout = auto_scout
+
+    def _terminal(self, action, decision, status, message, **details):
+        return {
+            "scout_decision": decision,
+            "scout_message": message,
+            "answer_status": status,
+            "answer": message,
+            "final_report": message,
+            "reasoning_trace": [self.log_action(action, {**details, "message": message})],
+        }
+
+    def _gemini_result(self, papers, perspectives, provider):
+        for paper in papers:
+            path = paper.get("local_pdf_path") or paper.get("path") or paper.get("pdf_path")
+            if path and path.lower().endswith(".pdf") and os.path.isfile(path):
+                trace = self.log_action("paper_discovered_and_ingested", {
+                    "provider": provider, "title": paper.get("title"), "path": path,
+                    "candidates_count": len(papers),
+                })
+                return {
+                    "scout_decision": "success",
+                    "pdf_path": path,
+                    "pdf_paths": [path],
+                    "retrieved_docs": [{
+                        "id": paper.get("id"), "name": paper.get("title"), "path": path,
+                        "title": paper.get("title"), "authors": paper.get("authors", []),
+                        "year": paper.get("year", 2024), "abstract": paper.get("abstract", ""),
+                        "text": f"# {paper.get('title')}\n\n{paper.get('abstract')}",
+                        "auto_scouted": True,
+                    }],
+                    "perspectives": [p["angle"] for p in perspectives],
+                    "sub_queries": [p["query"] for p in perspectives],
+                    "reasoning_trace": [trace],
+                }
+        return self._terminal(
+            "download_failed", "download_failed", "DOWNLOAD_FAILED",
+            "Đã tìm thấy tài liệu liên quan nhưng chưa tải được bản toàn văn để kiểm chứng.",
+        )
 
     def run(self, state: AgentState) -> dict[str, Any]:
         """
         Executes the autonomous scouting process with intent intelligence and relevance gating.
         """
         user_query = state.get("query", "").strip()
-        existing_pdf = state.get("pdf_path")
+        selected = state.get("pdf_paths") or ([state["pdf_path"]] if state.get("pdf_path") else [])
 
         # 1. If user already specified a valid PDF, bypass discovery
-        if existing_pdf and os.path.exists(existing_pdf) and os.path.getsize(existing_pdf) > 1000:
+        if selected and all(os.path.isfile(path) for path in selected):
+            existing_pdf = selected[0]
             self.logger.info(f"[LiteratureScout] PDF already specified ({existing_pdf}). Passing through.")
             trace = self.log_action("bypass_discovery", {"pdf_path": existing_pdf, "status": "retained"})
             return {
-                "reasoning_trace": [trace]
+                "pdf_path": existing_pdf,
+                "pdf_paths": selected,
+                "reasoning_trace": [trace],
             }
+        if not self.auto_scout:
+            return self._terminal(
+                "waiting_for_document", "waiting_for_document", "WAITING_FOR_DOCUMENT",
+                "Tài liệu đã chọn không còn truy cập được. Hãy chọn tài liệu trong kho hoặc bật Auto-Scout.",
+            )
 
         self.logger.info(f"[LiteratureScout] No PDF attached. Activating Autonomous Paper Discovery for: '{user_query}'...")
 
@@ -95,36 +141,7 @@ class ScoutAgent(BaseAgent):
             self.logger.info(f"[LiteratureScout] Non-STEM humanities/history topic: '{user_query}'. Routing to Gemini Academic Explorer...")
             gemini_papers = search_gemini_academic_papers(user_query, max_results=3)
             if gemini_papers:
-                primary = gemini_papers[0]
-                local_path = primary.get("local_pdf_path") or primary.get("path") or primary.get("pdf_path")
-                doc_record = {
-                    "id": primary.get("id"),
-                    "name": primary.get("title"),
-                    "path": local_path,
-                    "title": primary.get("title"),
-                    "authors": primary.get("authors", []),
-                    "year": primary.get("year", 2024),
-                    "abstract": primary.get("abstract", ""),
-                    "text": f"# {primary.get('title')}\n\n{primary.get('abstract')}",
-                    "auto_scouted": True,
-                }
-                trace = self.log_action(
-                    "paper_discovered_and_ingested",
-                    {
-                        "provider": "Gemini Academic Explorer",
-                        "title": primary.get("title"),
-                        "path": local_path,
-                        "candidates_count": len(gemini_papers),
-                    }
-                )
-                return {
-                    "scout_decision": "success",
-                    "pdf_path": local_path,
-                    "retrieved_docs": [doc_record],
-                    "perspectives": [p["angle"] for p in perspectives],
-                    "sub_queries": [p["query"] for p in perspectives],
-                    "reasoning_trace": [trace],
-                }
+                return self._gemini_result(gemini_papers, perspectives, "Gemini Academic Explorer")
 
         # 4. STEM ROUTE: Multi-angle search on ArXiv
         all_candidates: list[dict[str, Any]] = []
@@ -152,47 +169,13 @@ class ScoutAgent(BaseAgent):
             self.logger.info(f"[LiteratureScout] ArXiv yielded 0 papers for '{user_query}'. Activating Gemini Academic Explorer fallback...")
             gemini_papers = search_gemini_academic_papers(user_query, max_results=3)
             if gemini_papers:
-                primary = gemini_papers[0]
-                local_path = primary.get("local_pdf_path") or primary.get("path") or primary.get("pdf_path")
-                doc_record = {
-                    "id": primary.get("id"),
-                    "name": primary.get("title"),
-                    "path": local_path,
-                    "title": primary.get("title"),
-                    "authors": primary.get("authors", []),
-                    "year": primary.get("year", 2024),
-                    "abstract": primary.get("abstract", ""),
-                    "text": f"# {primary.get('title')}\n\n{primary.get('abstract')}",
-                    "auto_scouted": True,
-                }
-                trace = self.log_action(
-                    "paper_discovered_and_ingested",
-                    {
-                        "provider": "Gemini Academic Explorer (Fallback)",
-                        "title": primary.get("title"),
-                        "path": local_path,
-                        "candidates_count": len(gemini_papers),
-                    }
-                )
-                return {
-                    "scout_decision": "success",
-                    "pdf_path": local_path,
-                    "retrieved_docs": [doc_record],
-                    "perspectives": [p["angle"] for p in perspectives],
-                    "sub_queries": [p["query"] for p in perspectives],
-                    "reasoning_trace": [trace],
-                }
+                return self._gemini_result(gemini_papers, perspectives, "Gemini Academic Explorer (Fallback)")
 
-            self.logger.warning(f"[LiteratureScout] All candidate papers failed relevance threshold for query: '{user_query}'")
-            trace = self.log_action("discovery_failed", {
-                "query": user_query, 
-                "reason": "candidates_below_relevance_threshold"
-            })
-            return {
-                "scout_decision": "no_relevant_papers",
-                "scout_message": f"Các bài báo tìm được không đạt ngưỡng liên quan học thuật đến chủ đề '{user_query}'. Bạn có thể tải tài liệu PDF trực tiếp vào Kho Tài Liệu.",
-                "reasoning_trace": [trace]
-            }
+            return self._terminal(
+                "discovery_failed", "no_relevant_papers", "NO_RELEVANT_PAPERS",
+                f"Không tìm thấy bài báo đủ liên quan đến chủ đề '{user_query}'. Bạn có thể tải tài liệu vào kho.",
+                query=user_query, reason="candidates_below_relevance_threshold",
+            )
 
         primary_paper = top_papers[0]
         self.logger.info(f"[LiteratureScout] Golden Paper Selected: '{primary_paper.get('title')}' ({primary_paper.get('year')})")
@@ -201,14 +184,14 @@ class ScoutAgent(BaseAgent):
         try:
             downloaded = download_and_register_paper(primary_paper)
             local_pdf_path = downloaded.get("local_pdf_path")
-        except Exception as e:
-            self.logger.error(f"[LiteratureScout] Failed to download paper: {e}")
-            trace = self.log_action("download_failed", {"error": str(e)})
-            return {
-                "scout_decision": "download_failed",
-                "scout_message": f"Không thể tải tệp PDF bài báo: {e}",
-                "reasoning_trace": [trace]
-            }
+            if not local_pdf_path or not os.path.isfile(local_pdf_path):
+                raise OSError("Downloaded PDF is unavailable")
+        except Exception as exc:
+            self.logger.error("[LiteratureScout] Failed to download paper: %s", exc)
+            return self._terminal(
+                "download_failed", "download_failed", "DOWNLOAD_FAILED",
+                "Không thể tải bản toàn văn của bài báo đã chọn.",
+            )
 
         # 7. Build reasoning trace and state updates
         trace = self.log_action(
@@ -240,6 +223,7 @@ class ScoutAgent(BaseAgent):
         return {
             "scout_decision": "success",
             "pdf_path": local_pdf_path,
+            "pdf_paths": [local_pdf_path],
             "retrieved_docs": [discovered_doc_record],
             "perspectives": [p["angle"] for p in perspectives],
             "sub_queries": [p["query"] for p in perspectives],

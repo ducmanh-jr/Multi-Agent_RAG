@@ -67,24 +67,146 @@ BẮT BUỘC trả về kết quả hoàn toàn bằng định dạng JSON hợp
 }"""
 
 
+_QUANTIFIED_SINGLE_DIGIT_RE = re.compile(
+    r"(?<!\d)(\d)\s*(?:"
+    r"%|x|×|k\b|m\b|b\b|gb\b|mb\b|ms\b|s\b|hz\b|khz\b|mhz\b|ghz\b|"
+    r"days?\b|hours?\b|mins?\b|minutes?\b|seconds?\b|weeks?\b|months?\b|years?\b|"
+    r"layers?\b|blocks?\b|heads?\b|epochs?\b|steps?\b|stages?\b|tiers?\b|phases?\b|"
+    r"models?\b|agents?\b|papers?\b|documents?\b|pdfs?\b|datasets?\b|benchmarks?\b|"
+    r"gpus?\b|cpus?\b|tpus?\b|nodes?\b|workers?\b|runs?\b|trials?\b|folds?\b|"
+    r"groups?\b|classes?\b|categories?\b|samples?\b|shots?\b|bits?\b|bytes?\b|"
+    r"ngày\b|giờ\b|phút\b|giây\b|tuần\b|tháng\b|năm\b|lần\b|lớp\b|tầng\b|"
+    r"nhóm\b|mẫu\b|bước\b|giai đoạn\b|mô hình\b|tài liệu\b|bài báo\b|chế độ\b"
+    r")",
+    re.IGNORECASE,
+)
+_INLINE_PARAM_DIGIT_RE = re.compile(r"\b(?:top[-_\s]?|k\s*=\s*|n\s*=\s*|r\s*=\s*)(\d)\b", re.IGNORECASE)
+
+_ENTITY_STOPWORDS = {
+    "the", "this", "that", "these", "those", "model", "models", "method", "methods",
+    "paper", "document", "study", "experiment", "trial", "table", "figure", "section",
+    "page", "result", "results", "system", "approach", "framework", "architecture",
+    "according", "based", "however", "therefore", "moreover", "furthermore", "although",
+    "because", "while", "when", "where", "which", "what", "with", "from", "into",
+    "theo", "trong", "ngoài", "trên", "dưới", "của", "cho", "với", "nhưng", "tuy",
+    "mô", "hình", "bài", "báo", "tài", "liệu", "bảng", "kết", "quả", "phương", "pháp",
+    "thử", "nghiệm", "nghiên", "cứu", "hệ", "thống", "được", "không", "đạt", "chỉ",
+}
+
+
 def extract_numbers_and_years(text: str) -> list[str]:
     """
-    Extracts significant numbers, percentages, decimals, and 4-digit years from text.
-    Ignores citation brackets [1], [2], page markers (Trang 1, Page 2), and arXiv version tags.
+    Extracts significant numbers, percentages, decimals, 4-digit years, and quantified
+    single-digit values (e.g., '3 layers', '2 GPUs', '5 days', 'top-3', '4 tầng').
+    Ignores citation brackets [1], [2], page/section/figure/table markers, list ordinals,
+    and arXiv version tags.
     """
-    cleaned = re.sub(r"\[\d{1,3}\]", " ", text or "")
-    cleaned = re.sub(r"(?i)\b(?:trang|page|mục|section|hình|figure|table|bảng)\s*\d+\b", " ", cleaned)
+    raw_text = text or ""
+    # Strip line-leading list ordinals like "1. " or "(2) "
+    cleaned = re.sub(r"(?m)^\s*(?:\(\d{1,2}\)|\d{1,2}[.)])\s+", " ", raw_text)
+    cleaned = re.sub(r"\[\d{1,3}\]", " ", cleaned)
+    cleaned = re.sub(r"(?i)\b(?:trang|page|mục|section|hình|figure|fig\.?|table|tab\.?|bảng)\s*\d+\b", " ", cleaned)
     cleaned = re.sub(r"\b\d{4}\.\d{4,5}(?:v\d+)?\b", " ", cleaned)
-    raw_nums = re.findall(r"\b\d+(?:[.,]\d+)?%?\b", cleaned)
+
     normalized: list[str] = []
-    for n in raw_nums:
+    # 1. Multi-digit numbers, decimals, and percentages
+    for n in re.findall(r"\b\d+(?:[.,]\d+)?%?\b", cleaned):
         norm = n.replace(",", ".")
-        # Skip single-digit bullet/section indices (1..9) unless percentage or decimal
         if len(norm) == 1 and norm.isdigit():
             continue
         if norm not in normalized:
             normalized.append(norm)
+
+    # 2. Quantified single-digit values (e.g., "3 layers", "5 ngày", "top-3", "k=5")
+    for match in _QUANTIFIED_SINGLE_DIGIT_RE.finditer(cleaned):
+        digit = match.group(1)
+        if digit not in normalized:
+            normalized.append(digit)
+    for match in _INLINE_PARAM_DIGIT_RE.finditer(cleaned):
+        digit = match.group(1)
+        if digit not in normalized:
+            normalized.append(digit)
+
     return normalized
+
+
+def extract_salient_entities(text: str) -> list[str]:
+    """
+    Extracts specific named entities, model identifiers, acronyms, and multi-word model names
+    (e.g., 'Model A', 'ResNet-50', 'Qwen2.5', 'BGE-M3', 'Orchard') for entity-value binding checks.
+    """
+    clean = re.sub(r"\[\d{1,3}\]", " ", text or "")
+    candidates: list[str] = []
+
+    # 1. Explicit "Model/Method/System/Group/Variant + Identifier" pairs (e.g. "Model A", "Group B", "Config D")
+    for m in re.finditer(
+        r"\b(?:Model|Method|System|Group|Config|Variant|Baseline|Dataset|Agent|Worker|Nhóm|Mô hình)\s+[A-Z0-9][A-Za-z0-9._-]*\b",
+        clean,
+    ):
+        phrase = " ".join(m.group(0).split())
+        if phrase not in candidates:
+            candidates.append(phrase)
+
+    # 2. Alphanumeric model/metric identifiers or uppercase acronyms (e.g., Qwen2.5, BGE-M3, ResNet-50, F1, BLEU, T4)
+    for m in re.finditer(r"\b(?:[A-Z]{2,}[A-Za-z0-9._-]*|[A-Z][a-zA-Z]*[-_]?\d+(?:[.\-]\w+)*)\b", clean):
+        tok = m.group(0).strip(".,;:()")
+        if len(tok) >= 2 and tok.lower() not in _ENTITY_STOPWORDS and tok not in candidates:
+            candidates.append(tok)
+
+    # 3. Non-sentence-initial capitalized proper nouns (e.g., Orchard, Greenhouse, ImageNet, Transformer)
+    for m in re.finditer(r"(?<!^)(?<![.!?]\s)\b([A-Z][a-z]{3,}(?:-[A-Za-z0-9]+)?)\b", clean):
+        tok = m.group(1).strip(".,;:()")
+        if tok.lower() not in _ENTITY_STOPWORDS and tok not in candidates:
+            candidates.append(tok)
+
+    return candidates[:8]
+
+
+def check_entity_value_binding(claim_text: str, evidence_text: str) -> tuple[bool, list[str]]:
+    """
+    Verifies that when a claim pairs named entities/models with numeric values, the specific
+    evidence passage supporting that claim actually mentions the claimed entity (preventing
+    entity-value swaps across table rows or models such as attributing Model B's score to Model A).
+    Returns (binding_ok, missing_entities).
+    """
+    lower_claim = (claim_text or "").lower()
+    if any(
+        neg in lower_claim
+        for neg in (
+            "không tìm thấy", "không đề cập", "không chứa", "không có thông tin",
+            "không tồn tại", "hoàn toàn không", "not mentioned", "does not mention",
+            "not found", "absent from",
+        )
+    ):
+        return True, []
+
+    claim_nums = extract_numbers_and_years(claim_text)
+    if not claim_nums:
+        return True, []
+
+    entities = extract_salient_entities(claim_text)
+    if not entities:
+        return True, []
+
+    ev_lower = (evidence_text or "").lower()
+    if not ev_lower.strip():
+        return False, entities
+
+    missing = []
+    for ent in entities:
+        pat = r"(?<!\w)" + re.escape(ent.lower()) + r"(?!\w)"
+        if not re.search(pat, ev_lower):
+            missing.append(ent)
+
+    # Reject if NONE of the claimed entities appear in the evidence passage, OR if an explicit
+    # paired label like "Model A" / "Group B" is completely missing from the passage.
+    explicit_pair_missing = [
+        ent for ent in missing
+        if re.match(r"^(?:Model|Method|System|Group|Config|Variant|Baseline|Dataset|Agent|Worker|Nhóm|Mô hình)\s+", ent)
+    ]
+    if explicit_pair_missing or len(missing) == len(entities):
+        return False, explicit_pair_missing or missing
+    return True, []
 
 
 def check_numerical_and_date_consistency(claim_text: str, full_context_text: str) -> tuple[bool, bool, list[str]]:
@@ -263,13 +385,45 @@ def _result(claim, status, reason, unit=None):
 
 def _local_check(claim, units):
     text = claim["text"]
-    for unit in units:
+    units_by_id = {u.get("id"): u for u in units if isinstance(u, dict) and u.get("id")}
+    bound_ids = [uid for uid in (claim.get("evidence_ids") or []) if uid in units_by_id]
+    bound_units = [units_by_id[uid] for uid in bound_ids] if bound_ids else list(units)
+
+    for unit in bound_units:
         if _verbatim(text, unit.get("text") or unit.get("content") or ""):
             return _result(claim, "SUPPORT", "Đã đối chiếu trực tiếp với văn bản gốc.", unit)
-    source = "\n".join(str(u.get("text") or u.get("content") or "") for u in units)
-    num_ok, date_ok, missing = check_numerical_and_date_consistency(text, source)
-    if source and (not num_ok or not date_ok):
+    if bound_ids:
+        for unit in units:
+            if unit not in bound_units and _verbatim(text, unit.get("text") or unit.get("content") or ""):
+                return _result(claim, "SUPPORT", "Đã đối chiếu trực tiếp với văn bản gốc.", unit)
+
+    # Check numerical consistency against bound unit(s) first, then full source pool
+    bound_source = "\n".join(str(u.get("text") or u.get("content") or "") for u in bound_units)
+    num_ok, date_ok, missing = check_numerical_and_date_consistency(text, bound_source)
+    if bound_source and (not num_ok or not date_ok):
         return _result(claim, "CONTRADICT", "Số liệu cần đối chiếu lại: " + ", ".join(missing))
+
+    # Entity-value binding check: catch swapped values across models/rows
+    if bound_source:
+        bind_ok, missing_ents = check_entity_value_binding(text, bound_source)
+        if not bind_ok:
+            return _result(
+                claim,
+                "CONTRADICT",
+                "Thực thể và số liệu không cùng xuất hiện trong đoạn bằng chứng: " + ", ".join(missing_ents),
+            )
+
+    # Also verify against best matching single unit when multiple units are supplied
+    if not bound_ids and len(units) > 1 and extract_numbers_and_years(text) and extract_salient_entities(text):
+        best_u = find_best_supporting_unit(text, units)
+        best_txt = str((best_u or {}).get("text") or (best_u or {}).get("content") or "")
+        if best_txt:
+            b_num, b_date, b_miss = check_numerical_and_date_consistency(text, best_txt)
+            b_ent, b_miss_ents = check_entity_value_binding(text, best_txt)
+            if not b_num or not b_date or not b_ent:
+                detail = ", ".join(b_miss or b_miss_ents)
+                return _result(claim, "CONTRADICT", "Không khớp thực thể–số liệu trong cùng đoạn nguồn: " + detail)
+
     return _result(claim, "NOT_ENOUGH_INFO", "Chưa có bằng chứng trực tiếp cho phát biểu này.")
 
 
@@ -279,7 +433,11 @@ def deterministic_verify_claims(claims, source_units, query=""):
         text = raw.get("claim_text") or raw.get("claim") or raw.get("text")
         if not text:
             continue
-        claim = {"id": raw.get("id") or raw.get("claim_id") or f"claim_{i}", "text": text}
+        claim = {
+            "id": raw.get("id") or raw.get("claim_id") or f"claim_{i}",
+            "text": text,
+            "evidence_ids": raw.get("evidence_ids") or ([raw["unit_id"]] if raw.get("unit_id") else []),
+        }
         result = _local_check(claim, source_units)
         if result["status"] == "SUPPORT":
             verified.append(result)
@@ -335,10 +493,10 @@ def specialist_nli(pairs, client, *, finetuned):
                    if finetuned else {"claim": pair["claim"], "evidence_context": pair["evidence"]})
         response = client.call_kaggle_specialist(
             endpoint="api/factcheck", payload=payload, fallback_prompt=nli_prompt([pair]),
-            fallback_system=NLI_INSTRUCTION, adapter="critic")
+            fallback_system=NLI_INSTRUCTION, adapter="critic", allow_generate_fallback=not finetuned)
         if not isinstance(response, dict):
             continue
-        if isinstance(response.get("results"), list):  # generative fallback
+        if not finetuned and isinstance(response.get("results"), list):  # generative fallback
             results.extend(row for row in response["results"]
                            if isinstance(row, dict) and row.get("claim_id") == pair["claim_id"])
             continue
@@ -349,6 +507,11 @@ def specialist_nli(pairs, client, *, finetuned):
                 continue
             row = items[0]
             verdict = row.get("verdict")
+            confidence = row.get("confidence")
+            if verdict in ("SUPPORT", "CONTRADICT") and (
+                type(confidence) not in (int, float) or not 0 < confidence <= 1
+            ):
+                continue
         else:
             row = response
             verdict = row.get("label")
@@ -403,8 +566,11 @@ def review_claims(state, reviewer: Optional[Callable] = None):
                 if (not isinstance(status, str) or status not in {"SUPPORT", "CONTRADICT"}
                         or not isinstance(quote, str) or not quote.strip() or quote not in source):
                     status = "NOT_ENOUGH_INFO"
-                if status == "SUPPORT" and not all(check_numerical_and_date_consistency(claim["text"], quote)[:2]):
-                    status = "NOT_ENOUGH_INFO"
+                if status == "SUPPORT":
+                    if not all(check_numerical_and_date_consistency(claim["text"], quote)[:2]):
+                        status = "NOT_ENOUGH_INFO"
+                    elif not check_entity_value_binding(claim["text"], quote)[0]:
+                        status = "NOT_ENOUGH_INFO"
                 reason = row.get("rationale") or "Không có phán quyết và bằng chứng hợp lệ."
                 checked = _result(claim, status, str(reason), unit)
             if checked["status"] == "SUPPORT":

@@ -7,10 +7,11 @@ Validates PDF magic bytes (%PDF-) to prevent corrupted HTML rate-limit downloads
 from __future__ import annotations
 
 import os
+import uuid
 import re
 import httpx
 from typing import Any
-from core.config import settings
+from core.config import get_run_settings
 from core.db import save_document
 from utils.logger import logger
 
@@ -23,6 +24,14 @@ def sanitize_filename(name: str) -> str:
     clean = re.sub(r'[\\/*?:"<>|]', "", name)
     clean = re.sub(r"\s+", "_", clean).strip("_")
     return clean[:60]
+
+
+def _is_valid_local_pdf(path: str, min_size: int) -> bool:
+    try:
+        with open(path, "rb") as file:
+            return os.fstat(file.fileno()).st_size >= min_size and b"%PDF-" in file.read(1024)
+    except OSError:
+        return False
 
 
 def download_and_register_paper(paper: dict[str, Any], timeout: int = 25) -> dict[str, Any]:
@@ -41,20 +50,12 @@ def download_and_register_paper(paper: dict[str, Any], timeout: int = 25) -> dic
     safe_title = sanitize_filename(title)
     
     filename = f"{arxiv_id}_{safe_title}.pdf"
-    target_dir = os.path.join(settings.BASE_DIR, "uploads")
+    target_dir = os.path.join(get_run_settings().BASE_DIR, "uploads")
     os.makedirs(target_dir, exist_ok=True)
     local_path = os.path.join(target_dir, filename)
 
     # Check if already downloaded locally and valid
-    is_cached = False
-    if os.path.exists(local_path) and os.path.getsize(local_path) > 10000:
-        try:
-            with open(local_path, "rb") as f:
-                header = f.read(1024)
-                if b"%PDF-" in header:
-                    is_cached = True
-        except Exception:
-            is_cached = False
+    is_cached = _is_valid_local_pdf(local_path, min_size=10001)
 
     if is_cached:
         logger.info(f"[Scout Downloader] Valid paper already cached locally: {local_path} ({os.path.getsize(local_path)} bytes)")
@@ -62,7 +63,7 @@ def download_and_register_paper(paper: dict[str, Any], timeout: int = 25) -> dic
         logger.info(f"[Scout Downloader] Streaming PDF from {pdf_url} to {local_path}...")
         total_bytes = 0
         header_checked = False
-        tmp_path = f"{local_path}.part_{os.getpid()}"
+        tmp_path = f"{local_path}.part_{uuid.uuid4().hex}"
         try:
             with httpx.Client(follow_redirects=True, timeout=float(timeout), headers={"User-Agent": USER_AGENT}) as client:
                 with client.stream("GET", pdf_url) as resp:
@@ -78,8 +79,15 @@ def download_and_register_paper(paper: dict[str, Any], timeout: int = 25) -> dic
 
             if total_bytes < 5000:
                 raise ValueError(f"Downloaded file too small ({total_bytes} bytes) - not a valid academic paper.")
-            os.replace(tmp_path, local_path)
-            logger.info(f"[Scout Downloader] Successfully streamed {total_bytes} bytes to {local_path}.")
+            try:
+                os.replace(tmp_path, local_path)
+            except PermissionError:
+                # Windows can reject replacing the PDF while another run reads it.
+                if not _is_valid_local_pdf(local_path, min_size=5000):
+                    raise
+                logger.info(f"[Scout Downloader] Reusing concurrently published PDF: {local_path}.")
+            else:
+                logger.info(f"[Scout Downloader] Successfully streamed {total_bytes} bytes to {local_path}.")
         finally:
             if os.path.exists(tmp_path):
                 try:

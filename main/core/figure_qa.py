@@ -8,6 +8,7 @@ from agents.agent5_writer.components.report_builder import build_citation_refere
 from core.figure_reader import read_figure
 from core.pdf_figures import extract_pdf_figures, figure_reference, render_pdf_figure
 from core.state import AgentState, AtomicClaim, EvidenceSpan, SourceUnit
+from core.verifier import check_numerical_and_date_consistency, extract_numbers_and_years
 from utils.bilingual import expand_bilingual_tokens
 from utils.logger import logger
 
@@ -102,6 +103,36 @@ def figure_context(state: AgentState) -> dict:
     return (state.get("document_schema") or {}).get("figure_evidence") or {}
 
 
+def cross_check_figure_reading(fig: dict) -> dict:
+    """
+    Cross-checks numeric values reported by pixel/vision reading against extractable PDF text
+    (caption + embedded labels + author's body reference) to prevent silent visual hallucinations.
+    """
+    reading = fig.get("reading") or {}
+    method = reading.get("method") or "unavailable"
+    visual_text = (reading.get("text") or "").strip()
+    if method not in {"vision", "ocr"} or not visual_text:
+        return {"status": "not_applicable", "unverified_numbers": []}
+
+    nums = extract_numbers_and_years(visual_text)
+    if not nums:
+        return {"status": "no_numeric_claims", "unverified_numbers": []}
+
+    pdf_parts = [
+        fig.get("caption") or "",
+        fig.get("embedded_text") or "",
+        (fig.get("reference") or {}).get("text") or "",
+    ]
+    pdf_text = "\n".join(p for p in pdf_parts if p).strip()
+    if not pdf_text:
+        return {"status": "visual_only_numbers", "unverified_numbers": nums}
+
+    num_ok, date_ok, missing = check_numerical_and_date_consistency(visual_text, pdf_text)
+    if num_ok and date_ok:
+        return {"status": "corroborated", "unverified_numbers": []}
+    return {"status": "visual_only_numbers", "unverified_numbers": missing}
+
+
 def add_figure_evidence(state: AgentState, update: dict, mode: str) -> dict:
     query = state.get("query", "")
     paths = state.get("pdf_paths") or [state.get("pdf_path")]
@@ -123,17 +154,21 @@ def add_figure_evidence(state: AgentState, update: dict, mode: str) -> dict:
             fig["unique_title"] = len({f["source_path"] for f in catalog if f["doc_id"] == fig["doc_id"]}) == 1
         if not context["explicit"] and not context["figures"]:
             return update
-        if context["explicit"]:
-            for idx, original in enumerate(context["figures"]):
-                fig = dict(original)
+        for idx, original in enumerate(context["figures"]):
+            fig = dict(original)
+            try:
+                fig["reference"] = figure_reference(fig, _tokens(query))
+            except (KeyError, OSError, ValueError, RuntimeError):
+                fig["reference"] = None
+            if context["explicit"]:
                 try:
                     png = render_pdf_figure(fig["source_path"], fig["figure_id"])
                     fig["reading"] = read_figure(png, query, mode)
-                    fig["reference"] = figure_reference(fig, _tokens(query))
                 except (KeyError, OSError, ValueError, RuntimeError) as exc:
                     logger.warning("Figure reading unavailable (%s)", type(exc).__name__)
                     fig["reading"] = {"method": "unavailable", "text": ""}
-                context["figures"][idx] = fig
+                fig["cross_check"] = cross_check_figure_reading(fig)
+            context["figures"][idx] = fig
 
     # Only original PDF text enters the quote verifier. OCR and model observations stay attributed.
     units = []
@@ -153,8 +188,12 @@ def add_figure_evidence(state: AgentState, update: dict, mode: str) -> dict:
         "source_units": [*units, *(update.get("source_units") or [])],
         "reasoning_trace": [*(update.get("reasoning_trace") or []), {
             "agent": "reader", "action": "figure_reading", "status": context["status"],
-            "figures": [{"figure_id": f["figure_id"], "page": f["page_no"],
-                         "method": (f.get("reading") or {}).get("method", "pdf_text")} for f in context["figures"]],
+            "figures": [{
+                "figure_id": f["figure_id"],
+                "page": f["page_no"],
+                "method": (f.get("reading") or {}).get("method", "pdf_text"),
+                "cross_check": (f.get("cross_check") or {}).get("status", "not_applicable"),
+            } for f in context["figures"]],
         }],
     }
 
@@ -202,6 +241,13 @@ def draft_visual_answer(state: AgentState) -> dict:
                 lines.append(line)
             else:
                 lines.insert(1, line)
+        cross_check = fig.get("cross_check") or {}
+        if cross_check.get("status") == "visual_only_numbers" and cross_check.get("unverified_numbers"):
+            unverified = ", ".join(str(n) for n in cross_check["unverified_numbers"][:8])
+            lines.append(
+                f"Lưu ý đối chiếu ảnh–chữ: các giá trị ({_plain(unverified)}) chỉ đọc từ pixel ảnh, "
+                "chưa có trong phần chữ gốc/chú thích PDF — vui lòng kiểm tra trực tiếp trên hình bên dưới."
+            )
         if method not in {"geometry", "vision"}:
             lines.append("Có thể đối chiếu ảnh gốc bên dưới. Những chi tiết đồ họa vượt quá phần chữ đọc được cần được kiểm tra trên hình.")
         blocks.append("\n\n".join(lines))

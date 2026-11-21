@@ -3,7 +3,7 @@
 import re
 import unicodedata
 from collections import Counter, defaultdict
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 from core.state import AgentState, compute_context_hash
 
@@ -60,15 +60,15 @@ def _numeric_literals(text: str) -> set[str]:
     }
 
 
-def _checked_spans(state: AgentState) -> tuple[dict[str, dict[str, Any]], int]:
+def _span_source_matches(state: AgentState) -> Iterator[tuple[dict[str, Any], list[dict[str, Any]]]]:
     source_index = defaultdict(list)
     for unit in state.get("source_units") or []:
         if isinstance(unit, dict) and isinstance(unit.get("id"), str):
-            source_index[unit["id"], citation_location(unit)].append(_normalized(evidence_quote(unit)))
+            text = _normalized(evidence_quote(unit))
+            source_index[unit["id"], citation_location(unit)].append((text, unit))
 
     candidates = state.get("evidence_spans") or []
     counts = Counter(span["id"] for span in candidates if isinstance(span, dict) and isinstance(span.get("id"), str))
-    checked = {}
     for span in candidates:
         if not isinstance(span, dict):
             continue
@@ -83,9 +83,22 @@ def _checked_spans(state: AgentState) -> tuple[dict[str, dict[str, Any]], int]:
         source_hash = span.get("context_hash")
         if source_hash and source_hash != compute_context_hash(quote, *location):
             continue
-        if any(_contains(text, _normalized(quote)) for text in source_index.get((unit_id, location), ())):
-            checked[evidence_id] = span
-    return checked, len(candidates) - len(checked)
+        excerpt = _normalized(quote)
+        matches = [
+            unit for text, unit in source_index.get((unit_id, location), ()) if _contains(text, excerpt)
+        ]
+        if matches:
+            yield span, matches
+
+
+def citation_source_units(state: AgentState, evidence_ids: set[str]) -> dict[str, dict[str, Any]]:
+    """Recover the exact Reader unit behind each requested, unambiguous citation."""
+    if not evidence_ids:
+        return {}
+    return {
+        span["id"]: matches[0] for span, matches in _span_source_matches(state)
+        if span["id"] in evidence_ids and all(unit == matches[0] for unit in matches)
+    }
 
 
 def _link_ids(item: dict[str, Any]) -> list[str]:
@@ -97,7 +110,8 @@ def _link_ids(item: dict[str, Any]) -> list[str]:
 
 def audit_claim_citations(state: AgentState) -> dict[str, Any]:
     """Resolve explicit claim links and check numeric literals within the cited quotes."""
-    checked, unverified_count = _checked_spans(state)
+    checked = {span["id"]: span for span, _ in _span_source_matches(state)}
+    unverified_count = len(state.get("evidence_spans") or []) - len(checked)
     by_unit = defaultdict(list)
     for evidence_id, span in checked.items():
         by_unit[span.get("source_unit_id") or span.get("unit_id")].append(evidence_id)

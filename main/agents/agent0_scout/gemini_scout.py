@@ -19,9 +19,10 @@ import os
 import re
 import urllib.parse
 import urllib.request
+import uuid
 from typing import Any
 
-from core.config import settings
+from core.config import get_run_settings
 from core.db import save_document
 from utils.logger import logger
 
@@ -132,7 +133,7 @@ def download_open_access_pdf(pdf_url: str, target_path: str, timeout: int = 8) -
     """Attempts to download an open access PDF. Validates %PDF- magic bytes atomically."""
     if not pdf_url or not pdf_url.startswith("http"):
         return False
-    tmp_path = f"{target_path}.part_{os.getpid()}"
+    tmp_path = f"{target_path}.part_{uuid.uuid4().hex}"
     try:
         import httpx
         with httpx.Client(follow_redirects=True, timeout=float(timeout), headers={"User-Agent": USER_AGENT}) as client:
@@ -163,7 +164,7 @@ def search_gemini_academic_papers(query: str, max_results: int = 3, timeout: flo
     logger.info(f"[Academic Scout] Searching authentic scholarly works for: '{query}'...")
     raw_works = search_openalex_works(query, max_results=max_results, timeout=timeout)
 
-    target_dir = os.path.join(settings.BASE_DIR, "uploads")
+    target_dir = os.path.join(get_run_settings().BASE_DIR, "uploads")
     os.makedirs(target_dir, exist_ok=True)
 
     registered_papers: list[dict[str, Any]] = []
