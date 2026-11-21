@@ -22,7 +22,6 @@ from __future__ import annotations
 
 
 
-import asyncio
 
 import datetime
 
@@ -33,7 +32,6 @@ import re
 
 import shutil
 
-import threading
 
 import uuid
 
@@ -53,16 +51,22 @@ from pydantic import BaseModel, Field
 
 
 
-from api.citations import citation_references, format_run_evidence, pin_citation_documents
-from api.figures import answer_figures, pin_answer_figures
+from api import auth
+from api.citations import citation_references, format_run_evidence
+from api.figures import answer_figures
+from api.research_runs import ResearchRequest, ResearchRunService, run_answer_status
+from api.run_manifest import RUN_MANIFEST_ACTION, get_run_manifest
 from core.citation_audit import claim_text, get_citation_audit, published_claim_id
-from core.config import settings
+from core.comparison_plan import DEFAULT_COMPARISON_TIMEOUT_SECONDS
+from core.config import RunConfig, run_defaults_lock, settings
+from core.worker_observations import WORKER_INFERENCE_ACTION
+from core.token_usage import TOKEN_BUDGET_EXHAUSTED, TOKEN_USAGE_ACTION, TOKEN_USAGE_UNAVAILABLE
 
-from core.graph import build_research_rag_graph
 
 from core.tools import clear_pdf_cache
 
 from core import db
+from modes.registry import normalize_mode
 
 from utils.logger import logger
 
@@ -75,8 +79,8 @@ app = FastAPI(
     description="Evidence-First Scientific Literature Research System with 5 Specialized Agents",
 
     version="1.0.0",
-
 )
+app.include_router(auth.router)
 
 
 
@@ -124,7 +128,13 @@ def health_check():
 
 
 @app.middleware("http")
-async def no_cache_static_middleware(request: Request, call_next):
+async def workspace_middleware(request: Request, call_next):
+    path = request.url.path
+    if path == "/api" or path.startswith("/api/"):
+        rejection = auth.check_api_access(request)
+        response = rejection if rejection is not None else await call_next(request)
+        response.headers["Cache-Control"] = "private, no-store"
+        return response
     response = await call_next(request)
     if request.url.path.startswith("/demo2") or request.url.path.endswith((".js", ".css", ".html")):
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
@@ -147,26 +157,14 @@ docs_store: dict[str, dict[str, Any]] = {}
 
 
 
-# Compile LangGraph graph with thread-safe atomic reference management
-_global_graph_lock = threading.Lock()
-_ACTIVE_RUN_TASKS: dict[str, asyncio.Task] = {}
-_global_graph = build_research_rag_graph()
+# The legacy endpoints still honor the operating mode set by the config routes.
+research_runs = ResearchRunService()
+_legacy_mode_override: str | None = None
 
-def get_current_graph():
-    """Returns the current active compiled LangGraph instance thread-safely."""
-    global _global_graph
-    with _global_graph_lock:
-        return _global_graph
 
-def set_current_graph(new_graph):
-    """Atomically updates the active compiled graph reference."""
-    global _global_graph, graph
-    with _global_graph_lock:
-        _global_graph = new_graph
-        graph = new_graph
-    return _global_graph
-
-graph = _global_graph
+def _legacy_run_config() -> tuple[str | None, RunConfig]:
+    with run_defaults_lock:
+        return _legacy_mode_override, RunConfig.capture()
 
 
 
@@ -181,6 +179,11 @@ class CreateRunRequest(BaseModel):
     query: Optional[str] = None
     document_ids: Optional[list[str]] = None
     document_id: Optional[str] = None
+    auto_scout: bool = False
+    parallel_retrieval: bool = False
+    comparison_plan: bool = False
+    comparison_timeout_seconds: float = Field(default=DEFAULT_COMPARISON_TIMEOUT_SECONDS, gt=0, allow_inf_nan=False)
+    token_budget: int | None = Field(default=None, gt=0, strict=True)
     profile: Optional[str] = "balanced"
     model: Optional[str] = None
     mode: Optional[str] = None
@@ -198,98 +201,74 @@ class DirectResearchRequest(BaseModel):
     query: str
 
     pdf_path: Optional[str] = None
+    document_ids: list[str] | None = None
+    auto_scout: bool = True
+    parallel_retrieval: bool = False
+    comparison_plan: bool = False
+    comparison_timeout_seconds: float = Field(default=DEFAULT_COMPARISON_TIMEOUT_SECONDS, gt=0, allow_inf_nan=False)
+    token_budget: int | None = Field(default=None, gt=0, strict=True)
+    session_id: str | None = None
 
 
 
 
 
-# ==================== AUTH & CONFIG ====================
-
-AUTH_DEV_MODE = os.getenv("APP_DEV_MODE", "true").lower() in ("true", "1", "yes")
-AUTH_SECRET_PASSWORD = os.getenv("APP_AUTH_PASSWORD", "")
-_ACTIVE_AUTH_TOKENS: set[str] = set()
-
-_AUTH_LOCK = threading.Lock()
+# ==================== CONFIG ====================
 
 
-@app.get("/api/auth/status")
-def auth_status(request: Request):
-    auth_header = request.headers.get("Authorization", "")
-    token = None
-    if auth_header.startswith("Bearer "):
-        token = auth_header[7:].strip()
+def _write_env_settings(values: dict[str, str]):
+    """Write updates together while the run defaults lock is held."""
+    if not values:
+        return
+    if any("\r" in value or "\n" in value for value in values.values()):
+        raise HTTPException(status_code=400, detail="Configuration values must be single-line.")
+    api_dir = os.path.dirname(os.path.abspath(__file__))
+    main_dir = os.path.dirname(api_dir)
+    candidates = [os.path.join(os.path.dirname(main_dir), ".env"),
+                  os.path.join(main_dir, ".env"), os.path.abspath(".env")]
+    env_path = next((path for path in candidates if os.path.exists(path)), None)
+    if env_path is None:
+        return
 
-    is_authenticated = False
-    if token and token in _ACTIVE_AUTH_TOKENS:
-        is_authenticated = True
-    elif AUTH_DEV_MODE and not AUTH_SECRET_PASSWORD:
-        is_authenticated = True
+    pending = values.copy()
+    with open(env_path, encoding="utf-8") as env:
+        lines = env.readlines()
+    updated = []
+    for line in lines:
+        key = line.strip().split("=", 1)[0]
+        if key in values:
+            if key in pending:
+                updated.append(f"{key}={pending.pop(key)}\n")
+        else:
+            updated.append(line)
+    if pending and updated and not updated[-1].endswith("\n"):
+        updated[-1] += "\n"
+    updated.extend(f"{key}={value}\n" for key, value in pending.items())
 
-    return {
-        "authenticated": is_authenticated,
-        "configured": True,
-        "write_access": is_authenticated,
-        "mode": settings.EXECUTION_MODE,
-        "dev_mode": AUTH_DEV_MODE,
-    }
-
-
-
-
-
-
-
-def update_env_file(key: str, value: str):
-
-    """Safely updates or adds a key-value pair in .env file without destroying other variables."""
-
-    curr_dir = os.path.dirname(os.path.abspath(__file__))
-
-    candidates = [
-
-        os.path.join(os.path.dirname(os.path.dirname(curr_dir)), ".env"),
-
-        os.path.join(os.path.dirname(curr_dir), ".env"),
-
-        os.path.abspath(".env")
-
-    ]
-
-    env_path = next((p for p in candidates if os.path.exists(p)), candidates[0])
-
-    if os.path.exists(env_path):
-
-        with open(env_path, "r", encoding="utf-8") as f:
-
-            lines = f.readlines()
-
-        found = False
-
-        new_lines = []
-
-        for line in lines:
-
-            if line.strip().startswith(f"{key}="):
-
-                new_lines.append(f"{key}={value}\n")
-
-                found = True
-
-            else:
-
-                new_lines.append(line)
-
-        if not found:
-
-            new_lines.append(f"{key}={value}\n")
-
-        tmp_env = f"{env_path}.tmp_{os.getpid()}"
-        with open(tmp_env, "w", encoding="utf-8") as f:
-            f.writelines(new_lines)
-        os.replace(tmp_env, env_path)
+    temporary = f"{env_path}.tmp_{os.getpid()}"
+    with open(temporary, "w", encoding="utf-8") as env:
+        env.writelines(updated)
+    os.replace(temporary, env_path)
 
 
-
+def _set_run_defaults(values: dict[str, str], *, agent_modes: dict[str, str] | None = None):
+    global _legacy_mode_override
+    with run_defaults_lock:
+        roles = settings.get_all_agent_modes()
+        modes = {}
+        for role, mode in (agent_modes or {}).items():
+            key = role.lower().replace("agent", "").replace("_", "").strip()
+            if key in roles:
+                modes[key] = mode
+        _write_env_settings({**values, **{f"AGENT_{role.upper()}_MODE": mode for role, mode in modes.items()}})
+        for key, value in values.items():
+            setattr(settings, key, value)
+        for role, mode in modes.items():
+            settings.set_agent_mode(role, mode)
+        if agent_modes is not None:
+            _legacy_mode_override = None
+        elif "EXECUTION_MODE" in values:
+            _legacy_mode_override = values["EXECUTION_MODE"]
 
 
 class SetModeRequest(BaseModel):
@@ -310,7 +289,6 @@ class SetRemoteUrlRequest(BaseModel):
 
 @app.post("/api/config/mode")
 def set_execution_mode(req: SetModeRequest):
-    from modes.registry import normalize_mode
     norm_mode = normalize_mode(req.mode)
     valid_modes = [
         "gemini", "cpu_min", "cpu_max", "gpu_ft", "gpu_finetune",
@@ -318,9 +296,7 @@ def set_execution_mode(req: SetModeRequest):
     ]
     if norm_mode not in valid_modes and req.mode not in valid_modes:
         raise HTTPException(status_code=400, detail="Chế độ không hợp lệ")
-    settings.EXECUTION_MODE = norm_mode
-    set_current_graph(build_research_rag_graph(mode=norm_mode))
-    update_env_file("EXECUTION_MODE", norm_mode)
+    _set_run_defaults({"EXECUTION_MODE": norm_mode})
     return get_config()
 
 
@@ -339,9 +315,7 @@ async def set_remote_url(req: SetRemoteUrlRequest):
 
 
 
-    settings.REMOTE_INFERENCE_URL = new_url
-
-    update_env_file("REMOTE_INFERENCE_URL", new_url)
+    _set_run_defaults({"REMOTE_INFERENCE_URL": new_url})
 
 
 
@@ -451,9 +425,7 @@ async def remote_switch_gpu_mode(req: RemoteSwitchModeRequest):
             resp = await client.post(f"{url}/api/admin/switch_mode", json={"target_mode": target})
             if resp.status_code == 200:
                 data = resp.json()
-                settings.EXECUTION_MODE = target
-                set_current_graph(build_research_rag_graph(mode=target))
-                update_env_file("EXECUTION_MODE", target)
+                _set_run_defaults({"EXECUTION_MODE": target})
                 return {
                     "status": "success",
                     "active_mode": target,
@@ -664,24 +636,12 @@ async def start_local_cpu_service():
 @app.post("/api/config/local-cpu")
 
 async def update_local_cpu_config(req: LocalCpuConfigRequest):
-
+    updates = {}
     if req.local_cpu_url is not None:
-
-        new_url = req.local_cpu_url.strip().rstrip("/")
-
-        settings.LOCAL_CPU_URL = new_url
-
-        update_env_file("LOCAL_CPU_URL", new_url)
-
+        updates["LOCAL_CPU_URL"] = req.local_cpu_url.strip().rstrip("/")
     if req.local_cpu_model is not None:
-
-        new_model = req.local_cpu_model.strip()
-
-        settings.LOCAL_CPU_MODEL = new_model
-
-        update_env_file("LOCAL_CPU_MODEL", new_model)
-
-    
+        updates["LOCAL_CPU_MODEL"] = req.local_cpu_model.strip()
+    _set_run_defaults(updates)
 
     test_res = await test_local_cpu()
 
@@ -771,7 +731,7 @@ def get_config():
 
         "demo": False,
 
-        "auth_required": False,
+        "auth_required": bool(auth.AUTH_SECRET_PASSWORD) or not auth.AUTH_DEV_MODE,
 
         "workflow_profile": "academic",
 
@@ -848,17 +808,10 @@ def set_agent_modes(req: SetAgentModesRequest):
         return "cpu_min"
 
     if req.agent_modes:
-        for agent_name, mode in req.agent_modes.items():
-            canonical = _norm(mode)
-            settings.set_agent_mode(agent_name, canonical)
-            update_env_file(f"AGENT_{agent_name.upper()}_MODE", canonical)
-            updated[agent_name] = canonical
+        updated = {role: _norm(mode) for role, mode in req.agent_modes.items()}
     elif req.agent and req.mode:
-        canonical = _norm(req.mode)
-        settings.set_agent_mode(req.agent, canonical)
-        update_env_file(f"AGENT_{req.agent.upper()}_MODE", canonical)
-        updated[req.agent] = canonical
-    set_current_graph(build_research_rag_graph())
+        updated[req.agent] = _norm(req.mode)
+    _set_run_defaults({}, agent_modes=updated)
     return {
 
         "status": "success",
@@ -912,10 +865,7 @@ async def auto_select_best_models():
         }
         reason = "Đã kích hoạt Local CPU Server (11434). Chế độ tự chủ 100% offline, bảo mật và phản hồi tức thì."
 
-    for agent_name, mode in modes.items():
-        settings.set_agent_mode(agent_name, mode)
-        update_env_file(f"AGENT_{agent_name.upper()}_MODE", mode)
-    set_current_graph(build_research_rag_graph())
+    _set_run_defaults({}, agent_modes=modes)
 
     return {
         "status": "success",
@@ -939,6 +889,7 @@ async def apply_agent_preset(req: ApplyPresetRequest):
     - 'gemini_cloud': Google Gemini 3.1 Flash Cloud toàn diện
     """
     preset = req.preset.lower().strip()
+    updates = {}
     if preset in ["local_titan", "titan", "local"]:
         modes = {
             "retrieval": "cpu",
@@ -947,10 +898,7 @@ async def apply_agent_preset(req: ApplyPresetRequest):
             "factchecker": "cpu",
             "writer": "cpu"
         }
-        settings.EXECUTION_MODE = "local_cpu"
-        update_env_file("EXECUTION_MODE", "local_cpu")
-        settings.LOCAL_CPU_MODEL = "deepseek-r1:14b"
-        update_env_file("LOCAL_CPU_MODEL", "deepseek-r1:14b")
+        updates = {"EXECUTION_MODE": "local_cpu", "LOCAL_CPU_MODEL": "deepseek-r1:14b"}
         title = "Combo 1: Local Titan Workstation"
         desc = "Đã kích hoạt 100% Local CPU Ryzen 7 (32GB RAM) với DeepSeek-R1 14B & MiniCheck SOTA."
     elif preset in ["kaggle_colossus", "colossus", "kaggle"]:
@@ -974,10 +922,7 @@ async def apply_agent_preset(req: ApplyPresetRequest):
         title = "Combo 3: Google Gemini Cloud"
         desc = "Đã kích hoạt Google Gemini 3.1 Flash Cloud phối hợp PyMuPDF C-Engine & QuoteVerifier."
 
-    for agent_name, mode in modes.items():
-        settings.set_agent_mode(agent_name, mode)
-        update_env_file(f"AGENT_{agent_name.upper()}_MODE", mode)
-    set_current_graph(build_research_rag_graph())
+    _set_run_defaults(updates, agent_modes=modes)
 
     return {
         "status": "success",
@@ -1510,37 +1455,6 @@ def clear_cache():
 
 
 
-@app.post("/api/auth/login")
-def auth_login(req: Optional[dict] = None):
-    req = req or {}
-    password = req.get("password", "")
-
-    if AUTH_SECRET_PASSWORD:
-        if password != AUTH_SECRET_PASSWORD:
-            raise HTTPException(status_code=401, detail="Invalid authentication credentials.")
-
-    token = f"sess_{uuid.uuid4().hex}"
-    _ACTIVE_AUTH_TOKENS.add(token)
-    return {
-        "authenticated": True,
-        "token": token,
-        "write_access": True,
-        "dev_mode": AUTH_DEV_MODE,
-    }
-
-
-@app.post("/api/auth/logout")
-def auth_logout(request: Request):
-    auth_header = request.headers.get("Authorization", "")
-    if auth_header.startswith("Bearer "):
-        token = auth_header[7:].strip()
-        _ACTIVE_AUTH_TOKENS.discard(token)
-    return {"authenticated": False}
-
-
-
-
-
 _UPLOAD_STATUS: dict[str, dict[str, Any]] = {}
 
 
@@ -1605,6 +1519,8 @@ def get_chat_session(session_id: str):
         traces = run.get("reasoning_trace") or []
         references = citation_references(traces, spans, documents)
         run["citation_references"] = references
+        run["citation_audit"] = get_citation_audit(traces)
+        run["run_manifest"] = get_run_manifest(run)
         run["figures"] = answer_figures(traces)
         run["evidence"] = format_run_evidence(spans, references)
         run["reasoning_trace"] = [
@@ -1647,7 +1563,7 @@ def clear_all_chat_sessions():
 
 def list_runs():
 
-    return {"runs": db.list_runs()}
+    return {"runs": [{**run, "run_manifest": get_run_manifest(run)} for run in db.list_runs()]}
 
 
 
@@ -1672,7 +1588,11 @@ def get_run_status(run_id: str):
     traces = run_record.get("reasoning_trace") or []
     review_round = 1
 
-    for seq, t in enumerate(traces, start=1):
+    agent_events = (
+        event for event in traces
+        if event.get("action") not in {RUN_MANIFEST_ACTION, WORKER_INFERENCE_ACTION, TOKEN_USAGE_ACTION}
+    )
+    for seq, t in enumerate(agent_events, start=1):
         review_round = max(review_round, (t.get("retry_count") or 0) + 1)
 
         raw_agent = str(t.get("agent") or t.get("node") or "orchestrator").lower()
@@ -1762,6 +1682,13 @@ def get_run_status(run_id: str):
 
         unresolved = any(t.get("action") == "unresolved_review" for t in traces)
         stop_reason = "failed" if run_record.get("status") == "failed" else "completed"
+        answer_status = run_answer_status(run_record)
+        if answer_status in {
+            "WAITING_FOR_DOCUMENT", "CLARIFICATION_NEEDED", "OUT_OF_SCOPE", "NO_RELEVANT_PAPERS", "DOWNLOAD_FAILED",
+            "INSUFFICIENT_EVIDENCE", "TIMED_OUT",
+            TOKEN_BUDGET_EXHAUSTED, TOKEN_USAGE_UNAVAILABLE,
+        }:
+            stop_reason = answer_status.lower()
         if unresolved:
             stop_reason = "unresolved_review"
         result = {
@@ -1813,11 +1740,12 @@ def get_run_status(run_id: str):
 
 
 
-    doc_id_val = run_record.get("document_id")
 
     return {
 
         **run_record,
+
+        "run_manifest": get_run_manifest(run_record),
 
         "report": run_record.get("final_report"),
 
@@ -1831,9 +1759,8 @@ def get_run_status(run_id: str):
 
         "result": result,
 
-        "document_id": doc_id_val,
 
-        "document_ids": [doc_id_val] if doc_id_val else [],
+        "answer_status": run_answer_status(run_record),
 
     }
 
@@ -1843,14 +1770,12 @@ def get_run_status(run_id: str):
 
 @app.post("/api/runs/{run_id}/cancel")
 
-def cancel_run(run_id: str):
+async def cancel_run(run_id: str):
 
-    db.update_run_result(run_id, status="cancelled")
-
-    return {"status": "cancelled", "id": run_id}
-
-
-
+    status = await research_runs.cancel(run_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Run not found.")
+    return {"status": status, "id": run_id}
 
 
 @app.delete("/api/runs/{run_id}")
@@ -1921,8 +1846,10 @@ def export_run_report(run_id: str, format: str = "md"):
             "question": run_record.get("question"),
             "status": run_record.get("status"),
             "report": report_md,
+            "run_manifest": get_run_manifest(run_record),
             "verified_claims": run_record.get("verified_claims") or [],
             "evidence_spans": spans,
+            "citation_audit": get_citation_audit(trace),
             "citation_references": citation_references(trace, spans, db.list_documents()),
             "figures": answer_figures(trace),
             "reasoning_trace": trace,
@@ -2042,169 +1969,31 @@ def resolve_slash_prompt(p: str) -> str:
     return p_clean
 
 @app.post("/api/runs")
-
 async def create_run(req: CreateRunRequest):
-    """Creates and starts an asynchronous multi-agent research run with SQLite persistence."""
     prompt = resolve_slash_prompt(req.question or req.query)
     if not prompt:
         raise HTTPException(status_code=400, detail="Question cannot be empty.")
 
-    run_id = f"run_{uuid.uuid4().hex[:10]}"
-    target_doc_ids = []
-    if req.document_ids:
-        target_doc_ids = [d for d in req.document_ids if d]
-    elif req.document_id:
-        target_doc_ids = [req.document_id]
-
-    selected_documents = []
-    for d_id in dict.fromkeys(target_doc_ids):
-        doc = db.get_document(d_id)
-        if doc and doc.get("path") and os.path.exists(doc.get("path")):
-            selected_documents.append(doc)
-
-    pdf_paths = [doc["path"] for doc in selected_documents]
-    if pdf_paths:
-        doc_id = selected_documents[0]["id"]
-        pdf_path = pdf_paths[0]
-    else:
-        # Nếu người dùng không chọn tài liệu và không có doc_id -> Thông báo rõ ràng
-        no_doc_report = (
-            "# Thông báo Hệ thống\n\n"
-            "> **Trạng thái:** `WAITING_FOR_DOCUMENT`\n\n"
-            "Vui lòng **chọn một tài liệu** trong kho hoặc bật **Auto-Scout** để bắt đầu nghiên cứu."
-        )
-        db.save_run(
-            run_id=run_id,
-            question=prompt,
-            status="completed",
-            document_id=None,
-            session_id=req.session_id,
-        )
-        db.update_run_result(
-            run_id=run_id,
-            status="completed",
-            final_report=no_doc_report,
-            verified_claims=[],
-            rejected_claims=[],
-            evidence_spans=[],
-            reasoning_trace=[{"action": "waiting_for_document", "message": "Vui lòng chọn tài liệu hoặc bật Auto-Scout."}],
-        )
-        return {
-            "id": run_id,
-            "status": "completed",
-            "question": prompt,
-            "document_id": None,
-            "final_report": no_doc_report,
-        }
-
-    run_record = db.save_run(
-        run_id=run_id,
-        question=prompt,
-        status="processing",
-        document_id=doc_id,
+    config = RunConfig.capture()
+    run = await research_runs.start(ResearchRequest(
+        query=prompt,
+        config=config,
+        mode=normalize_mode(req.mode or req.model or config.EXECUTION_MODE),
+        document_ids=tuple(document_id for document_id in (req.document_ids or [req.document_id]) if document_id),
+        auto_scout=req.auto_scout,
+        parallel_retrieval=req.parallel_retrieval,
+        comparison_plan=req.comparison_plan,
+        comparison_timeout_seconds=req.comparison_timeout_seconds,
+        token_budget=req.token_budget,
+        max_reflection_loops=2 if req.max_iterations is None else req.max_iterations,
+        chat_history=req.chat_history or [],
         session_id=req.session_id,
-    )
-
-    citation_documents = db.list_documents()
-    requested_mode = req.mode or req.model or settings.EXECUTION_MODE
-
-    # Asynchronously execute graph with live per-node streaming and SQLite updates
-    async def _async_exec():
-        try:
-            import time
-
-            def _run_streaming():
-                from modes.registry import normalize_mode
-                from core.graph import build_research_rag_graph
-
-                run_mode = normalize_mode(requested_mode)
-                logger.info(f"[RunExecution] Dispatching run {run_id} strictly under mode='{run_mode}'.")
-
-                initial_state = {
-                    "query": prompt,
-                    "pdf_path": pdf_path,
-                    "pdf_paths": pdf_paths,
-                    "retry_count": 0,
-                    "max_reflection_loops": 2 if req.max_iterations is None else req.max_iterations,
-                    "chat_history": req.chat_history or [],
-                    "execution_mode": run_mode,
-                }
-                accumulated_traces = []
-                final_res = {"execution_mode": run_mode}
-                step_start_time = time.time()
-                active_graph = build_research_rag_graph(mode=run_mode)
-
-                for chunk in active_graph.stream(initial_state, stream_mode="updates"):
-                    chk = db.get_run(run_id)
-                    if chk and chk.get("status") == "cancelled":
-                        logger.info(f"[RunCancel] Run {run_id} was cancelled by user. Terminating graph stream.")
-                        return final_res, accumulated_traces
-
-                    now = time.time()
-                    step_duration = round(max(0.1, now - step_start_time), 1)
-                    step_start_time = now
-
-                    for node_name, node_output in chunk.items():
-                        if isinstance(node_output, dict):
-                            final_res.update(node_output)
-                            new_traces = node_output.get("reasoning_trace")
-                            if new_traces:
-                                pin_answer_figures(new_traces, selected_documents, pdf_paths)
-                                for tr in new_traces:
-                                    if isinstance(tr, dict):
-                                        tr["duration"] = f"{step_duration}s"
-                                        tr["duration_sec"] = step_duration
-                                        tr["timestamp"] = now
-                                accumulated_traces.extend(new_traces)
-                                # Persist each agent step immediately into SQLite!
-                                db.update_run_result(
-                                    run_id=run_id,
-                                    status="processing",
-                                    reasoning_trace=accumulated_traces,
-                                )
-
-                return final_res, accumulated_traces
-
-            loop = asyncio.get_event_loop()
-            final_res, accumulated_traces = await loop.run_in_executor(None, _run_streaming)
-
-            current_run = db.get_run(run_id)
-            if current_run and current_run.get("status") == "cancelled":
-                return
-
-            evidence_spans = final_res.get("evidence_spans") or []
-            trace = accumulated_traces or final_res.get("reasoning_trace", [])
-            pin_citation_documents(trace, evidence_spans, citation_documents)
-            db.update_run_result(
-                run_id=run_id,
-                status="completed",
-                final_report=final_res.get("final_report", ""),
-                verified_claims=final_res.get("verified_claims", []),
-                rejected_claims=final_res.get("rejected_claims", []),
-                evidence_spans=evidence_spans,
-                reasoning_trace=trace,
-            )
-        except asyncio.CancelledError:
-            logger.info(f"[RunCancel] Async task for run {run_id} cancelled.")
-            db.update_run_result(run_id=run_id, status="cancelled")
-        except Exception as e:
-            db.update_run_result(
-                run_id=run_id,
-                status="failed",
-                error=str(e),
-            )
-        finally:
-            _ACTIVE_RUN_TASKS.pop(run_id, None)
-
-
-
-    task = asyncio.create_task(_async_exec())
-    _ACTIVE_RUN_TASKS[run_id] = task
-
-    return run_record
-
-
-
+    ))
+    return {
+        **run.record,
+        "answer_status": run_answer_status(run.record),
+        "run_manifest": get_run_manifest(run.record),
+    }
 
 
 class ScoutRequest(BaseModel):
@@ -2393,131 +2182,116 @@ async def execute_standalone_scout(req: ScoutRequest):
 
 # Direct synchronous research endpoint
 
-@app.post("/api/research")
-
-async def execute_direct_research(req: DirectResearchRequest):
-
-    if not req.query.strip():
-
+def _legacy_research_request(req: DirectResearchRequest) -> ResearchRequest:
+    query = req.query.strip()
+    if not query:
         raise HTTPException(status_code=400, detail="Query cannot be empty.")
-
-
-
-    loop = asyncio.get_event_loop()
-    active_graph = get_current_graph()
-
-    final_state = await loop.run_in_executor(
-
-        None,
-
-        active_graph.invoke,
-
-        {"query": req.query, "pdf_path": req.pdf_path, "retry_count": 0},
-
+    mode, config = _legacy_run_config()
+    return ResearchRequest(
+        query=query, mode=mode, config=config, pdf_path=req.pdf_path,
+        document_ids=tuple(req.document_ids or []), auto_scout=req.auto_scout, session_id=req.session_id,
+        parallel_retrieval=req.parallel_retrieval,
+        comparison_plan=req.comparison_plan,
+        comparison_timeout_seconds=req.comparison_timeout_seconds,
+        token_budget=req.token_budget,
     )
 
-    trace = final_state.get("reasoning_trace") or []
-    spans = final_state.get("evidence_spans") or []
-    documents = db.list_documents()
-    selected_paths = [req.pdf_path] if req.pdf_path else final_state.get("pdf_paths") or [final_state.get("pdf_path")]
-    pin_answer_figures(trace, documents, selected_paths)
-    return {
 
+@app.post("/api/research")
+async def execute_direct_research(req: DirectResearchRequest):
+    run = await research_runs.start(_legacy_research_request(req))
+    result = await run.result()
+    record, state = result.record, result.state
+    trace = record.get("reasoning_trace") or []
+    spans = record.get("evidence_spans") or []
+    status = record["status"]
+    payload = {
+        "run_id": record["id"],
         "query": req.query,
-
-        "status": final_state.get("fact_check_label", "unknown"),
-
-        "confidence": final_state.get("confidence", "unknown"),
-
-        "final_report": final_state.get("final_report", ""),
-
-        "verified_claims": final_state.get("verified_claims", []),
-
-        "rejected_claims": final_state.get("rejected_claims", []),
-
+        "status": state.get("fact_check_label", "unknown") if status == "completed" else status,
+        "run_status": status,
+        "run_manifest": get_run_manifest(record),
+        "answer_status": run_answer_status(record),
+        "confidence": state.get("confidence", "unknown"),
+        "final_report": record.get("final_report") or "",
+        "verified_claims": record.get("verified_claims") or [],
+        "rejected_claims": record.get("rejected_claims") or [],
         "evidence_spans": spans,
-        "citation_references": citation_references(trace, spans, documents),
+        "citation_audit": get_citation_audit(trace),
+        "citation_references": citation_references(trace, spans, db.list_documents()) if spans else [],
         "figures": answer_figures(trace),
-
-        "retrieved_docs": final_state.get("retrieved_docs", []),
-
+        "retrieved_docs": state.get("retrieved_docs") or [],
         "reasoning_trace": trace,
-
+        "document_ids": record.get("document_ids") or [],
+        "documents": record.get("documents") or [],
+        "session_id": record.get("session_id"),
+        "error": record.get("error"),
     }
-
-
-
+    if status == "failed":
+        status_code = {"TIMED_OUT": 504, TOKEN_BUDGET_EXHAUSTED: 422, TOKEN_USAGE_UNAVAILABLE: 502}
+        return JSONResponse(payload, status_code=status_code.get(payload["answer_status"], 500))
+    return payload
 
 
 @app.post("/api/research/stream")
-
 async def execute_research_stream(req: DirectResearchRequest):
-    """
-    Real-time Server-Sent Events (SSE) streaming endpoint for multi-agent execution.
-    Emits events as each agent finishes its step. Wraps execution in robust try-except
-    to emit an error event instead of dropping the connection.
-    """
-    if not req.query.strip():
-        raise HTTPException(status_code=400, detail="Query cannot be empty.")
+    run = await research_runs.start(_legacy_research_request(req), stream=True)
+    run_id = run.record["id"]
+    steps = run.steps
+    assert steps is not None
+    manifest = get_run_manifest(run.record)
+    wait_for_final = req.token_budget is not None or bool(manifest and manifest["configuration"]["comparison_plan_enabled"])
+
+    def event(payload):
+        return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
     async def event_generator():
+        yield event({
+            "event": "started", "query": req.query, "run_id": run_id, "run_manifest": manifest,
+        })
         try:
-            initial_state = {"query": req.query, "pdf_path": req.pdf_path, "retry_count": 0}
-            yield f"data: {json.dumps({'event': 'started', 'query': req.query}, ensure_ascii=False)}\n\n"
-
-            active_graph = get_current_graph()
-            selected_paths = [req.pdf_path] if req.pdf_path else []
-            async for chunk in active_graph.astream(initial_state, stream_mode="updates"):
-                for node_name, node_output in chunk.items():
-                    traces = node_output.get("reasoning_trace") or []
-                    if node_name == "scout_node" and not req.pdf_path:
-                        selected_paths = node_output.get("pdf_paths") or [node_output.get("pdf_path")]
-                    if any(entry.get("action") == "answer_figures" for entry in traces):
-                        pin_answer_figures(traces, db.list_documents(), selected_paths)
-                    trace = next((entry for entry in reversed(traces) if entry.get("action") != "citation_audit"), {})
-                    event_data = {
-                        "event": "node_update",
-                        "node": node_name,
-                        "action": trace.get("action", "completed"),
-                        "data": {
-                            "fact_check_label": node_output.get("fact_check_label"),
-                            "retry_count": node_output.get("retry_count"),
-                            "partial_answer": node_output.get("answer") or node_output.get("final_report"),
-                            "citation_audit": get_citation_audit(traces),
-                            "figures": answer_figures(traces),
-                            "handoffs": [
-                                {**entry, "message": _trace_message(entry)} for entry in traces
-                                if entry.get("action") in _HANDOFF_ACTIONS
-                            ],
-                        },
-                    }
-                    yield f"data: {json.dumps(event_data, ensure_ascii=False)}\n\n"
-
-            yield f"data: {json.dumps({'event': 'finished'}, ensure_ascii=False)}\n\n"
+            while (step := await steps.get()) is not None:
+                output, traces = step.output, step.traces
+                trace = next((item for item in reversed(traces) if item.get("action") != "citation_audit"), {})
+                yield event({
+                    "event": "node_update", "node": step.node, "run_id": run_id,
+                    "action": trace.get("action", "completed"),
+                    "data": {
+                        "fact_check_label": output.get("fact_check_label"),
+                        "retry_count": output.get("retry_count"),
+                        "partial_answer": None if wait_for_final else output.get("answer") or output.get("final_report"),
+                        "citation_audit": {} if wait_for_final else get_citation_audit(traces),
+                        "figures": [] if wait_for_final else answer_figures(traces),
+                        "handoffs": [
+                            {**entry, "message": _trace_message(entry)} for entry in traces
+                            if entry.get("action") in _HANDOFF_ACTIONS
+                        ],
+                    },
+                })
+            record = (await run.result()).record
+            if record["status"] == "failed":
+                yield event({
+                    "event": "error", "run_id": run_id, "message": record.get("error"),
+                    "answer_status": run_answer_status(record),
+                    "run_manifest": get_run_manifest(record),
+                })
+            else:
+                yield event({
+                    "event": "finished", "run_id": run_id, "status": record["status"],
+                    "answer_status": run_answer_status(record), "document_ids": record.get("document_ids", []),
+                    "final_report": record.get("final_report") or "",
+                    "citation_audit": get_citation_audit(record.get("reasoning_trace") or []),
+                    "run_manifest": get_run_manifest(record),
+                })
         except Exception as exc:
-            logger.error(f"[SSE Research Stream Error]: {exc}")
-            yield f"data: {json.dumps({'event': 'error', 'message': str(exc)}, ensure_ascii=False)}\n\n"
+            logger.exception("Research stream %s failed", run_id)
+            yield event({"event": "error", "run_id": run_id, "message": str(exc)})
 
     return StreamingResponse(
-
         event_generator(),
-
         media_type="text/event-stream",
-
-        headers={
-
-            "Cache-Control": "no-cache",
-
-            "Connection": "keep-alive",
-
-            "X-Accel-Buffering": "no",
-
-        }
-
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
     )
-
-
-
 
 
 # Mount static Web Workspace UI & Assets

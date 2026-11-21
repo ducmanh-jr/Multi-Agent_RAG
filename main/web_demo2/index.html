@@ -166,6 +166,7 @@
           </svg>
         </button>
         <div id="activeScopeChip" style="display: none;"><span id="activeDocName"></span></div>
+        <button type="button" class="action-pill-btn" id="workspaceLogout" hidden>Đăng xuất</button>
       </div>
 
       <!-- Message History Container (Canvas Free Flow) -->
@@ -565,6 +566,16 @@
     </aside>
 
   </div>
+
+  <dialog id="workspaceAuthDialog" aria-labelledby="workspaceAuthTitle">
+    <h2 id="workspaceAuthTitle">Đăng nhập ResearchDesk</h2>
+    <p id="workspaceAuthMessage" role="status"></p>
+    <form id="workspaceAuthForm" method="post">
+      <label for="workspacePassword">Mật khẩu workspace</label>
+      <input id="workspacePassword" type="password" autocomplete="current-password" required autofocus>
+      <button type="submit">Đăng nhập</button>
+    </form>
+  </dialog>
 
   <script src="assets/js/antigravity-bg.js?v=20261107_v1"></script>
   <script src="assets/vendor/pdf.min.js"></script>

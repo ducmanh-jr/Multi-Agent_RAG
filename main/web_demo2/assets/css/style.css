@@ -82,6 +82,51 @@ body {
   display: block;
 }
 
+#workspaceLogout[hidden], #workspaceAuthForm[hidden] {
+  display: none;
+}
+
+#workspaceAuthDialog {
+  width: min(400px, calc(100% - 32px));
+  padding: 28px;
+  border: 1px solid var(--border-strong);
+  border-radius: 16px;
+  background: var(--bg-canvas);
+  color: var(--text-primary);
+}
+
+#workspaceAuthDialog::backdrop {
+  background: rgba(24, 24, 27, 0.55);
+}
+
+#workspaceAuthDialog h2 {
+  margin: 0 0 16px;
+  font-size: 1.2rem;
+}
+
+#workspaceAuthMessage:empty {
+  display: none;
+}
+
+#workspaceAuthForm {
+  display: grid;
+  gap: 10px;
+}
+
+#workspaceAuthForm input, #workspaceAuthForm button {
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  font: inherit;
+}
+
+#workspaceAuthForm button {
+  background: var(--bg-dark);
+  color: white;
+  cursor: pointer;
+}
+
 .workspace-layout {
   position: relative;
   z-index: 1;

@@ -95,7 +95,7 @@ document.addEventListener("DOMContentLoaded", () => {
   let activePollTimeout = null;
   let activeTimerInterval = null;
   let activeMessageCard = null;
-  let activeAbortController = null;
+  let pendingSubmission = null;
 
   function clearActivePolling() {
     if (activePollTimeout) {
@@ -144,24 +144,22 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  async function requestRunCancellation(runId) {
+    try {
+      const response = await fetch(`/api/runs/${encodeURIComponent(runId)}/cancel`, { method: "POST" });
+      if (!response.ok) throw new Error("HTTP " + response.status);
+    } catch (error) {
+      console.warn("Không gửi được yêu cầu dừng run:", error);
+    }
+  }
+
   function handleSendBtnClick() {
     if (sendBtn && sendBtn.classList.contains("running")) {
-      // Đang chạy -> Bấm để Dừng (Stop)
-      if (activeAbortController) {
-        try { activeAbortController.abort(); } catch (e) {}
-        activeAbortController = null;
+      if (pendingSubmission) {
+        pendingSubmission.cancelRequested = true;
+      } else if (state.activeRunId) {
+        void requestRunCancellation(state.activeRunId);
       }
-      clearActiveTimer();
-      clearActivePolling();
-      if (state.activeRunId) {
-        fetch(`/api/runs/${state.activeRunId}/cancel`, { method: "POST" }).catch(() => {});
-      }
-      stopAllThinkingSpinners();
-      if (activeMessageCard) {
-        updateAgentSkeletonError(activeMessageCard, "Đã dừng quá trình thực thi theo yêu cầu người dùng.", true);
-        activeMessageCard = null;
-      }
-      setButtonState(promptInput && promptInput.value.trim().length > 0 ? "ready" : "idle");
       return;
     }
     submitQuery();
@@ -1117,65 +1115,31 @@ document.addEventListener("DOMContentLoaded", () => {
     }, 100);
     activeTimerInterval = timerInterval;
 
-    if (activeAbortController) {
-      try { activeAbortController.abort(); } catch (e) {}
-    }
-    activeAbortController = new AbortController();
+    const submission = { cancelRequested: false };
+    pendingSubmission = submission;
 
     try {
-      // NẾU BẬT CHẾ ĐỘ AUTO-SCOUT: CHẠY RIÊNG BIỆT AGENT 0 (ĐƠN NHIỆM TRINH SÁT)
-      if (state.autoScout) {
-        const taskText = messageCard.querySelector(".live-task-text");
-        if (taskText) taskText.textContent = "Agent 0 đang trinh sát ArXiv & CrossRef";
-
-        const scoutRes = await fetch("/api/scout", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ query: text, max_results: 3, session_id: state.activeSessionId || null }),
-          signal: activeAbortController.signal,
-        });
-
-        clearActiveTimer();
-        const finalElapsed = ((performance.now() - startTime) / 1000).toFixed(1);
-
-        if (!scoutRes.ok) throw new Error("HTTP " + scoutRes.status);
-        const scoutData = await scoutRes.json();
-
-        if (scoutData.session_id) {
-          state.activeSessionId = scoutData.session_id;
-          localStorage.setItem("researchdesk_active_session", scoutData.session_id);
-        }
-
-        // Tự động làm mới Kho Tài Liệu ở Sidebar bên trái
-        await loadDocuments();
-        // Tự động cập nhật ngay Lịch Sử Nghiên Cứu để đoạn tin nhắn tìm kiếm mới nhất xếp ngay đầu danh sách
-        await loadChatHistory();
-
-        // Hiển thị danh thiếp các bài báo tìm được
-        renderScoutResults(messageCard, scoutData, text, finalElapsed);
-        activeMessageCard = null;
-        updateGeminiUsageBadge();
-        setButtonState(promptInput.value.trim().length > 0 ? "ready" : "idle");
-        return;
-      }
-
-      // NẾU TẮT AUTO-SCOUT: CHẠY QUY TRÌNH THẨM ĐỊNH 5 AGENT CŨ TRÊN TÀI LIỆU ĐÃ CHỌN
       const currentMode = getCurrentSelectedMode();
       const payload = {
         query: text,
         document_ids: docIds,
+        auto_scout: isAutoScout,
         mode: currentMode,
         model: currentMode,
-        max_iterations: state.maxReflectionLoops || 2,
+        max_iterations: state.maxReflectionLoops ?? 2,
+        parallel_retrieval: true,
+        comparison_plan: docIds.length >= 2,
         chat_history: getRecentChatHistory(3),
         session_id: state.activeSessionId || null,
       };
+      if (Number.isInteger(state.tokenBudget) && state.tokenBudget > 0) {
+        payload.token_budget = state.tokenBudget;
+      }
 
       const res = await fetch("/api/runs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
-        signal: activeAbortController.signal,
       });
 
       if (!res.ok) {
@@ -1184,6 +1148,8 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       const data = await res.json();
       state.activeRunId = data.id;
+      pendingSubmission = null;
+      if (submission.cancelRequested) await requestRunCancellation(data.id);
       if (data.session_id) {
         state.activeSessionId = data.session_id;
         localStorage.setItem("researchdesk_active_session", data.session_id);
@@ -1193,14 +1159,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
       pollRunStatus(data.id, messageCard, text, startTime, timerInterval);
     } catch (err) {
-      if (err && err.name === "AbortError") {
-        return;
-      }
       clearActiveTimer();
       console.error("Submission failed:", err);
       updateAgentSkeletonError(messageCard, "Không thể kết nối đến máy chủ.");
       activeMessageCard = null;
       setButtonState(promptInput.value.trim().length > 0 ? "ready" : "idle");
+    } finally {
+      if (pendingSubmission === submission) pendingSubmission = null;
     }
   }
 
@@ -1233,6 +1198,9 @@ document.addEventListener("DOMContentLoaded", () => {
           activeMessageCard = null;
           const finalElapsed = startTime ? ((performance.now() - startTime) / 1000).toFixed(1) : null;
           updateThinkingTraces(messageCard, data, startTime, true, finalElapsed);
+          if ((data.document_ids || []).some(id => !state.documents.some(doc => doc.id === id))) {
+            await loadDocuments();
+          }
           renderFinalAnswer(messageCard, data, query, finalElapsed);
           await loadChatHistory();
           updateGeminiUsageBadge();
@@ -1655,206 +1623,6 @@ document.addEventListener("DOMContentLoaded", () => {
         </div>
       `;
     }
-  }
-
-  // ==================== 5.5 RENDER SCOUT RESULTS (AGENT 0 STANDALONE) ====================
-  function renderScoutResults(messageCard, data, query, finalElapsed = null) {
-    const container = messageCard.querySelector(".agent-response-container");
-    const acc = messageCard.querySelector(".thinking-accordion");
-    if (acc) {
-      acc.classList.remove("open");
-      try { updateThinkingTraces(messageCard, data, null, true, finalElapsed); } catch (e) {}
-      const titleDiv = acc.querySelector(".thinking-title");
-      if (titleDiv) {
-        const papersCount = data.total_discovered || (data.papers && data.papers.length) || 0;
-        const timeStr = finalElapsed ? `${finalElapsed}s` : "";
-        titleDiv.innerHTML = `
-          <span class="thinking-sparkle completed">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="20 6 9 17 4 12"></polyline>
-            </svg>
-          </span>
-          <span class="thinking-label-completed">Trinh sát hoàn tất</span>
-          ${timeStr ? `<span class="thinking-timer">${timeStr}</span>` : ""}
-          <span class="thinking-task-sep">•</span>
-          <span class="thinking-task-text">${papersCount} tài liệu khoa học được định vị</span>
-        `;
-      }
-    }
-
-    const papers = data.papers || [];
-
-    if (data.decision === "reject" || data.decision === "clarify" || data.decision === "no_relevant_papers" || papers.length === 0) {
-      const bannerTitle = data.decision === "clarify" 
-        ? "Cần làm rõ chủ đề nghiên cứu" 
-        : (data.decision === "reject" ? "Chủ đề nằm ngoài danh mục STEM của ArXiv" : "Không tìm thấy bài báo phù hợp");
-      const bannerMsg = data.message || "Hệ thống không tìm thấy tài liệu phù hợp trên ArXiv cho chủ đề này.";
-      
-      // Agent Autonomy & Provenance Banner
-      const loopsNum = state.maxReflectionLoops || 2;
-      const autonomyBannerHtml = `
-        <div class="agent-autonomy-banner">
-          <span class="autonomy-icon">🤖</span>
-          <span class="autonomy-text"><b>Hybrid Autonomous Agent</b> • Điều phối Đa Tác tử L4 • ${loopsNum} Vòng Tự Phản Biện • Đối Soát Trích Dẫn 100%</span>
-        </div>
-      `;
-
-      const card = document.createElement("div");
-      card.className = "agent-output-block scout-results-block";
-      card.innerHTML = `
-        <div class="scout-banner" style="border-left: 4px solid #0f172a;">
-          <div class="scout-banner-title">
-            <span><b>Agent 0 (Literature Scout):</b> ${escapeHtml(bannerTitle)}</span>
-          </div>
-          <p class="scout-banner-subtitle" style="margin-top: 8px; color: #334155; line-height: 1.6;">${escapeHtml(bannerMsg)}</p>
-          <div style="margin-top: 14px; padding-top: 12px; border-top: 1px dashed #cbd5e1; font-size: 13px; color: #64748b;">
-            Gợi ý: Bạn có thể tải trực tiếp tệp PDF vào <b>Kho Tài Liệu</b> bên trái để 5 Agent chuyên sâu phân tích, hoặc thử lại với các từ khóa công nghệ/khoa học kỹ thuật.
-          </div>
-        </div>
-      `;
-      container.innerHTML = "";
-      container.appendChild(card);
-      return;
-    }
-
-    let papersHtml = "";
-
-    papers.forEach((p, idx) => {
-      const title = p.title || "Tài liệu học thuật";
-      const year = p.year || 2024;
-      const authors = (p.authors && p.authors.length) ? p.authors.join(", ") : "Nhiều tác giả";
-      const arxivId = p.arxiv_id || "";
-      const docId = p.doc_id || p.id || "";
-      const abstract = (p.abstract || "").trim();
-      
-      const hasPdf = Boolean(p.has_pdf !== undefined ? p.has_pdf : (p.doc_type === "pdf" || (p.local_pdf_path && p.local_pdf_path.endsWith(".pdf"))));
-      const sourceUrl = p.source_url || (arxivId ? `https://arxiv.org/abs/${arxivId}` : "");
-      const sourceName = p.source || (arxivId ? "arXiv" : "Tạp chí Học thuật");
-
-      let badgeText = "";
-      let actionButtonsHtml = "";
-
-      if (hasPdf) {
-        badgeText = arxivId && !arxivId.startsWith("SCHOLAR-") && !arxivId.startsWith("ACAD-")
-          ? `arXiv: ${arxivId} • ${year}`
-          : `PDF Bản Gốc • ${year}`;
-
-        actionButtonsHtml = `
-          <button type="button" class="scout-action-btn ghost view-scout-doc-btn" data-doc-id="${escapeHtml(docId)}" title="Mở bản PDF song song bên cạnh (Chia đôi 2 tab: 1 tab chat, 1 tab bài báo)">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-              <line x1="14" y1="3" x2="14" y2="21"/>
-            </svg>
-            <span>Xem PDF Song Song</span>
-          </button>
-          <button class="scout-action-btn primary deep-dive-btn" data-doc-id="${escapeHtml(docId)}" data-title="${escapeHtml(title)}">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
-            <span>Đọc &amp; Phân tích chuyên sâu bài này</span>
-          </button>
-        `;
-      } else {
-        badgeText = `Tham Chiếu Gốc • ${escapeHtml(sourceName)} • ${year}`;
-
-        actionButtonsHtml = `
-          ${sourceUrl ? `
-            <a href="${escapeHtml(sourceUrl)}" target="_blank" rel="noopener noreferrer" class="scout-action-btn ghost scout-ext-link" title="Mở trang bài báo gốc tại ${escapeHtml(sourceName)} (Trang ngoài)">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
-                <polyline points="15 3 21 3 21 9"/>
-                <line x1="10" y1="14" x2="21" y2="3"/>
-              </svg>
-              <span>Mở Bài Báo Gốc ↗</span>
-            </a>
-          ` : ""}
-          <button type="button" class="scout-action-btn ghost view-scout-doc-btn" data-doc-id="${escapeHtml(docId)}" title="Xem hồ sơ trích dẫn và tóm tắt bài báo ở tab bên cạnh">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-              <line x1="14" y1="3" x2="14" y2="21"/>
-            </svg>
-            <span>Xem Tóm Tắt &amp; Chi Tiết</span>
-          </button>
-          <button class="scout-action-btn primary deep-dive-btn" data-doc-id="${escapeHtml(docId)}" data-title="${escapeHtml(title)}">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
-            <span>Phân tích bài này</span>
-          </button>
-        `;
-      }
-
-      papersHtml += `
-        <div class="scout-paper-card" data-doc-id="${escapeHtml(docId)}">
-          <div class="scout-card-header">
-            <span class="scout-card-badge">${escapeHtml(badgeText)}</span>
-            <span class="scout-card-source">${hasPdf ? "Đã tải PDF vào kho" : "Đã lưu tham chiếu"}</span>
-          </div>
-          <h4 class="scout-card-title">${escapeHtml(title)}</h4>
-          <div class="scout-card-authors">Tác giả: ${escapeHtml(authors)}</div>
-          <p class="scout-card-abstract">${escapeHtml(abstract.slice(0, 220))}...</p>
-          <div class="scout-card-actions">
-            ${actionButtonsHtml}
-          </div>
-        </div>
-      `;
-    });
-
-    const card = document.createElement("div");
-    card.className = "agent-output-block scout-results-block";
-    card.innerHTML = `
-      <div class="scout-banner">
-        <div class="scout-banner-title">
-          
-          <span><b>Agent 0 (Literature Scout):</b> Đã phát hiện <b>${papers.length}</b> bài báo quốc tế tiêu biểu về <i>"${escapeHtml(query)}"</i></span>
-        </div>
-        <p class="scout-banner-subtitle">Tất cả các bài báo đã được tự động tải về và đăng ký trong <b>Kho Tài Liệu</b> bên trái. Hãy chọn bài bạn muốn thẩm định chuyên sâu:</p>
-      </div>
-      <div class="scout-papers-grid">
-        ${papersHtml}
-      </div>
-    `;
-
-    container.innerHTML = "";
-    container.appendChild(card);
-
-    // Bind event for view document buttons (open side-by-side in sidecar)
-    card.querySelectorAll(".view-scout-doc-btn").forEach(btn => {
-      btn.addEventListener("click", async (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        const docId = btn.dataset.docId;
-        if (docId) {
-          await viewDocumentInSidecar(docId);
-        }
-      });
-    });
-
-    // Also allow clicking paper title to open side-by-side
-    card.querySelectorAll(".scout-card-title").forEach(titleEl => {
-      titleEl.style.cursor = "pointer";
-      titleEl.title = "Bấm để mở xem bài báo song song bên cạnh chat";
-      titleEl.addEventListener("click", async (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        const cardEl = titleEl.closest(".scout-paper-card");
-        const docId = cardEl ? cardEl.dataset.docId : null;
-        if (docId) {
-          await viewDocumentInSidecar(docId);
-        }
-      });
-    });
-
-    // Bind event for deep dive buttons
-    card.querySelectorAll(".deep-dive-btn").forEach(btn => {
-      btn.addEventListener("click", () => {
-        const docId = btn.dataset.docId;
-        const title = btn.dataset.title;
-        triggerDeepDiveOnPaper(docId, title);
-      });
-    });
-  }
-
-  async function triggerDeepDiveOnPaper(docId, paperTitle) {
-    toggleAutoScout(false);
-    selectDocument(docId);
-    await submitQuery(`Phân tích chuyên sâu và thẩm định học thuật bài báo: ${paperTitle}`);
   }
 
   // ==================== 6. RENDER FINAL ANSWER ====================
@@ -3108,6 +2876,10 @@ document.addEventListener("DOMContentLoaded", () => {
   async function updateGeminiUsageBadge() {
     try {
       const res = await fetch("/api/config/gemini-usage", { cache: "no-store" });
+      if (res.status === 401) {
+        window.location.reload();
+        return;
+      }
       if (!res.ok) return;
       const data = await res.json();
       const used = Number(data.used) || 0;
@@ -3133,9 +2905,6 @@ document.addEventListener("DOMContentLoaded", () => {
       console.warn("Failed to update Gemini usage:", e);
     }
   }
-
-  // Periodic poll every 15s to keep quota real-time
-  setInterval(updateGeminiUsageBadge, 15000);
 
   async function loadSystemConfig() {
     try {
@@ -3982,7 +3751,73 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  init();
+  const authDialog = document.getElementById("workspaceAuthDialog");
+  const authForm = document.getElementById("workspaceAuthForm");
+  const authMessage = document.getElementById("workspaceAuthMessage");
+  const passwordInput = document.getElementById("workspacePassword");
+  const logoutButton = document.getElementById("workspaceLogout");
+
+  authDialog.addEventListener("cancel", (event) => event.preventDefault());
+  authForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const submitButton = authForm.querySelector("button[type=submit]");
+    submitButton.disabled = true;
+    authMessage.textContent = "";
+    try {
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({password: passwordInput.value}),
+      });
+      if (response.ok) {
+        window.location.reload();
+        return;
+      }
+      authMessage.textContent = response.status === 401
+        ? "Mật khẩu không đúng."
+        : "Không thể đăng nhập. Hãy thử lại sau.";
+      passwordInput.focus();
+    } catch {
+      authMessage.textContent = "Không kết nối được tới ResearchDesk.";
+    } finally {
+      passwordInput.value = "";
+      submitButton.disabled = false;
+    }
+  });
+
+  logoutButton.addEventListener("click", async () => {
+    try {
+      const response = await fetch("/api/auth/logout", {method: "POST"});
+      if (!response.ok) throw new Error("Logout failed");
+      window.location.reload();
+    } catch {
+      window.alert("Không thể đăng xuất. Hãy thử lại.");
+    }
+  });
+
+  async function startWorkspace() {
+    try {
+      const response = await fetch("/api/auth/status", {cache: "no-store"});
+      if (!response.ok) throw new Error("Authentication status unavailable");
+      const auth = await response.json();
+      if (auth.authenticated) {
+        logoutButton.hidden = auth.dev_mode;
+        setInterval(updateGeminiUsageBadge, 15000);
+        await init();
+        return;
+      }
+      authForm.hidden = !auth.configured;
+      if (!auth.configured) {
+        authMessage.textContent = "Máy chủ chưa cấu hình mật khẩu workspace.";
+      }
+    } catch {
+      authForm.hidden = true;
+      authMessage.textContent = "Không kết nối được tới ResearchDesk.";
+    }
+    authDialog.showModal();
+  }
+
+  startWorkspace();
 });
 
 

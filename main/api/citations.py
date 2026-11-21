@@ -1,10 +1,34 @@
-"""Resolve audited citations to exact document routes in the local catalog."""
+"""Persist audited evidence and resolve document routes in the local catalog."""
 
+import hashlib
 from collections import defaultdict
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Any
 
-from core.citation_audit import citation_location, evidence_quote, get_citation_audit
+from core.citation_audit import citation_location, citation_source_units, evidence_quote, get_citation_audit
+from core.state import AgentState, compute_context_hash
+
+
+def file_sha256(path: Path) -> str | None:
+    try:
+        with path.open("rb") as file:
+            return hashlib.file_digest(file, "sha256").hexdigest()
+    except OSError:
+        return None
+
+
+def _document_aliases(documents: list[dict[str, Any]]) -> dict[str, set[str]]:
+    aliases = defaultdict(set)
+    for document in documents:
+        document_id = document["id"]
+        aliases[document_id].add(document_id)
+        for field in ("name", "path"):
+            raw = document.get(field)
+            if raw:
+                path = PurePosixPath(raw.replace("\\", "/"))
+                for alias in {raw, path.name, path.stem}:
+                    aliases[alias].add(document_id)
+    return aliases
 
 
 def citation_references(
@@ -14,19 +38,8 @@ def citation_references(
     if not references:
         return []
 
-    aliases = defaultdict(set)
-    catalog_ids = set()
-    for document in documents:
-        document_id = document["id"]
-        catalog_ids.add(document_id)
-        aliases[document_id].add(document_id)
-        for field in ("name", "path"):
-            raw = document.get(field)
-            if raw:
-                path = PurePosixPath(raw.replace("\\", "/"))
-                for alias in {raw, path.name, path.stem}:
-                    aliases[alias].add(document_id)
-
+    aliases = _document_aliases(documents)
+    catalog_ids = {document["id"] for document in documents}
     locations = {
         span["id"]: citation_location(span)
         for span in spans
@@ -51,16 +64,66 @@ def citation_references(
     return resolved
 
 
-def pin_citation_documents(
-    trace: list[dict[str, Any]], spans: list[dict[str, Any]], documents: list[dict[str, Any]]
+def pin_citation_provenance(
+    trace: list[dict[str, Any]], state: AgentState, documents: list[dict[str, Any]]
 ) -> None:
-    """Persist route IDs so a later upload with the same title cannot replace the source."""
+    """Freeze the Reader content and its run-scoped document association for audited spans."""
     audit = get_citation_audit(trace)
-    if audit.get("references"):
-        resolved = {ref["ref_id"]: ref["document_id"] for ref in citation_references(trace, spans, documents)}
-        audit["references"] = [
-            {**ref, "catalog_id": resolved.get(ref["ref_id"])} for ref in audit["references"]
-        ]
+    if not audit:
+        return
+    evidence_ids = {
+        eid for check in audit["claims"].values()
+        if check["status"] == "verified" for eid in check["evidence_ids"]
+    }
+    units = citation_source_units(state, evidence_ids)
+    aliases = _document_aliases(documents)
+    by_id = {document["id"]: document for document in documents}
+    by_path = {Path(document["path"]): document["id"] for document in documents}
+    file_versions: dict[str, str | None] = {}
+    provenance = {}
+    for evidence_id in sorted(evidence_ids):
+        entry = provenance[evidence_id] = {"status": "unresolved_source_unit"}
+        unit = units.get(evidence_id)
+        if unit is None:
+            continue
+        doc_id, page_no = citation_location(unit)
+        text = evidence_quote(unit)
+        digest = compute_context_hash(text, doc_id, page_no)
+        if unit.get("context_hash") not in (None, "", digest):
+            continue
+        entry["source_unit"] = {
+            "id": unit["id"], "text": text, "doc_id": doc_id, "page_no": page_no,
+            "context_hash": digest, "character_offset": unit.get("character_offset"),
+            "bbox": unit.get("bbox"),
+        }
+        path = unit.get("source_path")
+        if isinstance(path, str) and path:
+            source_id = by_path.get(Path(path))
+        else:
+            matches = aliases.get(doc_id, set())
+            if len(matches) > 1:
+                entry["status"] = "ambiguous_document"
+                continue
+            source_id = next(iter(matches), None)
+        if source_id is None:
+            entry["status"] = "unresolved_document"
+            continue
+        document = by_id[source_id]
+        if source_id not in file_versions:
+            file_versions[source_id] = file_sha256(Path(document["path"]))
+        current = file_versions[source_id]
+        if current is None:
+            entry["status"] = "source_unavailable"
+        elif current != document["sha256"]:
+            entry["status"] = "source_changed"
+        else:
+            entry["status"] = "linked"
+            entry["document"] = {key: document[key] for key in ("id", "name", "sha256")}
+    audit["evidence_provenance"] = provenance
+
+    for ref in audit.get("references") or []:
+        source = provenance.get(ref.get("evidence_id"), {}).get("document", {}).get("id")
+        ref["catalog_id"] = source if source and by_id[source]["catalogued"] else None
 
 
 def format_run_evidence(spans: list[Any], references: list[dict[str, Any]]) -> list[dict[str, Any]]:
