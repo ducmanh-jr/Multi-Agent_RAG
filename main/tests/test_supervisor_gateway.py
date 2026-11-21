@@ -83,38 +83,104 @@ def test_gateway_admin_auth_guard(client):
                 assert resp.json()["runtime_status"] == "running"
 
 
+def test_gateway_admin_auth_fails_closed_when_token_unset(client):
+    """Verify admin endpoints fail-closed (HTTP 500) if SUPERVISOR_ADMIN_TOKEN is missing or empty."""
+    with patch.object(gw, "ADMIN_TOKEN", None):
+        resp = client.get("/api/admin/status", headers={"Authorization": "Bearer any_token"})
+        assert resp.status_code == 500
+        assert "SUPERVISOR_ADMIN_TOKEN chưa được thiết lập" in resp.text
+
+
+def test_gateway_inference_client_auth_separated(client):
+    """Verify inference endpoints enforce INFERENCE_API_KEY separately from Admin Auth."""
+    gw.worker_manager.transition_state = "ready"
+    gw.worker_manager.active_worker = "gpu_finetune"
+
+    with patch.object(gw, "INFERENCE_API_KEY", "client_secret_xyz"):
+        with patch.object(gw, "ADMIN_TOKEN", "admin_secret_123"):
+            # 1. Missing key -> 401
+            resp = client.post("/api/router", json={"query": "test"})
+            assert resp.status_code == 401
+            assert "yêu cầu xác thực" in resp.text
+
+            # 2. Valid Client X-API-Key header -> Accepted through auth gate (hits worker lease/backend)
+            resp = client.post("/api/router", json={"query": "test"}, headers={"x-api-key": "client_secret_xyz"})
+            assert resp.status_code != 401
+
+            # 3. Valid Client Bearer token -> Accepted through auth gate
+            resp = client.post("/api/router", json={"query": "test"}, headers={"Authorization": "Bearer client_secret_xyz"})
+            assert resp.status_code != 401
+
+
+def test_gateway_rate_limiting_cloudflare_ip(client):
+    """Verify in-memory rate limiting detects Cloudflare CF-Connecting-IP and blocks on limit."""
+    gw.worker_manager.transition_state = "ready"
+    gw.worker_manager.active_worker = "gpu_finetune"
+
+    with patch.object(gw, "RATE_LIMIT_REQUESTS", 2):
+        with patch.object(gw, "RATE_LIMIT_WINDOW", 60.0):
+            gw._client_request_history.clear()
+            headers = {"cf-connecting-ip": "198.51.100.42"}
+
+            # Request 1 & 2 pass rate limit
+            resp1 = client.post("/api/router", json={"query": "1"}, headers=headers)
+            resp2 = client.post("/api/router", json={"query": "2"}, headers=headers)
+            assert resp1.status_code != 429
+            assert resp2.status_code != 429
+
+            # Request 3 is blocked by rate limit
+            resp3 = client.post("/api/router", json={"query": "3"}, headers=headers)
+            assert resp3.status_code == 429
+            assert "Too Many Requests" in resp3.text
+
+
 def test_gateway_switch_mode_async_accepted(client):
     """Verify POST /api/admin/switch_mode returns 202 Accepted for background transition."""
-    with patch.object(gw.worker_manager, "request_switch_mode", new_callable=AsyncMock) as mock_switch:
-        resp = client.post("/api/admin/switch_mode", json={"target_mode": "gpu_max"})
-        assert resp.status_code == 202
-        data = resp.json()
-        assert data["status"] == "accepted"
-        assert data["target_mode"] == "gpu_max"
-        assert data["transition_state"] == "switching"
+    with patch.object(gw, "ADMIN_TOKEN", "test_admin_token"):
+        with patch.object(gw.worker_manager, "request_switch_mode", new_callable=AsyncMock) as mock_switch:
+            resp = client.post(
+                "/api/admin/switch_mode",
+                json={"target_mode": "gpu_max"},
+                headers={"Authorization": "Bearer test_admin_token"}
+            )
+            assert resp.status_code == 202
+            data = resp.json()
+            assert data["status"] == "accepted"
+            assert data["target_mode"] == "gpu_max"
+            assert data["transition_state"] == "switching"
 
 
 def test_gateway_switch_mode_synchronous_wait(client):
     """Verify POST /api/admin/switch_mode with wait=True returns 200 OK after completion."""
-    with patch.object(gw.worker_manager, "request_switch_mode", new_callable=AsyncMock, return_value={
-        "status": "success",
-        "transition_id": "trans_123",
-        "selected_mode": "gpu_max",
-        "active_worker": "gpu_max",
-        "message": "Worker GPU_MAX đã trực tuyến và sẵn sàng phục vụ."
-    }):
-        resp = client.post("/api/admin/switch_mode", json={"target_mode": "gpu_max", "wait": True})
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["status"] == "success"
-        assert data["active_worker"] == "gpu_max"
+    with patch.object(gw, "ADMIN_TOKEN", "test_admin_token"):
+        with patch.object(gw.worker_manager, "request_switch_mode", new_callable=AsyncMock, return_value={
+            "status": "success",
+            "transition_id": "trans_123",
+            "selected_mode": "gpu_max",
+            "active_worker": "gpu_max",
+            "message": "Worker GPU_MAX đã trực tuyến và sẵn sàng phục vụ."
+        }):
+            resp = client.post(
+                "/api/admin/switch_mode",
+                json={"target_mode": "gpu_max", "wait": True},
+                headers={"Authorization": "Bearer test_admin_token"}
+            )
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["status"] == "success"
+            assert data["active_worker"] == "gpu_max"
 
 
 def test_gateway_switch_mode_rejects_invalid_mode(client):
     """Verify POST /api/admin/switch_mode rejects invalid mode names with HTTP 400."""
-    resp = client.post("/api/admin/switch_mode", json={"target_mode": "unsupported_mode"})
-    assert resp.status_code == 400
-    assert "Chế độ không hợp lệ" in resp.text
+    with patch.object(gw, "ADMIN_TOKEN", "test_admin_token"):
+        resp = client.post(
+            "/api/admin/switch_mode",
+            json={"target_mode": "unsupported_mode"},
+            headers={"Authorization": "Bearer test_admin_token"}
+        )
+        assert resp.status_code == 400
+        assert "Chế độ không hợp lệ" in resp.text
 
 
 def test_gateway_proxy_rejects_with_503_during_transition(client):

@@ -28,6 +28,7 @@ if hasattr(sys.stdout, "reconfigure"):
     except Exception:
         pass
 import time
+from collections import defaultdict
 from typing import Any, Optional
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
@@ -48,16 +49,63 @@ if not os.path.exists(PROJECT_DIR):
 worker_manager = WorkerManager(project_dir=PROJECT_DIR)
 _http_client = httpx.AsyncClient(timeout=180.0)
 
-# Optional Bearer Token Authentication for Admin Endpoints
+# Authentication and Security Configurations
 ADMIN_TOKEN = os.environ.get("SUPERVISOR_ADMIN_TOKEN") or os.environ.get("ADMIN_API_KEY")
+INFERENCE_API_KEY = os.environ.get("INFERENCE_API_KEY") or os.environ.get("CLIENT_API_KEY")
+
+# Rate Limiting Configuration (Per-IP sliding window, default: 60 req/min)
+RATE_LIMIT_REQUESTS = int(os.environ.get("RATE_LIMIT_REQUESTS", "60"))
+RATE_LIMIT_WINDOW = float(os.environ.get("RATE_LIMIT_WINDOW", "60.0"))
+_rate_limit_lock = asyncio.Lock()
+_client_request_history: dict[str, list[float]] = defaultdict(list)
+
+
+def get_client_ip(request: Request) -> str:
+    """
+    Extracts the true client IP, prioritizing Cloudflare CF-Connecting-IP,
+    then X-Forwarded-For, falling back to client.host.
+    """
+    cf_ip = request.headers.get("cf-connecting-ip")
+    if cf_ip and cf_ip.strip():
+        return cf_ip.strip()
+    x_forwarded_for = request.headers.get("x-forwarded-for")
+    if x_forwarded_for and x_forwarded_for.strip():
+        return x_forwarded_for.split(",")[0].strip()
+    return request.client.host if request.client else "127.0.0.1"
+
+
+async def check_inference_rate_limit(request: Request):
+    """
+    In-memory sliding window rate limiter per client IP.
+    Protects GPU against inference spam and denial of service.
+    """
+    if RATE_LIMIT_REQUESTS <= 0:
+        return
+    client_ip = get_client_ip(request)
+    now = time.time()
+    async with _rate_limit_lock:
+        timestamps = _client_request_history[client_ip]
+        cutoff = now - RATE_LIMIT_WINDOW
+        active_timestamps = [t for t in timestamps if t > cutoff]
+        if len(active_timestamps) >= RATE_LIMIT_REQUESTS:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Too Many Requests: Vượt quá giới hạn tần suất ({RATE_LIMIT_REQUESTS} requests/{int(RATE_LIMIT_WINDOW)}s). Vui lòng thử lại sau."
+            )
+        active_timestamps.append(now)
+        _client_request_history[client_ip] = active_timestamps
 
 
 def verify_admin_auth(request: Request):
     """
-    Guards admin endpoints with Bearer Token auth if SUPERVISOR_ADMIN_TOKEN or ADMIN_API_KEY is set.
+    Guards admin endpoints with Bearer Token auth.
+    Fail-closed: strictly requires SUPERVISOR_ADMIN_TOKEN to be configured and matched.
     """
     if not ADMIN_TOKEN:
-        return
+        raise HTTPException(
+            status_code=500,
+            detail="Lỗi cấu hình Gateway: SUPERVISOR_ADMIN_TOKEN chưa được thiết lập. Từ chối quyền truy cập quản trị (Fail-Closed)."
+        )
     auth_header = request.headers.get("authorization", "")
     if not auth_header.startswith("Bearer "):
         raise HTTPException(
@@ -70,6 +118,39 @@ def verify_admin_auth(request: Request):
             status_code=403,
             detail="Forbidden: Admin token không hợp lệ."
         )
+
+
+def verify_inference_auth(request: Request):
+    """
+    Separates Client Inference Auth from Admin Auth.
+    When INFERENCE_API_KEY is configured, clients must provide X-API-Key or Bearer token.
+    If INFERENCE_API_KEY is empty/unset, allows open inference (e.g. for local testbench).
+    Admin token is also accepted for authorized operations.
+    """
+    if not INFERENCE_API_KEY:
+        return
+
+    # Check X-API-Key header
+    api_key = request.headers.get("x-api-key", "").strip()
+    if api_key and (api_key == INFERENCE_API_KEY or (ADMIN_TOKEN and api_key == ADMIN_TOKEN)):
+        return
+
+    # Check Bearer authorization
+    auth_header = request.headers.get("authorization", "").strip()
+    if auth_header.startswith("Bearer "):
+        token = auth_header.split(" ", 1)[1].strip()
+        if token and (token == INFERENCE_API_KEY or (ADMIN_TOKEN and token == ADMIN_TOKEN)):
+            return
+
+    # Check query parameter ?api_key=...
+    q_key = request.query_params.get("api_key", "").strip()
+    if q_key and (q_key == INFERENCE_API_KEY or (ADMIN_TOKEN and q_key == ADMIN_TOKEN)):
+        return
+
+    raise HTTPException(
+        status_code=401,
+        detail="Unauthorized: Endpoint suy luận yêu cầu xác thực qua 'X-API-Key' hoặc 'Bearer <token>'."
+    )
 
 
 app = FastAPI(title="Kaggle Master Process Supervisor Gateway", version="2.2.0")
@@ -218,6 +299,10 @@ async def get_logs():
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
 async def proxy_all(request: Request, path: str):
+    # 0. Client Inference Authentication & Rate Limiting
+    verify_inference_auth(request)
+    await check_inference_rate_limit(request)
+
     # 1. State check: fail closed if actively transitioning
     if worker_manager.transition_state in ("draining", "stopping", "reclaiming_vram", "spawning"):
         return JSONResponse(
