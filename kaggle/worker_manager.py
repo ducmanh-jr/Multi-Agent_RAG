@@ -666,7 +666,7 @@ class WorkerManager:
                             if any(m.get("id") in valid_ids for m in model_entries):
                                 return True
                     else:
-                        # Validate Finetune server health + loaded models
+                        # Validate Finetune server health + profile-aware loaded models
                         resp = await client.get(health_url)
                         if resp.status_code == 200:
                             data = resp.json()
@@ -675,26 +675,47 @@ class WorkerManager:
                                 or data.get("ready") is True
                                 or data.get("worker_status") == "online"
                             )
+                            worker_profile = (
+                                os.environ.get("KAGGLE_WORKER_PROFILE")
+                                or data.get("worker_profile")
+                                or "gpu_finetune"
+                            ).strip().lower()
                             loaded_adapters = data.get("loaded_adapters", [])
-                            mandatory_adapters = ["router", "generator", "critic", "writer"]
-                            adapters_ok = all(ad in loaded_adapters for ad in mandatory_adapters)
                             active_models = data.get("active_models", [])
-                            models_ok = ("factcheck" in active_models) and ("qwen_cluster" in active_models)
                             mandatory_ready = data.get("mandatory_ready", False)
+
+                            if worker_profile == "hybrid_specialist":
+                                # In hybrid_specialist mode, Gemini handles Generator/Writer/Planner;
+                                # Kaggle GPU worker only requires local specialist models (NLI + optional embed/rerank).
+                                adapters_ok = True
+                                required_models = ["factcheck"]
+                                if os.environ.get("REQUIRE_EMBEDDING_READY", "false").strip().lower() == "true":
+                                    required_models.append("embedding")
+                                if os.environ.get("REQUIRE_RERANKER_READY", "false").strip().lower() == "true":
+                                    required_models.append("reranker")
+                                models_ok = all(m in active_models for m in required_models)
+                                probe_path = f"{url}/api/factcheck"
+                                probe_payload = {"claims": ["healthcheck"], "context": "healthcheck", "adapter": "factcheck"}
+                            else:
+                                mandatory_adapters = ["router", "generator", "critic", "writer"]
+                                adapters_ok = all(ad in loaded_adapters for ad in mandatory_adapters)
+                                models_ok = ("factcheck" in active_models) and ("qwen_cluster" in active_models)
+                                probe_path = f"{url}/api/router"
+                                probe_payload = {"query": "healthcheck", "adapter": "router"}
 
                             # P1-1: models_ok strictly included in readiness decision
                             if status_ok and models_ok and adapters_ok and (mandatory_ready or data.get("ready") is True):
                                 # Test live request to mandatory endpoint to verify execution capability
                                 try:
                                     test_resp = await client.post(
-                                        f"{url}/api/router",
-                                        json={"query": "healthcheck", "adapter": "router"},
+                                        probe_path,
+                                        json=probe_payload,
                                         timeout=4.0
                                     )
                                     if test_resp.status_code == 200:
                                         return True
                                 except Exception:
-                                    # If router ping times out or errors, continue polling
+                                    # If probe ping times out or errors, continue polling
                                     pass
                 except Exception:
                     pass

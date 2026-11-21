@@ -378,33 +378,48 @@ class GenerateRequest(BaseModel):
     temperature: float = 0.2
 
 
+def _get_worker_profile() -> str:
+    return (os.getenv("KAGGLE_WORKER_PROFILE", "gpu_finetune") or "gpu_finetune").strip().lower()
+
+
 @app.on_event("startup")
 def warmup_all_gpus():
-    print("\n" + "=" * 65)
-    print("🔥 [STARTUP] KHỞI ĐỘNG VÀ NẠP TOÀN BỘ CÁC GPU (DUAL TESLA T4)...")
-    print("=" * 65)
-    # GPU 0: Qwen 7B + 4 LoRA
-    print("[GPU 0] Nạp Base Qwen2.5-7B (4-bit NF4) + 4 LoRA Adapters...")
-    load_qwen_lora_cluster()
-    if torch.cuda.is_available() and torch.cuda.device_count() >= 1:
-        vram0 = torch.cuda.memory_allocated(0) / (1024 ** 3)
-        print(f"✅ GPU 0 SẴN SÀNG! VRAM chiếm dụng: {vram0:.2f} GB")
+    profile = _get_worker_profile()
+    load_qwen = profile != "hybrid_specialist" or os.getenv("HYBRID_LOAD_QWEN_FALLBACK", "false").strip().lower() == "true"
+    preload_retrieval = os.getenv("PRELOAD_RETRIEVAL_MODELS", "false").strip().lower() == "true"
 
-    # GPU 1: Fact-Checker NLI Head
+    print("\n" + "=" * 65)
+    print(f"🔥 [STARTUP] KHỞI ĐỘNG GPU WORKER (profile={profile})...")
+    print("=" * 65)
+    if load_qwen:
+        print("[GPU 0] Nạp Base Qwen2.5-7B (4-bit NF4) + 4 LoRA Adapters...")
+        load_qwen_lora_cluster()
+        if torch.cuda.is_available() and torch.cuda.device_count() >= 1:
+            vram0 = torch.cuda.memory_allocated(0) / (1024 ** 3)
+            print(f"✅ GPU 0 SẴN SÀNG! VRAM chiếm dụng: {vram0:.2f} GB")
+    else:
+        print("[GPU 0] Bỏ qua Qwen 7B warmup ở profile hybrid_specialist (Gemini đảm nhận LLM reasoning).")
+
+    # GPU 1: Fact-Checker NLI Head (always mandatory)
     print("\n[GPU 1] Nạp Agent 4 Fact-Checker NLI Head...")
     load_factcheck_model()
+    if preload_retrieval:
+        print("[GPU 1] Preload BGE-M3 Embedding & Cross-Encoder Reranker...")
+        load_embedding_model()
+        load_reranker_model()
     if torch.cuda.is_available() and torch.cuda.device_count() >= 2:
         vram1 = torch.cuda.memory_allocated(1) / (1024 ** 3)
         print(f"✅ GPU 1 SẴN SÀNG! VRAM chiếm dụng: {vram1:.2f} GB")
 
     print("\n" + "=" * 65)
-    print("🎉 TOÀN BỘ CỤM DUAL GPU ĐÃ ĐƯỢC KÍCH HOẠT VÀ NẠP SẴN SÀNG 100%!")
+    print(f"🎉 GPU WORKER (profile={profile}) ĐÃ SẴN SÀNG!")
     print("=" * 65 + "\n")
 
 
 @app.get("/")
 @app.get("/health")
 def healthcheck():
+    profile = _get_worker_profile()
     gpu_info = {}
     if torch.cuda.is_available():
         for i in range(torch.cuda.device_count()):
@@ -413,12 +428,37 @@ def healthcheck():
                 "vram_used_gb": round(torch.cuda.memory_allocated(i) / (1024 ** 3), 2),
                 "vram_total_gb": round(torch.cuda.get_device_properties(i).total_memory / (1024 ** 3), 2),
             }
+
+    active_models = list(_models.keys())
+    loaded_adapters = list(_loaded_adapters)
+    if profile == "hybrid_specialist":
+        mandatory_adapters: list[str] = []
+        mandatory_models = ["factcheck"]
+    else:
+        mandatory_adapters = ["router", "generator", "critic", "writer"]
+        mandatory_models = ["qwen_cluster", "factcheck"]
+
+    adapters_ok = all(ad in loaded_adapters for ad in mandatory_adapters)
+    models_ok = all(m in active_models for m in mandatory_models)
+    mandatory_ready = bool(adapters_ok and models_ok)
+
     return {
-        "status": "online",
+        "status": "online" if mandatory_ready else "degraded",
+        "ready": mandatory_ready,
+        "mandatory_ready": mandatory_ready,
+        "worker_profile": profile,
         "pipeline": "gpu_finetune_7_models",
         "gpus_available": torch.cuda.device_count() if torch.cuda.is_available() else 0,
-        "loaded_adapters": _loaded_adapters,
-        "active_models": list(_models.keys()),
+        "loaded_adapters": loaded_adapters,
+        "active_models": active_models,
+        "mandatory_adapters": mandatory_adapters,
+        "mandatory_models": mandatory_models,
+        "capabilities": {
+            "qwen_cluster": "qwen_cluster" in active_models,
+            "factcheck": "factcheck" in active_models,
+            "embedding": "embedding" in active_models,
+            "reranker": "reranker" in active_models,
+        },
         "gpus": gpu_info,
     }
 

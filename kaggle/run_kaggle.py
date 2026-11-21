@@ -14,6 +14,26 @@ import json
 import urllib.request
 import zipfile
 
+def load_kaggle_secret_into_env(secret_name: str, env_var: str = None) -> bool:
+    """
+    Safely loads a secret from Kaggle Secrets (Add-ons -> Secrets) into os.environ
+    without ever printing or logging the secret value.
+    Only invoked when running inside Kaggle; returns False cleanly elsewhere.
+    """
+    target_var = env_var or secret_name
+    if os.environ.get(target_var):
+        return True
+    try:
+        from kaggle_secrets import UserSecretsClient  # type: ignore[import-not-found]
+        val = UserSecretsClient().get_secret(secret_name)
+        if isinstance(val, str) and val.strip():
+            os.environ[target_var] = val.strip()
+            return True
+    except Exception:
+        return False
+    return False
+
+
 def format_bytes(size):
     for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
         if size < 1024.0:
@@ -343,12 +363,20 @@ def run():
     os.environ["INITIAL_MODE"] = "gpu_finetune"
     os.environ["PROJECT_DIR"] = repo_dir
 
-    # Automatically generate / configure secure admin token
+    # Load optional tokens from Kaggle Secrets (never printed/logged) and enforce public tunnel auth
+    load_kaggle_secret_into_env("SUPERVISOR_ADMIN_TOKEN")
+    load_kaggle_secret_into_env("SUPERVISOR_API_TOKEN")
+    if os.environ.get("WORKER_LOAD_GEMINI_SECRET", "false").strip().lower() == "true":
+        load_kaggle_secret_into_env("GEMINI_API_KEY")
+
     admin_token = os.environ.get("SUPERVISOR_ADMIN_TOKEN")
     if not admin_token:
         import secrets
         admin_token = secrets.token_hex(16)
         os.environ["SUPERVISOR_ADMIN_TOKEN"] = admin_token
+    if not os.environ.get("SUPERVISOR_API_TOKEN"):
+        os.environ["SUPERVISOR_API_TOKEN"] = admin_token
+    os.environ.setdefault("PUBLIC_TUNNEL", "true")
 
     print("    ⚙️  Đang khởi động Master Gateway trên cổng 8000...")
     supervisor_log = open(os.path.join(repo_dir, "kaggle", "supervisor.log"), "w", encoding="utf-8", errors="ignore")
