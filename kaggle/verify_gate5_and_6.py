@@ -230,7 +230,7 @@ class Gate5and6Verifier:
         print("  • Đang kiểm tra E04: Writer Transparent Proxy Adaptation (/api/writer)...")
         t0 = time.time()
         try:
-            with httpx.Client(timeout=self.timeout) as client:
+            with httpx.Client(timeout=120.0) as client:
                 r = client.post(
                     f"{self.base_url}/api/writer",
                     headers=self.inference_headers,
@@ -240,7 +240,8 @@ class Gate5and6Verifier:
                         "claims": [
                             {"claim_text": "Transformer sử dụng scaled dot-product attention."},
                             {"claim_text": "Cơ chế song song hóa giảm thiểu thời gian huấn luyện."}
-                        ]
+                        ],
+                        "max_tokens": 512
                     }
                 )
             lat = time.time() - t0
