@@ -252,20 +252,23 @@ class UnifiedLLMClient:
                 data = resp.json()
                 if isinstance(data, dict):
                     return data
+            elif resp.status_code >= 500 and resp.status_code != 501:
+                raise RuntimeError(f"Kaggle specialist /{clean_ep} error ({resp.status_code}): {resp.text[:250]}")
         except Exception as exc:
-            logger.info(f"[Kaggle Specialist] Dedicated endpoint /{clean_ep} fallback to /generate ({exc})")
             exc_str = str(exc).lower()
-            if any(k in exc_str for k in ["timeout", "timed out", "disconnected", "connection closed", "connection reset"]):
+            if any(k in exc_str for k in ["timeout", "timed out", "disconnected", "connection closed", "connection reset", "error (5"]):
                 raise exc
+            logger.info(f"[Kaggle Specialist] Dedicated endpoint /{clean_ep} fallback to /generate ({exc})")
 
-        # Fallback to /generate with canonical adapter name ('router', 'generator', 'critic')
+        # Fallback to /generate with canonical adapter name ('router', 'generator', 'critic', 'writer')
+        fallback_max_tokens = int(payload.get("max_tokens") or 768)
         raw_out = self._call_remote_kaggle(
             task="generate",
             payload={
                 "prompt": fallback_prompt or json.dumps(payload, ensure_ascii=False),
                 "system_instruction": fallback_system,
                 "temperature": 0.1,
-                "max_tokens": 1536,
+                "max_tokens": fallback_max_tokens,
                 "json_mode": True,
                 "adapter": canon_adapter,
             },

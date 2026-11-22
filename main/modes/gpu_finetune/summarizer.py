@@ -138,7 +138,7 @@ class GPUFinetuneSummarizerAgent(BaseAgent):
                 res["reasoning_trace"] = [trace]
                 return res
 
-        context_str, _, context_coverage = pack_context_with_coverage(source_units, max_tokens=1500)
+        context_str, _, context_coverage = pack_context_with_coverage(source_units, max_tokens=1150)
 
         current_answer = ""
         current_claims: list[Any] = []
@@ -148,6 +148,7 @@ class GPUFinetuneSummarizerAgent(BaseAgent):
         critic_action = "approve"
         critique_text = ""
         critic_out = None
+        is_vi_query = bool(re.search(r"[à-ỹÀ-Ỹ]", clean_q))
 
         # Explicit Vietnamese Academic Language Directive
         vn_lang_directive = (
@@ -159,10 +160,10 @@ class GPUFinetuneSummarizerAgent(BaseAgent):
         while internal_attempts <= self.max_internal_retry:
             internal_attempts += 1
 
-            # 1. Generator Pass: Call Remote fine-tuned Generator QLoRA
+            # 1. Generator Pass: Call Remote fine-tuned Generator LoRA
             gen_prompt = (
-                f"User Question: {clean_q}\n\n"
                 f"Context:\n{context_str}\n\n"
+                f"User Question: {clean_q}\n"
                 f"{vn_lang_directive}"
             )
             if last_critic_feedback:
@@ -170,18 +171,28 @@ class GPUFinetuneSummarizerAgent(BaseAgent):
 
             generator_failed = False
             try:
-                remote_query = clean_q
-                if re.search(r"[à-ỹÀ-Ỹ]", clean_q):
-                    remote_query = f"{clean_q} (Yêu cầu: Câu trả lời 'answer' phải được viết hoàn toàn bằng tiếng Việt học thuật chuẩn mực dù tài liệu là tiếng Anh)"
-
                 gen_dict = llm_client.call_kaggle_specialist(
                     endpoint="api/summarize/generator",
-                    payload={"query": remote_query, "context": context_str, "feedback": last_critic_feedback, "adapter": "generator"},
+                    payload={
+                        "query": clean_q,
+                        "context": context_str,
+                        "feedback": last_critic_feedback,
+                        "adapter": "generator",
+                        "language": "vi" if is_vi_query else "en",
+                        "max_tokens": 600,
+                    },
                     fallback_prompt=gen_prompt,
                     fallback_system=TRAINING_LAB_GENERATOR_SYSTEM_PROMPT,
                     adapter="generator",
                     timeout=float(self.settings.REMOTE_TIMEOUT_SECONDS or 90.0),
                 )
+                if isinstance(gen_dict, dict) and isinstance(gen_dict.get("usage"), dict):
+                    u = gen_dict["usage"]
+                    self.logger.info(
+                        f"[GPU Finetune Generator] engine={u.get('engine')} "
+                        f"tokens={u.get('completion_tokens')} latency={u.get('latency_sec')}s "
+                        f"speed={u.get('tok_per_sec')} tok/s"
+                    )
                 gen_out = SummarizerGeneratorOutput.from_dict(gen_dict, default_query=clean_q)
                 current_answer = gen_out.answer
                 current_claims = gen_out.claims
@@ -227,13 +238,27 @@ class GPUFinetuneSummarizerAgent(BaseAgent):
                     critic_claims = [c.get("text") or c.get("claim_text") or str(c) if isinstance(c, dict) else str(c) for c in current_claims]
                     critic_dict = llm_client.call_kaggle_specialist(
                         endpoint="api/summarize/critic",
-                        payload={"query": clean_q, "answer": current_answer, "context": context_str, "claims": critic_claims, "adapter": "critic"},
-                        fallback_prompt=f"Question: {clean_q}\nContext:\n{context_str}\nAnswer:\n{current_answer}\nClaims: {critic_claims}",
+                        payload={
+                            "query": clean_q,
+                            "answer": current_answer,
+                            "context": context_str,
+                            "claims": critic_claims,
+                            "adapter": "critic",
+                            "max_tokens": 256,
+                        },
+                        fallback_prompt=f"Context:\n{context_str}\n\nQuestion: {clean_q}\nAnswer:\n{current_answer}\nClaims: {critic_claims}",
                         fallback_system=TRAINING_LAB_CRITIC_SYSTEM_PROMPT,
                         adapter="critic",
                         timeout=float(self.settings.REMOTE_TIMEOUT_SECONDS or 90.0),
                     )
                     if isinstance(critic_dict, dict):
+                        if isinstance(critic_dict.get("usage"), dict):
+                            cu = critic_dict["usage"]
+                            self.logger.info(
+                                f"[GPU Finetune Critic] engine={cu.get('engine')} "
+                                f"tokens={cu.get('completion_tokens')} latency={cu.get('latency_sec')}s "
+                                f"speed={cu.get('tok_per_sec')} tok/s"
+                            )
                         critic_dict = _robust_repair_critic_dict(critic_dict)
                 except Exception as exc:
                     critic_exc = exc
@@ -266,12 +291,13 @@ class GPUFinetuneSummarizerAgent(BaseAgent):
                 critic_action = critic_res["critic_action"]
                 critique_text = critic_res["critic_feedback"].get("critique_rationale", "")
 
-                if critic_action == "approve":
-                    self.logger.info(f"[GPU Finetune Critic] PASS: Answer accepted on attempt {internal_attempts}")
+                critic_severity = str((critic_dict or {}).get("severity") or "").lower()
+                if critic_action == "approve" or critic_severity in ("none", "minor"):
+                    self.logger.info(f"[GPU Finetune Critic] PASS (action={critic_action}, severity={critic_severity or 'none'}) on attempt {internal_attempts}")
                     break
                 elif critic_action in ("rewrite", "request_more_context") and internal_attempts <= self.max_internal_retry:
                     last_critic_feedback = f"Critique: {critique_text}. Issues: {getattr(critic_out, 'issues_found', [])}"
-                    self.logger.info(f"[GPU Finetune Critic] REWRITE requested ({critique_text}) -> Looping pass {internal_attempts + 1}")
+                    self.logger.info(f"[GPU Finetune Critic] REWRITE requested (severity={critic_severity or 'major'}: {critique_text}) -> Looping pass {internal_attempts + 1}")
                     continue
                 else:
                     break

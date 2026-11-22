@@ -156,7 +156,7 @@
         "size_bytes": 161533560,
         "sha256": "2f7c765d4e5d84c2e2a0f6362ba3ee22000e2b767a9bc104a0d149daee25e15c"
       },
-      "description": "Agent 5 Writer: Publication-grade report generation DoRA+rsLoRA adapter"
+      "description": "Agent 5 Writer: Publication-grade report generation LoRA+rsLoRA adapter"
     },
     {
       "id": "06_embedding_bge_m3",

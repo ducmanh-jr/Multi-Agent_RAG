@@ -20,7 +20,7 @@ from utils.llm_client import llm_client
 WRITER_TRAINING_SYSTEM_PROMPT = (
     "Bạn là một Chuyên gia Viết Báo cáo Nghiên cứu Khoa học và Học thuật Xuất sắc. "
     "Nhiệm vụ của bạn là tổng hợp các phát hiện, mệnh đề khoa học đã kiểm chứng và ngữ cảnh thành một Báo cáo Khoa học hoàn chỉnh, chuyên sâu, học thuật. "
-    "QUY TẮC BẮT BUỘC VỀ NGÔN NGỮ: Toàn bộ báo cáo (từ tiêu đề, các đề mục, nội dung phân tích, cho đến phần kết luận) BẮT BUỘC phải được viết hoàn toàn bằng TIẾNG VIỆT học thuật chuẩn mực, ngay cả khi tài liệu nguồn là tiếng Anh. "
+    "Hãy trình bày toàn bộ báo cáo (từ tiêu đề, các đề mục, nội dung phân tích, cho đến phần kết luận) bằng TIẾNG VIỆT học thuật chuẩn mực, ngay cả khi tài liệu nguồn là tiếng Anh. "
     "Giữ nguyên các thuật ngữ kỹ thuật quốc tế trong ngoặc đơn nếu cần (ví dụ: Multi-Head Attention, Scaled Dot-Product, Positional Encoding, Self-Attention)."
 )
 
@@ -121,24 +121,36 @@ class GPUFinetuneWriterAgent(BaseAgent):
         if self.settings.REMOTE_INFERENCE_URL:
             try:
                 v_claims_text = "\n".join([f"- {c.get('claim_text') or c.get('text') or str(c)}" for c in verified_claims])
+                is_vi_query = bool(re.search(r"[à-ỹÀ-Ỹ]", query))
                 prompt = (
                     f"# Đề tài / Câu hỏi nghiên cứu: {query}\n\n"
                     f"## Tóm tắt Tổng quan (Executive Summary):\n{answer}\n\n"
                     f"## Các Mệnh đề Khoa học Đã Thẩm định (Verified Scientific Claims):\n{v_claims_text}\n\n"
-                    f"YÊU CẦU BẮT BUỘC: Hãy soạn thảo Báo cáo Nghiên cứu Khoa học hoàn chỉnh (Academic Research Paper) bằng TIẾNG VIỆT chuyên sâu, bám sát các sự thật khoa học đã được kiểm chứng ở trên, chia cấu trúc rõ ràng với các đề mục chuẩn học thuật (Tổng quan, Kiến trúc chi tiết, Phân tích thực nghiệm, Kết luận), có gắn trích dẫn chính xác [1], [2]..."
+                    f"Hãy soạn thảo Báo cáo Nghiên cứu Khoa học hoàn chỉnh bằng TIẾNG VIỆT học thuật, súc tích, bám sát các sự thật đã được kiểm chứng ở trên, chia cấu trúc rõ ràng và gắn trích dẫn chính xác [1], [2]."
                 )
-                remote_query = query
-                if re.search(r"[à-ỹÀ-Ỹ]", query):
-                    remote_query = f"{query} (Yêu cầu bắt buộc: Báo cáo đầu ra BẮT BUỘC phải được viết hoàn toàn bằng TIẾNG VIỆT học thuật chuẩn mực dù tài liệu ngữ cảnh là tiếng Anh)"
 
                 res = llm_client.call_kaggle_specialist(
                     endpoint="api/writer",
-                    payload={"query": remote_query, "answer": answer, "claims": verified_claims, "adapter": "writer"},
+                    payload={
+                        "query": query,
+                        "answer": answer,
+                        "claims": verified_claims,
+                        "adapter": "writer",
+                        "language": "vi" if is_vi_query else "en",
+                        "max_tokens": 1100,
+                    },
                     fallback_prompt=prompt,
                     fallback_system=WRITER_TRAINING_SYSTEM_PROMPT,
                     adapter="writer",
                     timeout=max(75.0, float(self.settings.REMOTE_TIMEOUT_SECONDS or 90.0)),
                 )
+                if isinstance(res, dict) and isinstance(res.get("usage"), dict):
+                    wu = res["usage"]
+                    self.logger.info(
+                        f"[GPU Finetune Writer] engine={wu.get('engine')} "
+                        f"tokens={wu.get('completion_tokens')} latency={wu.get('latency_sec')}s "
+                        f"speed={wu.get('tok_per_sec')} tok/s"
+                    )
                 if isinstance(res, dict) and res.get("report"):
                     rep = res["report"]
                     # If query is in Vietnamese, ensure output report contains substantial Vietnamese

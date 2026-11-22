@@ -1,41 +1,87 @@
 """
 Kaggle Dual Tesla T4 Inference Worker Server for 'gpu_finetune' SOTA Mode.
-Hosts all 7 fine-tuned models across 2x GPU T4 (32GB VRAM):
+Hosts all fine-tuned models across 2x GPU T4 (32GB VRAM) with Dual-Engine support:
 
-GPU 0 (16GB VRAM):
-  - Qwen2.5-7B-Instruct Base (4-bit NF4 ~4.8GB VRAM)
-  - PEFT Multi-LoRA Serving:
-    * 'router'    (01_agent1_router) -> /api/router
-    * 'generator' (03_agent3_summarizer/generator_qlora) -> /api/summarize/generator
-    * 'critic'    (03_agent3_summarizer/critic_qlora) -> /api/summarize/critic
-    * 'writer'    (05_agent5_writer DoRA+rsLoRA) -> /api/writer
-    * fallback /generate
+1. Primary Engine ('vllm', default when vLLM + Dual-T4 available):
+   - Runs vLLM OpenAI server on 127.0.0.1:8101 with Qwen2.5-7B-Instruct (FP16, TP=2)
+   - Multi-LoRA serving ('router', 'generator', 'critic', 'writer') with PagedAttention,
+     CUDA Graphs, Prefix Caching, and guided_json structured output.
+   - BGE-Reranker-v2-m3 NLI Head hosted on GPU 1 alongside TP shard.
 
-GPU 1 (16GB VRAM):
-  - 04_agent4_fact_checker (BGE-Reranker-v2-m3 NLI Head, Macro F1=1.0) -> /api/factcheck
-  - 02_agent2_reader       (LayoutLMv3 Base 11-class Document Layout)  -> /api/reader/layout
-  - 06_embedding_bge_m3    (BGE-M3 MoAI LoRA)                          -> /api/embed
-  - 07_reranker_bge_large  (BGE-Reranker-Large CoREB LoRA)             -> /api/rerank
+2. Fallback Engine ('hf', automatic if vLLM unavailable or FINETUNE_ENGINE=hf):
+   - Dual-GPU NF4 4-bit split: GPU 0 ('router', 'generator') + GPU 1 ('critic', 'writer', 'factcheck')
+     with per-GPU locks, SDPA attention, and KV caching.
 """
 
 from __future__ import annotations
 
+import atexit
+import importlib.util
 import json
 import os
 import re
+import signal
+import subprocess
+import sys
+import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from typing import Any, Optional
+
+import httpx
 import torch
+from fastapi import FastAPI, HTTPException
+from fastapi.concurrency import run_in_threadpool
+from pydantic import BaseModel
 
 app = FastAPI(title="Kaggle Dual-T4 GPU Finetune Worker (7-Model SOTA Pipeline)")
 
-# Global model holders
+# Global state
 _models: dict[str, Any] = {}
 _tokenizers: dict[str, Any] = {}
 _loaded_adapters: list[str] = []
+_adapter_paths: dict[str, str] = {}
+_adapter_gpu_map: dict[str, int] = {}
+_gpu_locks: dict[int, threading.Lock] = {0: threading.Lock(), 1: threading.Lock()}
+
+_active_engine: str = "hf"  # "vllm" or "hf"
+_vllm_proc: Optional[subprocess.Popen] = None
+_vllm_port: int = int(os.environ.get("VLLM_FINETUNE_PORT", "8101"))
+_vllm_base_url: str = f"http://127.0.0.1:{_vllm_port}"
+_async_http: Optional[httpx.AsyncClient] = None
+
+ROUTER_JSON_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "intent": {"type": "string"},
+        "sub_queries": {"type": "array", "items": {"type": "string"}},
+        "alpha": {"type": "number"},
+        "top_k": {"type": "integer"},
+        "reasoning": {"type": "string"},
+    },
+    "required": ["intent", "sub_queries", "alpha", "top_k"],
+}
+
+GENERATOR_JSON_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "answer": {"type": "string"},
+        "claims": {"type": "array", "items": {"type": "string"}},
+        "evidence_spans": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["answer", "claims", "evidence_spans"],
+}
+
+CRITIC_JSON_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "critique": {"type": "string"},
+        "action": {"type": "string", "enum": ["accept", "rewrite", "request_more_context"]},
+        "severity": {"type": "string", "enum": ["none", "minor", "major"]},
+        "issues_found": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["critique", "action", "severity", "issues_found"],
+}
 
 
 def find_weight_path(sub_path: str) -> Optional[str]:
@@ -70,121 +116,369 @@ def find_weight_path(sub_path: str) -> Optional[str]:
     return None
 
 
-def get_bnb_config():
-    """Builds 4-bit NF4 BitsAndBytes configuration."""
+def _discover_adapter_paths() -> dict[str, str]:
+    specs = {
+        "generator": "03_agent3_summarizer/generator_qlora",
+        "router": "01_agent1_router",
+        "critic": "03_agent3_summarizer/critic_qlora",
+        "writer": "05_agent5_writer",
+    }
+    found: dict[str, str] = {}
+    for name, sub in specs.items():
+        path = find_weight_path(sub)
+        if path and os.path.exists(path):
+            found[name] = path
+        else:
+            print(f"[Worker WARNING] Checkpoint for adapter '{name}' not found at '{sub}'.")
+    return found
+
+
+def _stop_vllm_subprocess() -> None:
+    """Cleanly terminate the internal vLLM subprocess group if running."""
+    global _vllm_proc
+    if _vllm_proc is None:
+        return
     try:
-        from transformers import BitsAndBytesConfig
-        return BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_use_double_quant=True,
-            bnb_4bit_compute_dtype=torch.float16,
-        )
+        pgid = os.getpgid(_vllm_proc.pid) if hasattr(os, "getpgid") else None
+        if pgid and hasattr(os, "killpg"):
+            os.killpg(pgid, signal.SIGTERM)
+        else:
+            _vllm_proc.terminate()
+        _vllm_proc.wait(timeout=10)
     except Exception:
-        return None
+        try:
+            pgid = os.getpgid(_vllm_proc.pid) if hasattr(os, "getpgid") else None
+            if pgid and hasattr(os, "killpg"):
+                os.killpg(pgid, signal.SIGKILL)
+            else:
+                _vllm_proc.kill()
+        except Exception:
+            pass
+    finally:
+        _vllm_proc = None
+
+
+atexit.register(_stop_vllm_subprocess)
 
 
 # =====================================================================
-# 1. GPU 0: Qwen2.5-7B with Multi-LoRA (Router, Generator, Critic, Writer)
+# Engine A: vLLM Multi-LoRA Server (FP16 TP=2 across Dual Tesla T4)
 # =====================================================================
 
-def load_qwen_lora_cluster():
-    global _loaded_adapters
-    if "qwen_cluster" in _models:
-        return _models["qwen_cluster"], _tokenizers["qwen_cluster"]
+def _start_vllm_engine(adapter_paths: dict[str, str]) -> bool:
+    """Start vLLM OpenAI-compatible server with Multi-LoRA on Dual T4. Returns True if ready."""
+    global _vllm_proc, _loaded_adapters, _active_engine
+
+    if importlib.util.find_spec("vllm") is None:
+        print("[Worker] 'vllm' package not found. Skipping vLLM engine.")
+        return False
+
+    required = ["router", "generator", "critic", "writer"]
+    if not all(k in adapter_paths for k in required):
+        print(f"[Worker] Missing adapters for vLLM Multi-LoRA: {[k for k in required if k not in adapter_paths]}")
+        return False
+
+    gpu_count = torch.cuda.device_count() if torch.cuda.is_available() else 0
+    if gpu_count < 1:
+        return False
 
     model_id = os.getenv("BASE_QWEN_MODEL_ID", "Qwen/Qwen2.5-7B-Instruct")
-    print(f"[Worker] Loading Base Model: {model_id} on cuda:0 (NF4 4-bit)...")
+    tp_size = 2 if gpu_count >= 2 else 1
+    gpu_util = os.environ.get("VLLM_FINETUNE_GPU_UTIL", "0.78" if tp_size == 2 else "0.85")
+    lora_args = [f"{name}={path}" for name, path in adapter_paths.items()]
 
-    if not torch.cuda.is_available():
-        print("[Worker WARNING] CUDA not available. Running mock.")
-        return None, None
+    cmd = [
+        sys.executable, "-m", "vllm.entrypoints.openai.api_server",
+        "--model", model_id,
+        "--dtype", "half",
+        "--tensor-parallel-size", str(tp_size),
+        "--gpu-memory-utilization", str(gpu_util),
+        "--max-model-len", os.environ.get("VLLM_MAX_MODEL_LEN", "4096"),
+        "--enable-lora",
+        "--max-lora-rank", "64",
+        "--max-loras", "4",
+        "--enable-prefix-caching",
+        "--disable-log-requests",
+        "--host", "127.0.0.1",
+        "--port", str(_vllm_port),
+        "--lora-modules", *lora_args,
+    ]
+    if os.environ.get("VLLM_ENFORCE_EAGER", "0") == "1":
+        cmd.append("--enforce-eager")
 
+    print(f"[Worker] Starting vLLM Multi-LoRA Engine (TP={tp_size}, FP16, gpu_util={gpu_util}) on :{_vllm_port}...")
+    log_path = Path("/kaggle/working/vllm_finetune.log") if Path("/kaggle/working").exists() else Path("vllm_finetune.log")
+    log_file = open(log_path, "w", encoding="utf-8")
+
+    popen_kwargs: dict[str, Any] = {
+        "stdout": log_file,
+        "stderr": subprocess.STDOUT,
+    }
+    if os.name != "nt":
+        popen_kwargs["start_new_session"] = True
+
+    _vllm_proc = subprocess.Popen(cmd, **popen_kwargs)
+
+    boot_timeout = int(os.environ.get("VLLM_BOOT_TIMEOUT", "360"))
+    deadline = time.time() + boot_timeout
+    with httpx.Client(timeout=5.0) as client:
+        while time.time() < deadline:
+            if _vllm_proc.poll() is not None:
+                print(f"[Worker ERROR] vLLM process exited early with code {_vllm_proc.returncode}. Check {log_path}")
+                _stop_vllm_subprocess()
+                return False
+            try:
+                resp = client.get(f"{_vllm_base_url}/v1/models")
+                if resp.status_code == 200:
+                    data = resp.json()
+                    ids = {m.get("id") for m in data.get("data", []) if isinstance(m, dict)}
+                    if all(ad in ids for ad in required):
+                        _loaded_adapters = list(required)
+                        _models["qwen_cluster"] = f"vllm:{model_id}:tp{tp_size}"
+                        _active_engine = "vllm"
+                        print(f"[Worker] vLLM Multi-LoRA Engine ONLINE with adapters: {_loaded_adapters}")
+                        return True
+            except Exception:
+                pass
+            time.sleep(2.0)
+
+    print(f"[Worker ERROR] vLLM timed out after {boot_timeout}s. Falling back to HF Dual-GPU engine.")
+    _stop_vllm_subprocess()
+    return False
+
+
+async def _call_vllm_chat(
+    prompt: str,
+    adapter: str,
+    max_tokens: int,
+    temperature: float,
+    json_schema: Optional[dict[str, Any]] = None,
+    system_prompt: Optional[str] = None,
+) -> tuple[str, dict[str, Any]]:
+    """Call internal vLLM OpenAI chat completions endpoint with optional guided_json."""
+    global _async_http
+    if _async_http is None:
+        _async_http = httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0))
+
+    messages: list[dict[str, str]] = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
+
+    body: dict[str, Any] = {
+        "model": adapter,
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+    }
+    if json_schema is not None:
+        body["extra_body"] = {"guided_json": json_schema}
+
+    t0 = time.time()
+    resp = await _async_http.post(f"{_vllm_base_url}/v1/chat/completions", json=body)
+
+    # Compatibility fallback if installed vLLM version rejects extra_body/guided_json
+    if resp.status_code == 400 and "extra_body" in body:
+        body.pop("extra_body", None)
+        body["response_format"] = {"type": "json_object"}
+        resp = await _async_http.post(f"{_vllm_base_url}/v1/chat/completions", json=body)
+        if resp.status_code == 400:
+            body.pop("response_format", None)
+            resp = await _async_http.post(f"{_vllm_base_url}/v1/chat/completions", json=body)
+
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"vLLM error ({resp.status_code}): {resp.text[:300]}")
+
+    data = resp.json()
+    text = data["choices"][0]["message"]["content"].strip()
+    usage = data.get("usage", {})
+    elapsed = max(0.01, time.time() - t0)
+    comp_toks = int(usage.get("completion_tokens") or 0)
+    usage_meta = {
+        "engine": "vllm",
+        "adapter": adapter,
+        "prompt_tokens": int(usage.get("prompt_tokens") or 0),
+        "completion_tokens": comp_toks,
+        "latency_sec": round(elapsed, 2),
+        "tok_per_sec": round(comp_toks / elapsed, 1) if comp_toks else 0.0,
+    }
+    return text, usage_meta
+
+
+# =====================================================================
+# Engine B: Optimized Dual-GPU HuggingFace + PEFT Fallback
+# =====================================================================
+
+def _get_bnb_config():
+    from transformers import BitsAndBytesConfig
+    return BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_use_double_quant=True,
+        bnb_4bit_compute_dtype=torch.float16,
+    )
+
+
+def _load_hf_instance(gpu_idx: int, adapters: dict[str, str], holder_key: str) -> None:
+    """Load one Qwen2.5-7B 4-bit instance on the specified GPU and attach assigned adapters."""
+    from peft import PeftModel
     from transformers import AutoModelForCausalLM, AutoTokenizer
-    bnb_config = get_bnb_config()
+
+    model_id = os.getenv("BASE_QWEN_MODEL_ID", "Qwen/Qwen2.5-7B-Instruct")
+    bnb_config = _get_bnb_config()
     tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    model = AutoModelForCausalLM.from_pretrained(
-        model_id,
-        quantization_config=bnb_config,
-        device_map={"": 0} if torch.cuda.device_count() >= 1 else "auto",
-        torch_dtype=torch.float16,
-        trust_remote_code=True,
-    )
-
-    # Attach PEFT LoRA Adapters with STRICT 1:1 mapping (P0-B)
+    load_kwargs: dict[str, Any] = {
+        "quantization_config": bnb_config,
+        "device_map": {"": gpu_idx} if torch.cuda.is_available() else "auto",
+        "torch_dtype": torch.float16,
+        "trust_remote_code": True,
+    }
     try:
-        from peft import PeftModel
+        model = AutoModelForCausalLM.from_pretrained(model_id, attn_implementation="sdpa", **load_kwargs)
+    except Exception:
+        model = AutoModelForCausalLM.from_pretrained(model_id, **load_kwargs)
 
-        # Authoritative adapter paths strictly defined by manifest
-        adapter_specs = [
-            ("generator", find_weight_path("03_agent3_summarizer/generator_qlora")),
-            ("router", find_weight_path("01_agent1_router")),
-            ("critic", find_weight_path("03_agent3_summarizer/critic_qlora")),
-            ("writer", find_weight_path("05_agent5_writer")),
-        ]
+    first = True
+    for name, path in adapters.items():
+        if first:
+            model = PeftModel.from_pretrained(model, path, adapter_name=name)
+            first = False
+        else:
+            model.load_adapter(path, adapter_name=name)
+        if name not in _loaded_adapters:
+            _loaded_adapters.append(name)
+        _adapter_gpu_map[name] = gpu_idx
+        print(f"[Worker HF] GPU {gpu_idx}: attached adapter '{name}' from {path}")
 
-        first_attached = False
-        for name, path in adapter_specs:
-            if path and os.path.exists(path):
-                if not first_attached:
-                    # Wrap base model with its TRUE adapter name - NEVER alias another adapter!
-                    model = PeftModel.from_pretrained(model, path, adapter_name=name)
+    model.eval()
+    _models[holder_key] = model
+    _tokenizers[holder_key] = tokenizer
+
+
+def load_hf_dual_gpu_cluster() -> None:
+    """Split adapters across GPU 0 (router, generator) and GPU 1 (critic, writer) when 2 GPUs exist."""
+    global _active_engine
+    if "qwen_cluster" in _models:
+        return
+    if not torch.cuda.is_available():
+        print("[Worker WARNING] CUDA not available.")
+        return
+
+    gpu_count = torch.cuda.device_count()
+    paths = _adapter_paths or _discover_adapter_paths()
+
+    if gpu_count >= 2:
+        gpu0_adapters = {k: paths[k] for k in ("generator", "router") if k in paths}
+        gpu1_adapters = {k: paths[k] for k in ("critic", "writer") if k in paths}
+        if gpu0_adapters:
+            _load_hf_instance(0, gpu0_adapters, "qwen_cluster")
+        if gpu1_adapters:
+            try:
+                _load_hf_instance(1, gpu1_adapters, "qwen_cluster_gpu1")
+            except Exception as exc:
+                print(f"[Worker HF] GPU 1 secondary load failed ({exc}), attaching all adapters to GPU 0.")
+                model0 = _models["qwen_cluster"]
+                for name, path in gpu1_adapters.items():
+                    model0.load_adapter(path, adapter_name=name)
                     _loaded_adapters.append(name)
-                    first_attached = True
-                    print(f"[Worker] Attached primary adapter '{name}' from {path}")
-                else:
-                    model.load_adapter(path, adapter_name=name)
-                    _loaded_adapters.append(name)
-                    print(f"[Worker] Attached additional adapter '{name}' from {path}")
-            else:
-                print(f"[Worker WARNING] Checkpoint for adapter '{name}' not found at expected path.")
+                    _adapter_gpu_map[name] = 0
+    else:
+        _load_hf_instance(0, paths, "qwen_cluster")
 
-    except Exception as e:
-        print(f"[Worker WARNING] Failed to attach LoRA adapters: {e}")
-
-    _models["qwen_cluster"] = model
-    _tokenizers["qwen_cluster"] = tokenizer
-    return model, tokenizer
+    _active_engine = "hf"
 
 
-def generate_with_qwen(prompt: str, adapter: str = "generator", max_new_tokens: int = 1536, temperature: float = 0.2) -> str:
-    model, tokenizer = load_qwen_lora_cluster()
+def _generate_with_hf(
+    prompt: str,
+    adapter: str,
+    max_new_tokens: int,
+    temperature: float,
+    system_prompt: Optional[str] = None,
+) -> tuple[str, dict[str, Any]]:
+    gpu_idx = _adapter_gpu_map.get(adapter, 0)
+    holder_key = "qwen_cluster_gpu1" if gpu_idx == 1 and "qwen_cluster_gpu1" in _models else "qwen_cluster"
+    model = _models.get(holder_key)
+    tokenizer = _tokenizers.get(holder_key)
     if model is None or tokenizer is None:
         raise HTTPException(status_code=503, detail="Qwen cluster base model not loaded on GPU.")
-
     if adapter not in _loaded_adapters:
         raise HTTPException(status_code=503, detail=f"Adapter '{adapter}' is not loaded on this worker.")
 
-    # Switch active adapter if loaded
-    try:
+    messages: list[dict[str, str]] = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
+
+    text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    lock = _gpu_locks.get(gpu_idx, _gpu_locks[0])
+
+    t0 = time.time()
+    with lock:
         if hasattr(model, "set_adapter"):
             model.set_adapter(adapter)
-    except Exception as e:
-        print(f"[Worker] Adapter switch to {adapter} warning: {e}")
-        raise HTTPException(status_code=503, detail=f"Failed to activate adapter '{adapter}': {e}")
-
-    messages = [{"role": "user", "content": prompt}]
-    text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    inputs = tokenizer([text], return_tensors="pt").to(model.device)
-
-    with torch.no_grad():
-        outputs = model.generate(
+        inputs = tokenizer([text], return_tensors="pt").to(model.device)
+        do_sample = temperature > 0.2
+        gen_kwargs: dict[str, Any] = {
             **inputs,
-            max_new_tokens=max_new_tokens,
-            temperature=temperature if temperature > 0 else 0.01,
-            do_sample=(temperature > 0),
-            pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id,
-        )
+            "max_new_tokens": max_new_tokens,
+            "use_cache": True,
+            "do_sample": do_sample,
+            "pad_token_id": tokenizer.pad_token_id or tokenizer.eos_token_id,
+        }
+        if do_sample:
+            gen_kwargs["temperature"] = temperature
+        with torch.no_grad():
+            outputs = model.generate(**gen_kwargs)
 
-    response = tokenizer.decode(outputs[0][len(inputs.input_ids[0]):], skip_special_tokens=True).strip()
-    return response
+    prompt_len = int(inputs.input_ids.shape[1])
+    out_ids = outputs[0][prompt_len:]
+    response = tokenizer.decode(out_ids, skip_special_tokens=True).strip()
+    elapsed = max(0.01, time.time() - t0)
+    comp_toks = int(len(out_ids))
+    usage_meta = {
+        "engine": f"hf_gpu{gpu_idx}",
+        "adapter": adapter,
+        "prompt_tokens": prompt_len,
+        "completion_tokens": comp_toks,
+        "latency_sec": round(elapsed, 2),
+        "tok_per_sec": round(comp_toks / elapsed, 1) if comp_toks else 0.0,
+    }
+    return response, usage_meta
+
+
+async def run_llm(
+    prompt: str,
+    adapter: str,
+    max_tokens: int,
+    temperature: float,
+    json_schema: Optional[dict[str, Any]] = None,
+    system_prompt: Optional[str] = None,
+) -> tuple[str, dict[str, Any]]:
+    """Unified async dispatch to vLLM (primary) or HF Dual-GPU (fallback)."""
+    if _active_engine == "vllm":
+        return await _call_vllm_chat(
+            prompt=prompt,
+            adapter=adapter,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            json_schema=json_schema,
+            system_prompt=system_prompt,
+        )
+    return await run_in_threadpool(
+        _generate_with_hf,
+        prompt,
+        adapter,
+        max_tokens,
+        temperature,
+        system_prompt,
+    )
 
 
 # =====================================================================
-# 2. GPU 1: Fact Checker NLI Head (Agent 4)
+# GPU 1: Fact Checker NLI Head (Agent 4)
 # =====================================================================
 
 def load_factcheck_model():
@@ -217,7 +511,7 @@ def load_factcheck_model():
 
 
 # =====================================================================
-# Pydantic Schemas & Endpoints
+# Pydantic Schemas & Lifecycle
 # =====================================================================
 
 class RouterRequest(BaseModel):
@@ -229,7 +523,8 @@ class SummarizeRequest(BaseModel):
     context: str
     feedback: Optional[str] = ""
     adapter: str = "generator"
-    max_tokens: int = 768
+    max_tokens: int = 600
+    language: str = "vi"
 
 class CriticRequest(BaseModel):
     query: str
@@ -237,6 +532,7 @@ class CriticRequest(BaseModel):
     context: str
     claims: list[str] = []
     adapter: str = "critic"
+    max_tokens: int = 256
 
 class FactCheckRequest(BaseModel):
     claims: list[str]
@@ -248,6 +544,8 @@ class WriterRequest(BaseModel):
     answer: str
     claims: list[dict[str, Any]] = []
     adapter: str = "writer"
+    max_tokens: int = 1100
+    language: str = "vi"
 
 class RerankRequest(BaseModel):
     query: str
@@ -261,34 +559,83 @@ ReaderLayoutRequest = LayoutRequest
 
 class GenerateRequest(BaseModel):
     prompt: str
+    system_instruction: Optional[str] = None
     adapter: str = "generator"
-    max_tokens: int = 1536
+    max_tokens: int = 768
     temperature: float = 0.2
+    json_mode: bool = False
 
 
 @app.on_event("startup")
 def warmup_all_gpus():
+    global _adapter_paths
     print("\n" + "=" * 65)
-    print("🔥 [STARTUP] KHỞI ĐỘNG VÀ NẠP TOÀN BỘ CÁC GPU (DUAL TESLA T4)...")
+    print("[STARTUP] KHOI DONG DUAL TESLA T4 WORKER (OPTIMIZED T4x2)...")
     print("=" * 65)
-    # GPU 0: Qwen 7B + 4 LoRA
-    print("[GPU 0] Nạp Base Qwen2.5-7B (4-bit NF4) + 4 LoRA Adapters...")
-    load_qwen_lora_cluster()
-    if torch.cuda.is_available() and torch.cuda.device_count() >= 1:
-        vram0 = torch.cuda.memory_allocated(0) / (1024 ** 3)
-        print(f"✅ GPU 0 SẴN SÀNG! VRAM chiếm dụng: {vram0:.2f} GB")
 
-    # GPU 1: Fact-Checker NLI Head
-    print("\n[GPU 1] Nạp Agent 4 Fact-Checker NLI Head...")
+    _adapter_paths = _discover_adapter_paths()
+    preferred_engine = os.environ.get("FINETUNE_ENGINE", "vllm").strip().lower()
+
+    started_vllm = False
+    if preferred_engine == "vllm":
+        started_vllm = _start_vllm_engine(_adapter_paths)
+
+    if not started_vllm:
+        load_hf_dual_gpu_cluster()
+
     load_factcheck_model()
-    if torch.cuda.is_available() and torch.cuda.device_count() >= 2:
-        vram1 = torch.cuda.memory_allocated(1) / (1024 ** 3)
-        print(f"✅ GPU 1 SẴN SÀNG! VRAM chiếm dụng: {vram1:.2f} GB")
 
-    print("\n" + "=" * 65)
-    print("🎉 TOÀN BỘ CỤM DUAL GPU ĐÃ ĐƯỢC KÍCH HOẠT VÀ NẠP SẴN SÀNG 100%!")
+    if torch.cuda.is_available():
+        for i in range(torch.cuda.device_count()):
+            vram = torch.cuda.memory_allocated(i) / (1024 ** 3)
+            print(f"[GPU {i}] Active engine={_active_engine}, torch_allocated={vram:.2f} GB")
+
     print("=" * 65 + "\n")
 
+
+@app.on_event("shutdown")
+async def shutdown_worker():
+    global _async_http
+    if _async_http is not None:
+        await _async_http.aclose()
+        _async_http = None
+    _stop_vllm_subprocess()
+
+
+# =====================================================================
+# Helpers
+# =====================================================================
+
+def _parse_json_object(raw: str) -> Optional[dict[str, Any]]:
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, dict):
+            return parsed
+    except Exception:
+        pass
+    m = re.search(r"\{.*\}", raw, re.DOTALL)
+    if m:
+        block = m.group(0)
+        try:
+            parsed = json.loads(block)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            try:
+                import ast
+                parsed = ast.literal_eval(block)
+                if isinstance(parsed, dict):
+                    return parsed
+            except Exception:
+                pass
+    return None
+
+
+# =====================================================================
+# Endpoints
+# =====================================================================
 
 @app.get("/")
 @app.get("/health")
@@ -306,7 +653,6 @@ def healthcheck():
     missing_adapters = [ad for ad in mandatory_adapters if ad not in _loaded_adapters]
     mandatory_models = ["qwen_cluster", "factcheck"]
     missing_models = [m for m in mandatory_models if m not in _models]
-
     is_ready = (len(missing_adapters) == 0 and len(missing_models) == 0)
 
     capabilities = {
@@ -326,6 +672,7 @@ def healthcheck():
         "worker_status": "online" if is_ready else "degraded",
         "mandatory_ready": is_ready,
         "pipeline": "gpu_finetune_7_models",
+        "engine": _active_engine,
         "gpus_available": torch.cuda.device_count() if torch.cuda.is_available() else 0,
         "loaded_adapters": _loaded_adapters,
         "missing_adapters": missing_adapters,
@@ -337,69 +684,88 @@ def healthcheck():
 
 
 @app.post("/api/router")
-def router_endpoint(req: RouterRequest):
+async def router_endpoint(req: RouterRequest):
     prompt = (
         "You are an intelligent routing agent for an Academic RAG system. "
         "Analyze the user query and output a JSON object with: intent, sub_queries, alpha (0.0 to 1.0), top_k (1 to 15), and reasoning.\n\n"
-        f"Query: {req.query}\nOutput JSON:"
+        f"Query: {req.query}"
     )
-    raw = generate_with_qwen(prompt, adapter="router", max_new_tokens=512, temperature=0.1)
-    try:
-        m = re.search(r"\{.*\}", raw, re.DOTALL)
-        if m:
-            return json.loads(m.group(0))
-    except Exception:
-        pass
-    return {"intent": "academic_research", "sub_queries": [req.query], "alpha": 0.5, "top_k": 6, "raw": raw}
+    raw, usage = await run_llm(
+        prompt=prompt,
+        adapter="router",
+        max_tokens=256,
+        temperature=0.1,
+        json_schema=ROUTER_JSON_SCHEMA,
+    )
+    parsed = _parse_json_object(raw)
+    if parsed:
+        parsed["usage"] = usage
+        return parsed
+    return {"intent": "academic_research", "sub_queries": [req.query], "alpha": 0.5, "top_k": 6, "raw": raw, "usage": usage}
 
 
 @app.post("/api/summarize/generator")
-def summarize_generator(req: SummarizeRequest):
+async def summarize_generator(req: SummarizeRequest):
+    lang_hint = (
+        "Hãy viết trường 'answer' và 'claims' bằng TIẾNG VIỆT học thuật chuẩn xác, mạch lạc, giữ nguyên thuật ngữ kỹ thuật nếu cần và gắn trích dẫn [1], [2]."
+        if req.language == "vi"
+        else "Write the 'answer' and 'claims' in clear academic English with inline citations [1], [2]."
+    )
+    # Keep Context as the fixed prefix for vLLM automatic prefix caching across retries
     prompt = (
-        "You are a rigorous scientific synthesis agent. Given the user question and context, "
-        "produce a detailed academic answer and extract atomic claims.\n\n"
-        f"Question: {req.query}\n\nContext:\n{req.context}\n\n"
+        f"Context:\n{req.context}\n\n"
+        f"Question: {req.query}\n"
+        f"Language Instruction: {lang_hint}\n"
     )
     if req.feedback:
-        prompt += f"[Critic Feedback]: {req.feedback}\n\n"
-    prompt += "Output format JSON with 'answer', 'claims' (list of atomic statements), and 'evidence_spans'."
+        prompt += f"[Critic Feedback]: {req.feedback}\n"
+    prompt += "Output valid JSON with keys: 'answer' (string), 'claims' (list of atomic statements), 'evidence_spans' (list of verbatim quotes)."
 
-    max_tok = getattr(req, "max_tokens", None) or 768
-    raw = generate_with_qwen(prompt, adapter="generator", max_new_tokens=max_tok, temperature=0.2)
-    try:
-        m = re.search(r"\{.*\}", raw, re.DOTALL)
-        if m:
-            return json.loads(m.group(0))
-    except Exception:
-        pass
-    return {"answer": raw, "claims": [], "evidence_spans": []}
+    max_tok = min(max(int(req.max_tokens or 600), 256), 900)
+    raw, usage = await run_llm(
+        prompt=prompt,
+        adapter="generator",
+        max_tokens=max_tok,
+        temperature=0.15,
+        json_schema=GENERATOR_JSON_SCHEMA,
+    )
+    parsed = _parse_json_object(raw)
+    if parsed and "answer" in parsed:
+        parsed.setdefault("claims", [])
+        parsed.setdefault("evidence_spans", [])
+        parsed["usage"] = usage
+        return parsed
+    return {"answer": raw, "claims": [], "evidence_spans": [], "usage": usage}
 
 
 @app.post("/api/summarize/critic")
-def summarize_critic(req: CriticRequest):
+async def summarize_critic(req: CriticRequest):
+    # Context first so vLLM reuses KV cache from the generator call
     prompt = (
-        "You are a strict academic verifier (Critic). Audit the proposed answer and claims against the context.\n"
-        "Output JSON with: critique, action ('accept' | 'rewrite' | 'request_more_context'), issues_found (list).\n\n"
-        f"Question: {req.query}\nContext:\n{req.context}\nProposed Answer:\n{req.answer}\nClaims:\n{json.dumps(req.claims)}"
+        f"Context:\n{req.context}\n\n"
+        f"Question: {req.query}\n"
+        f"Proposed Answer:\n{req.answer}\n"
+        f"Claims:\n{json.dumps(req.claims, ensure_ascii=False)}\n\n"
+        "Audit whether the answer/claims contain hallucinations unsupported by Context.\n"
+        "Set severity='none' and action='accept' if facts are grounded (ignore minor punctuation/style differences).\n"
+        "Set severity='major' and action='rewrite' ONLY for clear factual contradictions or fabricated numbers/claims.\n"
+        "Output valid JSON with keys: critique, action ('accept' | 'rewrite' | 'request_more_context'), severity ('none' | 'minor' | 'major'), issues_found (list)."
     )
-    raw = generate_with_qwen(prompt, adapter="critic", max_new_tokens=512, temperature=0.1)
-    try:
-        m = re.search(r"\{.*\}", raw, re.DOTALL)
-        if m:
-            block = m.group(0)
-            try:
-                parsed = json.loads(block)
-                if isinstance(parsed, dict) and "action" in parsed:
-                    return parsed
-            except Exception:
-                import ast
-                parsed = ast.literal_eval(block)
-                if isinstance(parsed, dict) and "action" in parsed:
-                    return parsed
-    except Exception:
-        pass
+    max_tok = min(max(int(req.max_tokens or 256), 128), 384)
+    raw, usage = await run_llm(
+        prompt=prompt,
+        adapter="critic",
+        max_tokens=max_tok,
+        temperature=0.1,
+        json_schema=CRITIC_JSON_SCHEMA,
+    )
+    parsed = _parse_json_object(raw)
+    if parsed and "action" in parsed:
+        parsed.setdefault("severity", "none" if parsed.get("action") == "accept" else "major")
+        parsed.setdefault("issues_found", [])
+        parsed["usage"] = usage
+        return parsed
 
-    # Robust regex extraction for action & critique
     action_match = re.search(
         r"['\"]?action['\"]?\s*[:=]\s*['\"]?(accept|approve|rewrite|request_more_context)['\"]?",
         raw,
@@ -410,13 +776,14 @@ def summarize_critic(req: CriticRequest):
         act = "accept" if val in ("accept", "approve") else ("request_more_context" if val == "request_more_context" else "rewrite")
         crit_match = re.search(r"['\"]?critique['\"]?\s*[:=]\s*(.*?)(?=['\"]?action|\Z)", raw, re.DOTALL | re.IGNORECASE)
         critique = crit_match.group(1).strip(" \t\n\r'\",") if crit_match else raw[:300]
-        return {"action": act, "critique": critique, "issues_found": []}
+        return {"action": act, "severity": "none" if act == "accept" else "minor", "critique": critique, "issues_found": [], "usage": usage}
 
-    # CRITICAL FAIL-CLOSED: Malformed JSON must NEVER default to 'accept'!
     return {
-        "critique": f"Không thể phân tích phản hồi JSON từ Critic: {raw}",
+        "critique": f"Không thể phân tích phản hồi JSON từ Critic: {raw[:250]}",
         "action": "rewrite",
+        "severity": "minor",
         "issues_found": ["critic_malformed_json_response"],
+        "usage": usage,
     }
 
 
@@ -426,7 +793,7 @@ def factcheck_endpoint(req: FactCheckRequest):
     if model is None or tokenizer is None:
         raise HTTPException(
             status_code=503,
-            detail="Fact-Checker NLI model is not loaded on GPU. Cannot verify claims."
+            detail="Fact-Checker NLI model is not loaded on GPU. Cannot verify claims.",
         )
 
     evaluations = []
@@ -449,17 +816,32 @@ def factcheck_endpoint(req: FactCheckRequest):
 
 
 @app.post("/api/writer")
-def writer_endpoint(req: WriterRequest):
-    v_text = "\n".join([f"- {c.get('claim_text', str(c))}" for c in req.claims])
+async def writer_endpoint(req: WriterRequest):
+    v_text = "\n".join([f"- {c.get('claim_text') or c.get('text') or str(c)}" for c in req.claims])
+    lang_directive = (
+        "Hãy trình bày toàn bộ báo cáo (tiêu đề, đề mục, phân tích, kết luận) bằng TIẾNG VIỆT học thuật chuẩn mực, súc tích, có trích dẫn [1], [2]."
+        if req.language == "vi"
+        else "Write the full academic report in formal Markdown with inline citations [1], [2]."
+    )
     prompt = (
-        "You are an elite scientific academic paper author. Generate a comprehensive, publication-grade academic report.\n\n"
+        "You are an elite scientific academic paper author. Synthesize a structured, accurate Markdown report strictly grounded in the verified evidence below.\n\n"
         f"Research Question: {req.query}\n\n"
         f"Executive Summary:\n{req.answer}\n\n"
         f"Verified Scientific Evidence:\n{v_text}\n\n"
-        "Write a structured, formal academic paper formatted in Markdown."
+        f"Language & Style: {lang_directive}"
     )
-    report = generate_with_qwen(prompt, adapter="writer", max_new_tokens=2048, temperature=0.3)
-    return {"report": report, "metadata": {"model": "qwen2.5-7b-dora-rs-lora"}}
+    max_tok = min(max(int(req.max_tokens or 1100), 512), 1400)
+    report, usage = await run_llm(
+        prompt=prompt,
+        adapter="writer",
+        max_tokens=max_tok,
+        temperature=0.2,
+    )
+    return {
+        "report": report,
+        "metadata": {"model": "qwen2.5-7b-lora-rslora", "engine": _active_engine},
+        "usage": usage,
+    }
 
 
 class EmbedRequest(BaseModel):
@@ -471,11 +853,8 @@ def rerank_endpoint(req: RerankRequest):
     if "reranker" not in _models:
         raise HTTPException(
             status_code=501,
-            detail="Capability 'reranker' (07_reranker_bge_large) chưa được nạp trên worker này."
+            detail="Capability 'reranker' (07_reranker_bge_large) chưa được nạp trên worker này.",
         )
-    # If model is loaded, perform inference (placeholder for when reranker weights loaded)
-    model = _models["reranker"]
-    tokenizer = _tokenizers.get("reranker")
     return {"ranked_indices": list(range(len(req.candidates)))}
 
 
@@ -484,7 +863,7 @@ def embed_endpoint(req: EmbedRequest):
     if "embedding" not in _models:
         raise HTTPException(
             status_code=501,
-            detail="Capability 'embedding' (06_embedding_bge_m3) chưa được nạp trên worker này."
+            detail="Capability 'embedding' (06_embedding_bge_m3) chưa được nạp trên worker này.",
         )
     return {"embeddings": []}
 
@@ -494,13 +873,19 @@ def reader_layout_endpoint(req: ReaderLayoutRequest):
     if "reader" not in _models:
         raise HTTPException(
             status_code=501,
-            detail="Capability 'layout_reader' (02_agent2_reader LayoutLMv3) chưa được nạp trên worker này."
+            detail="Capability 'layout_reader' (02_agent2_reader LayoutLMv3) chưa được nạp trên worker này.",
         )
     return {"layouts": []}
 
 
 @app.post("/generate")
 @app.post("/api/generate")
-def generic_generate(req: GenerateRequest):
-    out = generate_with_qwen(req.prompt, adapter=req.adapter, max_new_tokens=req.max_tokens, temperature=req.temperature)
-    return {"text": out, "adapter": req.adapter}
+async def generic_generate(req: GenerateRequest):
+    out, usage = await run_llm(
+        prompt=req.prompt,
+        adapter=req.adapter,
+        max_tokens=min(int(req.max_tokens or 768), 1536),
+        temperature=req.temperature,
+        system_prompt=req.system_instruction,
+    )
+    return {"text": out, "adapter": req.adapter, "usage": usage}
