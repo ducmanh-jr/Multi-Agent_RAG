@@ -428,6 +428,7 @@ class AgentState(TypedDict, total=False):
     short_answer: Optional[str]
     answer_status: Optional[str]
     written_report_data: dict[str, Any]
+    citations: Optional[list[dict[str, Any]]]
 
     # 7. Orchestration & Budget Controls
     retry_count: int

@@ -35,16 +35,90 @@ from utils.domain_guard import check_out_of_domain, build_out_of_domain_response
 from modes.cpu_min.summarizer import CPUMinSummarizerAgent
 
 
+def _robust_repair_critic_dict(critic_dict: dict[str, Any]) -> dict[str, Any]:
+    """Repairs malformed JSON/YAML responses from remote Critic QLoRA so valid 'accept' is never lost."""
+    if not isinstance(critic_dict, dict):
+        return {"action": "rewrite", "critique": str(critic_dict), "issues_found": ["malformed_critic_dict"]}
+
+    critique_str = str(critic_dict.get("critique") or "")
+    prefix = "Không thể phân tích phản hồi JSON từ Critic:"
+    if prefix in critique_str or critic_dict.get("issues_found") == ["critic_malformed_json_response"]:
+        raw = critique_str.split(prefix, 1)[1].strip() if prefix in critique_str else critique_str
+
+        # 1. Try AST literal eval for Python dict string with single quotes
+        m = re.search(r"\{.*\}", raw, re.DOTALL)
+        if m:
+            block = m.group(0)
+            try:
+                import ast
+                parsed = ast.literal_eval(block)
+                if isinstance(parsed, dict) and "action" in parsed:
+                    critic_dict["action"] = str(parsed["action"]).lower()
+                    critic_dict["critique"] = str(parsed.get("critique", raw[:300]))
+                    critic_dict["issues_found"] = parsed.get("issues_found", [])
+                    return critic_dict
+            except Exception:
+                pass
+
+        # 2. Robust Regex for action key
+        action_match = re.search(
+            r"['\"]?action['\"]?\s*[:=]\s*['\"]?(accept|approve|rewrite|request_more_context)['\"]?",
+            raw,
+            re.IGNORECASE,
+        )
+        if action_match:
+            val = action_match.group(1).lower()
+            act = "accept" if val in ("accept", "approve") else ("request_more_context" if val == "request_more_context" else "rewrite")
+            critic_dict["action"] = act
+            crit_match = re.search(r"['\"]?critique['\"]?\s*[:=]\s*(.*?)(?=['\"]?action|\Z)", raw, re.DOTALL | re.IGNORECASE)
+            if crit_match:
+                critic_dict["critique"] = crit_match.group(1).strip(" \t\n\r'\",")
+            critic_dict["issues_found"] = []
+
+    return critic_dict
+
+
 class GPUFinetuneSummarizerAgent(BaseAgent):
     """Summarizer Agent executing Fine-Tuned Generator + Critic Dual-QLoRA loop."""
 
-    def __init__(self, max_internal_retry: int = 2):
+    def __init__(self, max_internal_retry: int = 1):
         super().__init__(name="GPUFinetuneSummarizerAgent", max_internal_retry=max_internal_retry)
         self.cpu_engine = CPUMinSummarizerAgent()
 
     def run(self, state: AgentState) -> dict[str, Any]:
+        proc_status = str(state.get("processing_status") or "")
+        if proc_status in ("RETRIEVAL_FAILED", "EXTRACTION_FAILED"):
+            err_msg = state.get("error_message") or f"Quá trình xử lý thất bại ở tầng trước ({proc_status})."
+            self.logger.error(f"[GPU Finetune Summarizer] Bỏ qua tóm tắt do lỗi tầng trước: {proc_status}")
+            trace = self.log_action("gpu_finetune_summarizer_aborted", {"status": proc_status, "error": err_msg})
+            return {
+                "answer": err_msg,
+                "final_report": err_msg,
+                "processing_status": proc_status,
+                "error_stage": state.get("error_stage") or "summarizer",
+                "error_code": proc_status,
+                "error_message": err_msg,
+                "confidence": "low",
+                "reasoning_trace": [trace],
+            }
+
         query = state.get("query") or state.get("question", "")
         source_units = state.get("source_units", []) or []
+
+        # Early exit if prior stage (e.g. Retrieval Out-of-Bounds) already formulated an authoritative answer
+        if state.get("answer_status") == "NOT_FOUND_IN_DOCUMENT" and state.get("answer"):
+            trace = self.log_action("gpu_finetune_summarizer_preserved_not_found", {"reason": str(state.get("answer"))[:100]})
+            return {
+                "answer": state["answer"],
+                "final_report": state.get("final_report") or state["answer"],
+                "claims": [],
+                "evidence_spans": [],
+                "critic_action": "approve",
+                "processing_status": "SUCCESS",
+                "answer_status": "NOT_FOUND_IN_DOCUMENT",
+                "evidence_status": "NOT_FOUND",
+                "reasoning_trace": [trace],
+            }
 
         self.logger.info(
             f"[GPU Finetune Summarizer] Running Dual-QLoRA Generator -> Critic loop for: '{query[:65]}' "
@@ -52,13 +126,17 @@ class GPUFinetuneSummarizerAgent(BaseAgent):
         )
 
         clean_q = query.strip()
-        is_ood, ood_reason = check_out_of_domain(clean_q, source_units)
-        if is_ood:
-            self.logger.info(f"[GPU Finetune Summarizer] Zero-Hallucination Guard triggered: {ood_reason}")
-            res = build_out_of_domain_response(clean_q, model_family="gpu_finetune_guard")
-            trace = self.log_action("gpu_finetune_summarization_completed", {"status": "out_of_domain", "reason": ood_reason})
-            res["reasoning_trace"] = [trace]
-            return res
+        primary_intent = str(state.get("primary_intent") or "")
+        # In MIXED_QA, the query purposefully compares target document concepts with external techniques.
+        # Zero-Hallucination Guard should allow the synthesis rather than false-alarming on the outside concepts!
+        if primary_intent != "MIXED_QA":
+            is_ood, ood_reason = check_out_of_domain(clean_q, source_units)
+            if is_ood:
+                self.logger.info(f"[GPU Finetune Summarizer] Zero-Hallucination Guard triggered: {ood_reason}")
+                res = build_out_of_domain_response(clean_q, model_family="gpu_finetune_guard")
+                trace = self.log_action("gpu_finetune_summarization_completed", {"status": "out_of_domain", "reason": ood_reason})
+                res["reasoning_trace"] = [trace]
+                return res
 
         context_str, _, context_coverage = pack_context_with_coverage(source_units, max_tokens=1500)
 
@@ -71,6 +149,13 @@ class GPUFinetuneSummarizerAgent(BaseAgent):
         critique_text = ""
         critic_out = None
 
+        # Explicit Vietnamese Academic Language Directive
+        vn_lang_directive = (
+            "\n\n[YÊU CẦU NGÔN NGỮ]:\n"
+            "- Hãy viết câu trả lời 'answer' bằng TIẾNG VIỆT học thuật chuẩn xác, tự nhiên, chuyên sâu (ngay cả khi tài liệu ngữ cảnh là tiếng Anh).\n"
+            "- Các thuật ngữ kỹ thuật cốt lõi có thể mở ngoặc tiếng Anh nếu cần thiết.\n"
+        )
+
         while internal_attempts <= self.max_internal_retry:
             internal_attempts += 1
 
@@ -78,15 +163,20 @@ class GPUFinetuneSummarizerAgent(BaseAgent):
             gen_prompt = (
                 f"User Question: {clean_q}\n\n"
                 f"Context:\n{context_str}\n\n"
+                f"{vn_lang_directive}"
             )
             if last_critic_feedback:
                 gen_prompt += f"\n[Previous Critic Feedback to Address]:\n{last_critic_feedback}\n"
 
             generator_failed = False
             try:
+                remote_query = clean_q
+                if re.search(r"[à-ỹÀ-Ỹ]", clean_q):
+                    remote_query = f"{clean_q} (Yêu cầu: Câu trả lời 'answer' phải được viết hoàn toàn bằng tiếng Việt học thuật chuẩn mực dù tài liệu là tiếng Anh)"
+
                 gen_dict = llm_client.call_kaggle_specialist(
                     endpoint="api/summarize/generator",
-                    payload={"query": clean_q, "context": context_str, "feedback": last_critic_feedback, "adapter": "generator"},
+                    payload={"query": remote_query, "context": context_str, "feedback": last_critic_feedback, "adapter": "generator"},
                     fallback_prompt=gen_prompt,
                     fallback_system=TRAINING_LAB_GENERATOR_SYSTEM_PROMPT,
                     adapter="generator",
@@ -96,10 +186,33 @@ class GPUFinetuneSummarizerAgent(BaseAgent):
                 current_answer = gen_out.answer
                 current_claims = gen_out.claims
                 current_spans_raw = gen_out.evidence_spans
+
+                # Enforce Vietnamese language if the query was in Vietnamese but generator returned pure English
+                if re.search(r"[à-ỹÀ-Ỹ]", clean_q) and len(re.findall(r"[à-ỹÀ-Ỹ]", current_answer)) < 15:
+                    self.logger.warning("[GPU Finetune Summarizer] Generator returned non-Vietnamese answer. Translating to Vietnamese academic answer...")
+                    try:
+                        trans_prompt = (
+                            f"Bạn là chuyên gia dịch thuật và tổng hợp học thuật. Hãy dịch và diễn giải bản tóm tắt sau sang TIẾNG VIỆT chuyên sâu, chuẩn xác, "
+                            f"giữ nguyên các trích dẫn [1], [2] và số liệu định lượng:\n\n{current_answer}\n\nBản dịch tiếng Việt học thuật:"
+                        )
+                        vi_ans = llm_client.generate(trans_prompt, agent="router", max_tokens=1024)
+                        if vi_ans and len(re.findall(r"[à-ỹÀ-Ỹ]", vi_ans)) >= 15:
+                            current_answer = vi_ans
+                        else:
+                            fb_ans, fb_spans, fb_cl = generate_summary_and_claims(clean_q, source_units, force_extractive=True)
+                            if len(re.findall(r"[à-ỹÀ-Ỹ]", fb_ans)) >= 15:
+                                current_answer = fb_ans
+                    except Exception as trans_exc:
+                        self.logger.warning(f"[GPU Finetune Summarizer] Translation fallback failed ({trans_exc}).")
+                        fb_ans, fb_spans, fb_cl = generate_summary_and_claims(clean_q, source_units, force_extractive=True)
+                        if len(re.findall(r"[à-ỹÀ-Ỹ]", fb_ans)) >= 15:
+                            current_answer = fb_ans
             except Exception as e:
                 self.logger.warning(f"[GPU Finetune Summarizer] Remote generator fallback to local: {e}")
                 generator_failed = True
-                current_answer, fb_spans, fb_cl = generate_summary_and_claims(clean_q, source_units, force_extractive=False)
+                current_answer, fb_spans, fb_cl = generate_summary_and_claims(clean_q, source_units, force_extractive=True)
+                current_spans_raw = fb_spans
+                current_claims = fb_cl or split_answer_into_atomic_claims(current_answer, source_units)
                 current_spans_raw = fb_spans
                 current_claims = fb_cl or split_answer_into_atomic_claims(current_answer, source_units)
 
@@ -120,6 +233,8 @@ class GPUFinetuneSummarizerAgent(BaseAgent):
                         adapter="critic",
                         timeout=float(self.settings.REMOTE_TIMEOUT_SECONDS or 90.0),
                     )
+                    if isinstance(critic_dict, dict):
+                        critic_dict = _robust_repair_critic_dict(critic_dict)
                 except Exception as exc:
                     critic_exc = exc
 

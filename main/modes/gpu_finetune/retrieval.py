@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Any
 
 from agents.agent1_retrieval.tools.bm25 import SimpleBM25
@@ -98,6 +99,48 @@ class GPUFinetuneRetrievalAgent(BaseAgent):
         # 2. Scope strictly to user-selected PDF if provided
         pdf_chunks = load_or_parse_selected_pdf(pdf_path) if pdf_path else []
         if pdf_chunks:
+            # 2.1 Explicit Target Page Routing & Out-of-Bounds Detection:
+            page_match = re.search(r"\b(?:trang|page)\s*(\d+)\b", query, re.IGNORECASE)
+            if page_match:
+                req_page = int(page_match.group(1))
+                all_pages = [int(c.get("page_no") or 1) for c in pdf_chunks]
+                max_doc_page = max(all_pages) if all_pages else 1
+                min_doc_page = min(all_pages) if all_pages else 1
+                doc_name = os.path.basename(pdf_path) if pdf_path else "tài liệu mục tiêu"
+
+                if req_page > max_doc_page or req_page < min_doc_page:
+                    out_of_bounds_msg = (
+                        f"Tài liệu mục tiêu ({doc_name}) chỉ có {max_doc_page} trang (từ trang {min_doc_page} đến trang {max_doc_page}). "
+                        f"Không tồn tại trang {req_page}. Vui lòng chọn số trang hợp lệ trong phạm vi tài liệu."
+                    )
+                    self.logger.warning(f"[GPU Finetune Retrieval] Out-of-bounds page requested: {req_page} > {max_doc_page}")
+                    trace = self.log_action("gpu_finetune_retrieval_page_out_of_bounds", {"req_page": req_page, "max_page": max_doc_page})
+                    return {
+                        "retrieved_docs": [],
+                        "source_units": [],
+                        "evidence_status": "NOT_FOUND",
+                        "answer_status": "NOT_FOUND_IN_DOCUMENT",
+                        "answer": out_of_bounds_msg,
+                        "final_report": (
+                            f"# Báo cáo Thẩm định Học thuật (Academic Audit Report)\n\n"
+                            f"> **Trạng thái Thẩm định:** [`OUT_OF_BOUNDS_PAGE` | `HONEST_REFUSAL`]\n\n"
+                            f"### 1. Tóm tắt Kết luận\n"
+                            f"{out_of_bounds_msg}\n\n"
+                            f"### 2. Chi tiết Thẩm định\n"
+                            f"- **Yêu cầu đối chiếu:** *\"{query}\"*\n"
+                            f"- **Kết luận xác minh:** Số trang yêu cầu ({req_page}) nằm ngoài phạm vi số trang thực tế của tài liệu mục tiêu ({min_doc_page}..{max_doc_page}). "
+                            f"Hệ thống từ chối tạo sinh nội dung suy đoán để tuân thủ nghiêm ngặt chính sách bảo vệ trung thực học thuật (Zero-Hallucination Policy).\n"
+                        ),
+                        "sub_queries": sub_queries,
+                        "required_entities": required_entities,
+                        "alpha": alpha,
+                        "top_k": top_k,
+                        "seen_chunks": seen_chunks,
+                        "no_new_evidence": True,
+                        "citations": [],
+                        "reasoning_trace": [trace],
+                    }
+
             active_fts = SQLiteFTS5Searcher()
             active_bm25 = SimpleBM25()
             active_fts.fit(pdf_chunks)
@@ -123,6 +166,40 @@ class GPUFinetuneRetrievalAgent(BaseAgent):
         if not fused_docs and active_pool:
             fused_docs = active_pool[:top_k]
 
+        # 4.1 Explicit Target Page Boost:
+        # If the query targets a specific valid page (e.g. trang 12), ensure that page's chunks are at position #1!
+        page_match = re.search(r"\b(?:trang|page)\s*(\d+)\b", query, re.IGNORECASE)
+        if page_match and pdf_chunks:
+            req_page = int(page_match.group(1))
+            target_page_chunks = [c for c in pdf_chunks if int(c.get("page_no") or 0) == req_page]
+            if target_page_chunks:
+                self.logger.info(f"[GPU Finetune Retrieval] Prioritizing {len(target_page_chunks)} chunks from target page {req_page}")
+                other_fused = [d for d in fused_docs if int(d.get("page_no") or 0) != req_page]
+                fused_docs = target_page_chunks + other_fused
+                top_k = max(top_k, len(target_page_chunks) + 3)
+
+        # 4.2 Explicit Table/Section Marker Boost:
+        # If the query specifically targets a table or section (e.g. Table 1, Table 2, Table 3, Bảng 1, Bảng 2, Bảng 3),
+        # prioritize chunks containing that exact marker to the front.
+        target_markers = re.findall(r"\b(?:table|bảng)\s*\d+\b", query, re.IGNORECASE)
+        if target_markers and fused_docs:
+            def _marker_score(doc: dict[str, Any]) -> int:
+                text = str(doc.get("text") or "").lower()
+                return sum(1 for m in target_markers if m.lower() in text)
+            fused_docs = sorted(fused_docs, key=_marker_score, reverse=True)
+
+        # 4.3 General Document Summary / Overview Query Boost:
+        # If user asks to summarize or overview the whole document (/tom-tat, tóm tắt, tổng quan),
+        # ensure introductory context (page 1, page 2) is present in the fused pool.
+        is_summary_query = any(k in query.lower() for k in ["tóm tắt", "tổng quan", "summary", "overview", "/tom-tat"])
+        if is_summary_query and pdf_chunks:
+            head_chunks = [c for c in pdf_chunks if int(c.get("page_no") or 1) in (1, 2)][:2]
+            existing_ids = {d.get("id") for d in fused_docs}
+            for hc in reversed(head_chunks):
+                if hc.get("id") not in existing_ids:
+                    fused_docs.insert(0, hc)
+                    existing_ids.add(hc.get("id"))
+
         # 5. Remote Reranker enhancement via 07_reranker_bge_large LoRA if available
         if self.settings.REMOTE_INFERENCE_URL and fused_docs:
             try:
@@ -141,10 +218,18 @@ class GPUFinetuneRetrievalAgent(BaseAgent):
             except Exception as e:
                 self.logger.debug(f"[GPU Finetune Retrieval] Remote reranker skipped ({e}), maintaining RRF order.")
 
+        # 5.1 Final Target Page Scoping: If the query is specifically targeting a single page, scope strictly to that page
+        if page_match and pdf_chunks:
+            req_page = int(page_match.group(1))
+            target_page_chunks = [c for c in pdf_chunks if int(c.get("page_no") or 0) == req_page]
+            if target_page_chunks:
+                fused_docs = target_page_chunks
+                self.logger.info(f"[GPU Finetune Retrieval] Strictly scoped to {len(fused_docs)} chunks from target page {req_page}")
+
         # Deduplicate seen chunks
-        final_docs = [d for d in fused_docs if d.get("id") not in seen_chunks][:top_k]
-        if not final_docs and fused_docs:
-            final_docs = fused_docs[:top_k]
+        new_docs = [d for d in fused_docs if d.get("id") not in seen_chunks]
+        no_new_evidence = bool(retry_count > 0 and len(new_docs) == 0)
+        final_docs = (new_docs if new_docs else fused_docs)[:top_k]
 
         new_seen = list(set(seen_chunks + [d.get("id") for d in final_docs if d.get("id")]))
 
@@ -157,6 +242,7 @@ class GPUFinetuneRetrievalAgent(BaseAgent):
                 "sub_queries": sub_queries,
                 "alpha": alpha,
                 "top_k": top_k,
+                "no_new_evidence": no_new_evidence,
             },
         )
 
@@ -167,5 +253,6 @@ class GPUFinetuneRetrievalAgent(BaseAgent):
             "alpha": alpha,
             "top_k": top_k,
             "seen_chunks": new_seen,
+            "no_new_evidence": no_new_evidence,
             "reasoning_trace": [trace],
         }

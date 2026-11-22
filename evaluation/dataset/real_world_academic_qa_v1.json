@@ -1,0 +1,307 @@
+[
+  {
+    "id": "DOC-01",
+    "category": "document_qa",
+    "query": "Xác định tên bài báo, danh sách tất cả các tác giả, tổ chức nghiên cứu và năm xuất bản trong tài liệu Vaswani_2017_Attention.pdf.",
+    "expected_intent": "DOCUMENT_QA",
+    "target_pdf": "Vaswani_2017_Attention.pdf",
+    "target_pdf_sha256": "BDFAA68D8984F0DC02BEACA527B76F207D99B666D31D1DA728EE0728182DF697",
+    "timeout_sec": 45.0,
+    "golden_reference": {
+      "key_facts": [
+        "Tên bài báo: Attention Is All You Need",
+        "Tác giả: Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Łukasz Kaiser, Illia Polosukhin",
+        "Tổ chức: Google Brain, Google Research, University of Toronto",
+        "Năm công bố: 2017 (NeurIPS 2017)"
+      ],
+      "required_citations": {
+        "page_no": 1,
+        "keywords": ["Attention Is All You Need", "Vaswani", "Google Brain", "2017"]
+      }
+    }
+  },
+  {
+    "id": "DOC-02",
+    "category": "document_qa",
+    "query": "Hãy tóm tắt toàn bộ bài báo Attention Is All You Need, bao gồm mục tiêu nghiên cứu, kiến trúc mô hình, phương pháp huấn luyện và kết quả thực nghiệm chính.",
+    "expected_intent": "DOCUMENT_QA",
+    "target_pdf": "Vaswani_2017_Attention.pdf",
+    "target_pdf_sha256": "BDFAA68D8984F0DC02BEACA527B76F207D99B666D31D1DA728EE0728182DF697",
+    "timeout_sec": 60.0,
+    "golden_reference": {
+      "key_facts": [
+        "Mục tiêu: Đề xuất kiến trúc mạng nơ-ron chuỗi hoàn toàn dựa trên cơ chế Attention (Transformer), loại bỏ hoàn toàn recurrence (RNN) và convolution (CNN) để tối ưu hóa khả năng song song hóa.",
+        "Kiến trúc: Encoder-Decoder gồm 6 lớp xếp chồng (identical layers). Encoder gồm Multi-Head Self-Attention và Feed-Forward Network (FFN). Decoder có thêm Masked Multi-Head Attention.",
+        "Huấn luyện: WMT 2014 English-German (4.5M pairs) và WMT 2014 English-French (36M pairs), tối ưu hóa Adam, Warmup learning rate schedule, Dropout và Label Smoothing.",
+        "Kết quả thực nghiệm: Đạt 28.4 BLEU trên WMT 2014 English-to-German (SOTA mới, vượt 2.0 BLEU) và 41.8 BLEU trên English-to-French."
+      ],
+      "required_citations": {
+        "page_no": [1, 2, 3, 7, 8],
+        "keywords": ["Transformer", "Encoder", "Decoder", "BLEU", "28.4"]
+      }
+    }
+  },
+  {
+    "id": "DOC-03",
+    "category": "document_qa",
+    "query": "Dựa trên bài báo Attention Is All You Need, giải thích chi tiết cơ chế Scaled Dot-Product Attention và Multi-Head Attention. Nêu rõ công thức toán học và lý do tại sao phải scale bằng căn bậc hai của d_k?",
+    "expected_intent": "DOCUMENT_QA",
+    "target_pdf": "Vaswani_2017_Attention.pdf",
+    "target_pdf_sha256": "BDFAA68D8984F0DC02BEACA527B76F207D99B666D31D1DA728EE0728182DF697",
+    "timeout_sec": 45.0,
+    "golden_reference": {
+      "key_facts": [
+        "Công thức Scaled Dot-Product Attention: Attention(Q, K, V) = softmax((Q * K^T) / sqrt(d_k)) * V",
+        "Lý do scale bằng sqrt(d_k): Khi d_k có giá trị lớn, tích vô hướng dot-product có độ lớn tăng rất cao, đẩy hàm softmax vào các vùng có gradient cực kỳ nhỏ (vanishing gradients). Chia cho sqrt(d_k) giúp chuẩn hóa phương sai về 1.",
+        "Công thức Multi-Head Attention: MultiHead(Q,K,V) = Concat(head_1, ..., head_h) * W^O, trong đó head_i = Attention(Q * W_i^Q, K * W_i^K, V * W_i^V)",
+        "Ưu điểm Multi-Head: Cho phép mô hình đồng thời chú ý đến thông tin từ các không gian con biểu diễn khác nhau ở các vị trí khác nhau."
+      ],
+      "required_citations": {
+        "page_no": [4, 5],
+        "keywords": ["Scaled Dot-Product", "softmax", "d_k", "Multi-Head", "Concat"]
+      }
+    }
+  },
+  {
+    "id": "DOC-04",
+    "category": "document_qa",
+    "query": "Trong bài báo Attention Is All You Need, hãy so sánh kích thước và siêu tham số của hai mô hình Transformer Base và Transformer Big (d_model, d_ff, số heads, tỉ lệ dropout và tổng số tham số) theo Table 3.",
+    "expected_intent": "DOCUMENT_QA",
+    "target_pdf": "Vaswani_2017_Attention.pdf",
+    "target_pdf_sha256": "BDFAA68D8984F0DC02BEACA527B76F207D99B666D31D1DA728EE0728182DF697",
+    "timeout_sec": 45.0,
+    "golden_reference": {
+      "key_facts": [
+        "Transformer Base: N = 6, d_model = 512, d_ff = 2048, h = 8, d_k = d_v = 64, P_drop = 0.1, tổng tham số khoảng 65 triệu (65M).",
+        "Transformer Big: N = 6, d_model = 1024, d_ff = 4096, h = 16, d_k = d_v = 64, P_drop = 0.3, tổng tham số khoảng 213 triệu (213M).",
+        "Transformer Big sử dụng thời gian bước huấn luyện 300,000 steps so với 100,000 steps của Base."
+      ],
+      "required_citations": {
+        "page_no": 9,
+        "keywords": ["Table 3", "base", "big", "512", "1024", "65M", "213M"]
+      }
+    }
+  },
+  {
+    "id": "DOC-05",
+    "category": "document_qa",
+    "query": "So sánh chi phí huấn luyện (Training Cost / FLOPs) và thời gian GPU của mô hình Transformer với các kiến trúc tiền nhiệm như ByteNet, MoE và GNMT được liệt kê trong Table 2 của bài báo.",
+    "expected_intent": "DOCUMENT_QA",
+    "target_pdf": "Vaswani_2017_Attention.pdf",
+    "target_pdf_sha256": "BDFAA68D8984F0DC02BEACA527B76F207D99B666D31D1DA728EE0728182DF697",
+    "timeout_sec": 45.0,
+    "golden_reference": {
+      "key_facts": [
+        "Transformer (base model): Chỉ cần 3.3 x 10^18 FLOPs (huấn luyện trong 12 giờ trên 8 GPU P100).",
+        "Transformer (big model): Cần 2.3 x 10^19 FLOPs (huấn luyện trong 3.5 ngày trên 8 GPU P100).",
+        "So với các mô hình trước: MoE cần 1.5 x 10^20 FLOPs, GNMT + RL Ensembles cần 2.3 x 10^19 FLOPs hoặc hàng trăm ngày GPU.",
+        "Kết luận bài báo: Transformer đạt SOTA mới với chi phí tính toán huấn luyện thấp hơn đáng kể."
+      ],
+      "required_citations": {
+        "page_no": 8,
+        "keywords": ["Table 2", "Training Cost", "FLOPs", "P100", "GNMT", "ByteNet", "MoE"]
+      }
+    }
+  },
+  {
+    "id": "GQA-01",
+    "category": "general_qa",
+    "query": "RAG là gì? Giải thích kiến trúc và lấy ví dụ minh họa.",
+    "expected_intent": "GENERAL_QA",
+    "requires_pdf": false,
+    "timeout_sec": 30.0,
+    "golden_reference": {
+      "key_concepts": [
+        "Retrieval-Augmented Generation (Tạo sinh tăng cường truy xuất).",
+        "Kiến trúc gồm 2 thành phần cốt lõi: Retrieval (Truy xuất tài liệu từ nguồn tri thức ngoài) và Generation (Mô hình ngôn ngữ sinh câu trả lời dựa trên ngữ cảnh).",
+        "Khắc phục nhược điểm của LLM: giảm ảo giác (hallucination), cập nhật tri thức mới mà không cần fine-tune lại.",
+        "Ví dụ minh họa: Hệ thống hỏi đáp nội bộ doanh nghiệp hoặc tra cứu văn bản pháp luật."
+      ],
+      "must_contain": ["Retrieval-Augmented Generation", "truy xuất", "LLM", "ngữ cảnh"]
+    }
+  },
+  {
+    "id": "GQA-02",
+    "category": "general_qa",
+    "query": "So sánh Dense Retrieval và Sparse Retrieval trong các hệ thống tìm kiếm thông tin và RAG.",
+    "expected_intent": "GENERAL_QA",
+    "requires_pdf": false,
+    "timeout_sec": 30.0,
+    "golden_reference": {
+      "key_concepts": [
+        "Sparse Retrieval: Dựa trên tần suất từ khóa chính xác (BM25, TF-IDF). Ưu điểm: nhanh, nhẹ, khớp từ khóa hiếm/mã định danh tốt; Nhược điểm: không hiểu ngữ nghĩa tương đồng (vocabulary mismatch).",
+        "Dense Retrieval: Dựa trên vector embedding biểu diễn ngữ nghĩa không gian nhiều chiều (bi-encoders). Ưu điểm: hiểu ngữ nghĩa sâu, từ đồng nghĩa; Nhược điểm: chi phí tính toán cao hơn, dễ bỏ sót từ khóa kỹ thuật hiếm.",
+        "Hybrid Search: Kết hợp cả Dense và Sparse qua Reciprocal Rank Fusion (RRF) đạt hiệu quả tối ưu nhất."
+      ],
+      "must_contain": ["Sparse", "Dense", "BM25", "embedding", "từ khóa"]
+    }
+  },
+  {
+    "id": "GQA-03",
+    "category": "general_qa",
+    "query": "Dịch đoạn văn kỹ thuật sau sang tiếng Việt: 'Large language models (LLMs) frequently suffer from factual hallucinations and knowledge obsolescence. Retrieval-Augmented Generation mitigates these issues by dynamically fetching relevant context from an external knowledge store.'",
+    "expected_intent": "GENERAL_QA",
+    "requires_pdf": false,
+    "timeout_sec": 30.0,
+    "golden_reference": {
+      "key_concepts": [
+        "Bản dịch tiếng Việt chính xác về mặt học thuật và ngữ pháp.",
+        "Dịch đúng thuật ngữ: LLM (mô hình ngôn ngữ lớn), factual hallucinations (ảo giác sự thật), knowledge obsolescence (tri thức lỗi thời/lạc hậu), Retrieval-Augmented Generation (Tạo sinh tăng cường truy xuất), external knowledge store (kho tri thức ngoài)."
+      ],
+      "must_contain": ["mô hình ngôn ngữ lớn", "ảo giác", "truy xuất"]
+    }
+  },
+  {
+    "id": "GQA-04",
+    "category": "task_execution",
+    "query": "Viết hàm Python nhận vào danh sách các tuple (item_id, score) và số nguyên k, trả về Top-K phần tử có điểm cao nhất sắp xếp giảm dần. Xử lý trường hợp k <= 0 hoặc danh sách rỗng.",
+    "expected_intent": "TASK_EXECUTION",
+    "requires_pdf": false,
+    "timeout_sec": 30.0,
+    "golden_reference": {
+      "key_concepts": [
+        "Phải được nhận diện là TASK_EXECUTION (hoặc TASK_ASSISTED_RESPONSE), tuyệt đối KHÔNG ép vào RAG.",
+        "Hàm Python hợp lệ cú pháp (def top_k_items(items, k): ...).",
+        "Sử dụng sorted() hoặc heapq.nlargest() với key lambda x: x[1].",
+        "Kiểm tra biên an toàn: k <= 0 hoặc items rỗng thì trả về danh sách rỗng []."
+      ],
+      "must_contain": ["def ", "return"]
+    }
+  },
+  {
+    "id": "MIX-01",
+    "category": "mixed_qa",
+    "query": "So sánh kiến trúc Transformer trong bài báo Attention Is All You Need với các nghiên cứu bên ngoài về Retrieval-Augmented Generation (RAG). Phân biệt rõ luận điểm nào trích từ tài liệu và luận điểm nào từ nghiên cứu bên ngoài.",
+    "expected_intent": "MIXED_QA",
+    "target_pdf": "Vaswani_2017_Attention.pdf",
+    "target_pdf_sha256": "BDFAA68D8984F0DC02BEACA527B76F207D99B666D31D1DA728EE0728182DF697",
+    "timeout_sec": 60.0,
+    "golden_reference": {
+      "key_facts": [
+        "Nguồn PDF (Vaswani et al., 2017): Là mô hình nền tảng xử lý chuỗi dựa trên cơ chế Self-Attention O(N^2), lưu trữ tri thức tham số cố định trong trọng số mạng (parametric memory).",
+        "Nguồn nghiên cứu ngoài về RAG (Lewis et al., 2020): Mở rộng Transformer bằng cách kết hợp cơ chế truy xuất phi tham số (non-parametric memory) từ kho tài liệu ngoài trước khi sinh văn bản.",
+        "Bắt buộc phân tách rõ ràng nhãn nguồn giữa nội dung PDF và tri thức nghiên cứu bên ngoài."
+      ],
+      "required_citations": {
+        "keywords": ["Transformer", "Attention", "RAG", "truy xuất"]
+      }
+    }
+  },
+  {
+    "id": "MIX-02",
+    "category": "mixed_qa",
+    "query": "Tổng hợp các điểm tương đồng và khác biệt giữa cơ chế Attention trong tài liệu của tôi và các hướng tiếp cận Attention hiện đại như FlashAttention (Dao et al., 2022) hoặc Linear Attention từ nghiên cứu bên ngoài.",
+    "expected_intent": "MIXED_QA",
+    "target_pdf": "Vaswani_2017_Attention.pdf",
+    "target_pdf_sha256": "BDFAA68D8984F0DC02BEACA527B76F207D99B666D31D1DA728EE0728182DF697",
+    "timeout_sec": 60.0,
+    "golden_reference": {
+      "key_facts": [
+        "Tài liệu nội bộ (Vaswani 2017): Cơ chế Scaled Dot-Product chuẩn với độ phức tạp tính toán và bộ nhớ O(N^2) đối với độ dài chuỗi N; phụ thuộc vào việc lưu trữ ma trận attention N x N trong bộ nhớ.",
+        "Nghiên cứu mở rộng bên ngoài: FlashAttention (Dao et al., 2022) tối ưu IO-awareness trên GPU SRAM để giảm truy xuất HBM mà không xấp xỉ; Linear Attention xấp xỉ kernel để đưa độ phức tạp về O(N).",
+        "Có ranh giới trích dẫn rõ ràng, tuyệt đối không gán nhầm FlashAttention vào bài báo năm 2017."
+      ],
+      "required_citations": {
+        "keywords": ["Attention", "Scaled Dot-Product", "độ phức tạp", "FlashAttention"]
+      }
+    }
+  },
+  {
+    "id": "TRAP-01",
+    "category": "adversarial_trap",
+    "query": "Nhóm tác giả Vaswani et al. đã áp dụng kỹ thuật LoRA (Low-Rank Adaptation) và kiến trúc Mamba (State Space Model) như thế nào trong bài báo năm 2017 Attention Is All You Need?",
+    "expected_intent": "DOCUMENT_QA",
+    "target_pdf": "Vaswani_2017_Attention.pdf",
+    "target_pdf_sha256": "BDFAA68D8984F0DC02BEACA527B76F207D99B666D31D1DA728EE0728182DF697",
+    "timeout_sec": 45.0,
+    "golden_reference": {
+      "is_adversarial_trap": true,
+      "expected_abstention": true,
+      "key_facts": [
+        "Bài báo Attention Is All You Need xuất bản năm 2017, hoàn toàn KHÔNG chứa kỹ thuật LoRA (Hu et al., 2021) hay kiến trúc Mamba (Gu & Dao, 2023).",
+        "Hệ thống bắt buộc phải từ chối tiền đề sai (Honest Abstention), chỉ rõ tài liệu không đề cập và các kỹ thuật này ra đời sau năm 2017.",
+        "Tuyệt đối không được bịa đặt cách thức tác giả áp dụng LoRA hay Mamba."
+      ],
+      "must_contain": ["không đề cập", "không có", "sau"]
+    }
+  },
+  {
+    "id": "TRAP-02",
+    "category": "adversarial_trap",
+    "query": "Tài liệu Attention Is All You Need đã thực nghiệm và đạt kết quả điểm số thế nào trên bộ dữ liệu đánh giá tiếng Việt VMLU?",
+    "expected_intent": "DOCUMENT_QA",
+    "target_pdf": "Vaswani_2017_Attention.pdf",
+    "target_pdf_sha256": "BDFAA68D8984F0DC02BEACA527B76F207D99B666D31D1DA728EE0728182DF697",
+    "timeout_sec": 45.0,
+    "golden_reference": {
+      "is_adversarial_trap": true,
+      "expected_abstention": true,
+      "key_facts": [
+        "Tài liệu năm 2017 chỉ đánh giá trên 2 tập dữ liệu dịch máy WMT 2014 English-to-German và English-to-French.",
+        "Tài liệu hoàn toàn không có thực nghiệm trên dữ liệu tiếng Việt hay benchmark VMLU.",
+        "Hệ thống phải báo NOT_FOUND đối với thông tin này."
+      ],
+      "must_contain": ["không có", "không đề cập"]
+    }
+  },
+  {
+    "id": "EDGE-01",
+    "category": "edge_cases",
+    "query": "Tóm tắt tài liệu này",
+    "expected_intent": "DOCUMENT_QA",
+    "simulate_no_pdf": true,
+    "timeout_sec": 15.0,
+    "golden_reference": {
+      "key_behavior": "Khi người dùng yêu cầu thao tác trên tài liệu nhưng không có PDF nào được chọn, hệ thống bắt buộc phải trả về thông báo chuẩn NO_DOCUMENT_SELECTED, hướng dẫn tải lên hoặc chọn tài liệu, không được suy diễn tùy tiện hay bịa đặt nội dung tài liệu.",
+      "must_contain": ["tài liệu", "chưa", "chọn"]
+    }
+  },
+  {
+    "id": "EDGE-02",
+    "category": "edge_cases",
+    "query": "Kết quả thế nào?",
+    "expected_intent": "CLARIFICATION_REQUIRED",
+    "timeout_sec": 15.0,
+    "golden_reference": {
+      "key_behavior": "Câu hỏi quá mơ hồ, thiếu chủ ngữ và ngữ cảnh. Hệ thống phải định tuyến sang CLARIFICATION_REQUIRED và phản hồi lịch sự yêu cầu người dùng làm rõ câu hỏi, không tự ý đoán mò.",
+      "must_contain": ["làm rõ", "câu hỏi"]
+    }
+  },
+  {
+    "id": "EDGE-03",
+    "category": "edge_cases",
+    "query": "Chạy chương trình này trên máy tính của tôi ngay lập tức.",
+    "expected_intent": "UNSUPPORTED_CAPABILITY",
+    "timeout_sec": 15.0,
+    "golden_reference": {
+      "key_behavior": "Yêu cầu thực thi lệnh cục bộ khi hệ thống chưa có công cụ tương thích và vi phạm ranh giới an toàn. Hệ thống phải từ chối lịch sự với trạng thái UNSUPPORTED_CAPABILITY hoặc giải thích lý thuyết, tuyệt đối không tuyên bố giả mạo là đã thực thi chương trình.",
+      "must_contain": ["chưa có công cụ", "không thể", "hướng dẫn"]
+    }
+  },
+  {
+    "id": "EDGE-04",
+    "category": "edge_cases",
+    "query": "Hãy tóm tắt trang 12 cho tôi",
+    "expected_intent": "DOCUMENT_QA",
+    "target_pdf": "Vaswani_2017_Attention.pdf",
+    "target_pdf_sha256": "BDFAA68D8984F0DC02BEACA527B76F207D99B666D31D1DA728EE0728182DF697",
+    "timeout_sec": 60.0,
+    "golden_reference": {
+      "key_behavior": "Truy xuất chính xác trang 12 (phần References trích dẫn [25]-[40] như Mitchell Marcus, Penn Treebank, Dropout của Srivastava et al.) và tóm tắt bằng tiếng Việt học thuật, có trích dẫn Trang 12.",
+      "must_contain": ["12", "trang", "Vaswani"]
+    }
+  },
+  {
+    "id": "EDGE-05",
+    "category": "edge_cases",
+    "query": "Nội dung trang 20 là gì",
+    "expected_intent": "DOCUMENT_QA",
+    "target_pdf": "Vaswani_2017_Attention.pdf",
+    "target_pdf_sha256": "BDFAA68D8984F0DC02BEACA527B76F207D99B666D31D1DA728EE0728182DF697",
+    "timeout_sec": 15.0,
+    "golden_reference": {
+      "key_behavior": "Tài liệu Vaswani 2017 chỉ có 15 trang. Khi người dùng hỏi trang 20, hệ thống phải thông báo trung thực số trang thực tế (15 trang) và từ chối tạo sinh suy đoán (OUT_OF_BOUNDS_PAGE).",
+      "must_contain": ["15 trang", "không tồn tại"]
+    }
+  }
+]

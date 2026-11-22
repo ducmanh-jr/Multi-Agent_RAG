@@ -386,11 +386,32 @@ def summarize_critic(req: CriticRequest):
     try:
         m = re.search(r"\{.*\}", raw, re.DOTALL)
         if m:
-            parsed = json.loads(m.group(0))
-            if isinstance(parsed, dict) and "action" in parsed:
-                return parsed
+            block = m.group(0)
+            try:
+                parsed = json.loads(block)
+                if isinstance(parsed, dict) and "action" in parsed:
+                    return parsed
+            except Exception:
+                import ast
+                parsed = ast.literal_eval(block)
+                if isinstance(parsed, dict) and "action" in parsed:
+                    return parsed
     except Exception:
         pass
+
+    # Robust regex extraction for action & critique
+    action_match = re.search(
+        r"['\"]?action['\"]?\s*[:=]\s*['\"]?(accept|approve|rewrite|request_more_context)['\"]?",
+        raw,
+        re.IGNORECASE,
+    )
+    if action_match:
+        val = action_match.group(1).lower()
+        act = "accept" if val in ("accept", "approve") else ("request_more_context" if val == "request_more_context" else "rewrite")
+        crit_match = re.search(r"['\"]?critique['\"]?\s*[:=]\s*(.*?)(?=['\"]?action|\Z)", raw, re.DOTALL | re.IGNORECASE)
+        critique = crit_match.group(1).strip(" \t\n\r'\",") if crit_match else raw[:300]
+        return {"action": act, "critique": critique, "issues_found": []}
+
     # CRITICAL FAIL-CLOSED: Malformed JSON must NEVER default to 'accept'!
     return {
         "critique": f"Không thể phân tích phản hồi JSON từ Critic: {raw}",

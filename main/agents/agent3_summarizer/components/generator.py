@@ -200,15 +200,24 @@ YÊU CẦU TRẢ VỀ ĐÚNG ĐỊNH DẠNG JSON (không kèm markdown bên ngo�
 
         evidence_spans = []
         for i, ev in enumerate(raw_evidence):
-            q = ev.get("quote", "").strip()
+            if isinstance(ev, dict):
+                q = str(ev.get("quote") or ev.get("text") or "").strip()
+                unit_id = ev.get("unit_id", "unknown")
+                doc_id = ev.get("doc_id", "unknown")
+                page_no = ev.get("page_no", 1)
+            else:
+                q = str(ev).strip()
+                unit_id = f"ev_{i+1}"
+                doc_id = "doc"
+                page_no = 1
             if not q:
                 continue
             span = EvidenceSpan(
                 id=f"ev_{i+1}",
                 quote=q,
-                source_unit_id=ev.get("unit_id", "unknown"),
-                doc_id=ev.get("doc_id", "unknown"),
-                page_no=ev.get("page_no", 1),
+                source_unit_id=unit_id,
+                doc_id=doc_id,
+                page_no=page_no,
             )
             evidence_spans.append(span.to_dict())
 

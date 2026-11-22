@@ -80,16 +80,23 @@ class GPUFinetuneReaderAgent(BaseAgent):
             if not extracted_tables:
                 for p in sorted(pages_covered)[:2]:
                     tbl = extract_table_or_equations_tool(pdf_path, p)
-                    if tbl and tbl.strip():
-                        extracted_tables.append(tbl.strip())
+                    if tbl and tbl.strip() and "|" in tbl and not tbl.strip().startswith("Không phát hiện"):
+                        extracted_tables.append((p, tbl.strip()))
 
         # 3. Augment source units with extracted tables if any
-        for t_idx, tbl_str in enumerate(extracted_tables[:2]):
+        for t_idx, item in enumerate(extracted_tables[:2]):
+            if isinstance(item, tuple):
+                tbl_p, tbl_str = item
+            else:
+                tbl_p = list(pages_covered)[0] if pages_covered else 1
+                tbl_str = str(item)
+            if not tbl_str or tbl_str.startswith("Không phát hiện") or "|" not in tbl_str:
+                continue
             t_unit = SourceUnit(
                 id=f"table_layoutlmv3_{t_idx + 1}",
                 text=f"[LayoutLMv3 Extracted Table]:\n{tbl_str}",
                 doc_id=str(os.path.basename(pdf_path) if pdf_path else "extracted_tables"),
-                page_no=list(pages_covered)[0] if pages_covered else 1,
+                page_no=tbl_p,
                 character_offset=curr_offset,
             )
             curr_offset += len(t_unit.text) + 1

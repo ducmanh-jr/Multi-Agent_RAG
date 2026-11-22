@@ -1078,6 +1078,38 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
 
+    // KIỂM TRA TÓM TẮT NHIỀU BÀI BÁO: Nếu tích chọn >= 2 bài báo mà yêu cầu tóm tắt -> nhắc chỉ chọn 1 bài báo
+    const lowQueryText = text.toLowerCase();
+    const isCompareIntent = ["/so-sanh", "/so_sanh", "so sánh", "so sanh", "đối chiếu", "doi chieu", "khác biệt", "giống nhau", "compare"].some((kw) => lowQueryText.includes(kw));
+    const isSummaryIntent =
+      lowQueryText.startsWith("/tom-tat") ||
+      lowQueryText.startsWith("/tom_tat") ||
+      lowQueryText.startsWith("/summary") ||
+      lowQueryText.startsWith("/summarize") ||
+      (!isCompareIntent && ["tóm tắt", "tom tat", "summarize", "summary"].some((kw) => lowQueryText.includes(kw)));
+
+    if (docIds.length > 1 && isSummaryIntent) {
+      const multiDocCard = document.createElement("div");
+      multiDocCard.className = "message-card";
+      multiDocCard.innerHTML = `
+        <div class="agent-response-container">
+          <div class="agent-output-block" style="padding: 16px 20px; border-left: 4px solid #f59e0b; background: #fffbeb; border-radius: 8px;">
+            <div style="font-size: 14px; color: #92400e; line-height: 1.6; font-weight: 500;">
+              ⚠️ Bạn đang tích chọn <b>${docIds.length} bài báo/tài liệu</b>. Hãy <b>chỉ chọn 1 bài báo</b> để tóm tắt.
+            </div>
+            <div style="font-size: 12.5px; color: #78350f; margin-top: 6px; line-height: 1.5;">
+              • Bỏ tích bớt ở cột bên trái để chỉ giữ lại <b>1 bài báo</b> cần tóm tắt.<br>
+              • Hoặc sử dụng lệnh <code>/so-sanh</code> nếu bạn muốn đối chiếu nội dung giữa nhiều tài liệu.
+            </div>
+          </div>
+        </div>
+      `;
+      messageFeed.appendChild(multiDocCard);
+      messageFeed.scrollTo({ top: messageFeed.scrollHeight, behavior: "smooth" });
+      setButtonState(promptInput.value.trim().length > 0 ? "ready" : "idle");
+      return;
+    }
+
     const isAutoScout = state.autoScout;
     const initialTask = isAutoScout ? "Agent 0 đang trinh sát ArXiv & CrossRef" : "Đang đọc hiểu tài liệu và đối soát";
     const messageCard = createAgentSkeleton(initialTask);
@@ -1207,7 +1239,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // ==================== 5. POLLING STATUS ====================
   function pollRunStatus(runId, messageCard, query, startTime, timerInterval) {
-    const maxPolls = 300;
+    const maxPolls = 800; // Cho phép tối đa ~6 phút cho chu trình 5 Multi-Agent chuyên sâu trên GPU Kaggle
     let polls = 0;
     let consecutiveErrors = 0;
     let isStopped = false;
@@ -2663,13 +2695,15 @@ document.addEventListener("DOMContentLoaded", () => {
     const docNameLow = (doc.name || "").toLowerCase();
     const docPathLow = (doc.path || "").toLowerCase();
     const hasPdf = Boolean(doc.has_pdf || doc.doc_type === "pdf" || docNameLow.endsWith(".pdf") || docPathLow.endsWith(".pdf"));
+    const isMdFile = docNameLow.endsWith(".md") || docNameLow.endsWith(".markdown") || docPathLow.endsWith(".md") || docPathLow.endsWith(".markdown");
+    const isTextFile = !hasPdf && (isMdFile || docNameLow.endsWith(".txt") || docNameLow.endsWith(".log") || docNameLow.endsWith(".csv") || docNameLow.endsWith(".json") || (doc.doc_type === "text" && !doc.source_url));
 
-    // Download button: ONLY show if real PDF exists
+    // Download button: show for local PDF and uploaded text/markdown files
     const downloadBtn = document.getElementById("downloadDocBtn");
     if (downloadBtn) {
-      if (hasPdf) {
+      if (hasPdf || isTextFile) {
         downloadBtn.href = docFileUrl;
-        downloadBtn.download = doc.name || "academic_paper.pdf";
+        downloadBtn.download = doc.name || (isMdFile ? "document.md" : "academic_paper.pdf");
         downloadBtn.style.display = "inline-flex";
       } else {
         downloadBtn.style.display = "none";
@@ -2688,7 +2722,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // Update Tab 1 Label
     const tabPdfLabel = document.getElementById("tabPdfLabel");
     if (tabPdfLabel) {
-      tabPdfLabel.textContent = hasPdf ? "Bài Báo PDF Gốc" : "Hồ Sơ & Tham Chiếu Gốc";
+      tabPdfLabel.textContent = hasPdf ? "Bài Báo PDF Gốc" : (isMdFile ? "Tài Liệu Markdown" : (isTextFile ? "Nội Dung Tài Liệu" : "Hồ Sơ & Tham Chiếu Gốc"));
     }
 
     const pdfWrapper = document.getElementById("pdfFrameWrapper");
@@ -2731,52 +2765,95 @@ document.addEventListener("DOMContentLoaded", () => {
         const sourceUrl = doc.source_url || "";
         const yearStr = doc.year || 2024;
         const abstractStr = doc.abstract || "";
+        const currentRenderJob = pdfRenderJobCounter;
 
-        mdViewer.innerHTML = `
-          <div class="academic-ref-profile" style="padding: 24px 28px; max-width: 800px; margin: 0 auto; color: #18181b;">
-            <div style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; background: #f4f4f5; border: 1px solid #e4e4e7; border-radius: 4px; font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #52525b; margin-bottom: 14px;">
-              <span>Tham chiếu bài báo gốc</span>
-              <span>•</span>
-              <span>Xuất bản ${escapeHtml(String(yearStr))}</span>
+        if (isTextFile) {
+          mdViewer.innerHTML = `
+            <div style="padding: 24px 28px; max-width: 860px; margin: 0 auto; color: #52525b; font-size: 13.5px;">
+              Đang tải nội dung tệp <b>${escapeHtml(doc.name || titleStr)}</b>...
             </div>
-            
-            <h2 style="font-size: 20px; font-weight: 700; line-height: 1.4; margin: 0 0 12px 0; color: #09090b;">
-              ${escapeHtml(titleStr)}
-            </h2>
-            
-            <div style="font-size: 13.5px; color: #52525b; margin-bottom: 8px;">
-              <b>Tác giả:</b> ${escapeHtml(authorsStr)}
-            </div>
-            <div style="font-size: 13.5px; color: #52525b; margin-bottom: 18px;">
-              <b>Nguồn xuất bản:</b> ${escapeHtml(sourceStr)}
-            </div>
-
-            ${sourceUrl ? `
-              <div style="margin: 18px 0 24px 0; padding: 16px; background: #fafafa; border: 1px solid #e4e4e7; border-radius: 8px;">
-                <div style="font-size: 12.5px; color: #71717a; margin-bottom: 10px;">
-                  Tài liệu này được công bố chính thức trên trang của nhà xuất bản / cơ sở dữ liệu học thuật. Nhấn nút bên dưới để truy cập trực tiếp bài báo gốc:
+          `;
+          fetch(docFileUrl)
+            .then((res) => {
+              if (!res.ok) throw new Error(`HTTP ${res.status}`);
+              return res.text();
+            })
+            .then((rawText) => {
+              if (currentRenderJob !== pdfRenderJobCounter) return;
+              const bodyHtml = isMdFile
+                ? `<div class="markdown-body">${renderMarkdown(rawText, [])}</div>`
+                : `<pre style="white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 13px; line-height: 1.65; color: #18181b; margin: 0;">${escapeHtml(rawText)}</pre>`;
+              mdViewer.innerHTML = `
+                <div class="doc-text-viewer" style="padding: 24px 28px; max-width: 880px; margin: 0 auto; color: #18181b;">
+                  <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-bottom: 12px; margin-bottom: 18px; border-bottom: 1px solid #e4e4e7;">
+                    <span style="display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; background: #f4f4f5; border: 1px solid #e4e4e7; border-radius: 4px; font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: #52525b;">
+                      ${isMdFile ? "Markdown" : "Văn Bản"} • ${escapeHtml(doc.name || titleStr)}
+                    </span>
+                    <span style="font-size: 12px; color: #71717a;">
+                      ${doc.page_count ? `${doc.page_count} phần` : ""} ${doc.chunk_count ? `• ${doc.chunk_count} đoạn` : ""}
+                    </span>
+                  </div>
+                  ${bodyHtml}
                 </div>
-                <a href="${escapeHtml(sourceUrl)}" target="_blank" rel="noopener noreferrer" style="display: inline-flex; align-items: center; gap: 8px; padding: 10px 20px; background: #18181b; color: #ffffff; text-decoration: none; border-radius: 6px; font-size: 13.5px; font-weight: 600; transition: background 0.15s ease;">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
-                    <polyline points="15 3 21 3 21 9"/>
-                    <line x1="10" y1="14" x2="21" y2="3"/>
-                  </svg>
-                  <span>Truy Cập Bài Báo Gốc Tại Nhà Xuất Bản ↗</span>
-                </a>
+              `;
+            })
+            .catch((err) => {
+              if (currentRenderJob !== pdfRenderJobCounter) return;
+              mdViewer.innerHTML = `
+                <div class="academic-ref-profile" style="padding: 24px 28px; max-width: 800px; margin: 0 auto; color: #18181b;">
+                  <h2 style="font-size: 20px; font-weight: 700; margin: 0 0 12px 0;">${escapeHtml(titleStr)}</h2>
+                  <p style="color: #b91c1c; font-size: 13px;">Không tải được nội dung tệp gốc (${escapeHtml(err.message)}).</p>
+                  <div class="markdown-body">${renderMarkdown(abstractStr || "", [])}</div>
+                </div>
+              `;
+            });
+        } else {
+          mdViewer.innerHTML = `
+            <div class="academic-ref-profile" style="padding: 24px 28px; max-width: 800px; margin: 0 auto; color: #18181b;">
+              <div style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; background: #f4f4f5; border: 1px solid #e4e4e7; border-radius: 4px; font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #52525b; margin-bottom: 14px;">
+                <span>Tham chiếu bài báo gốc</span>
+                <span>•</span>
+                <span>Xuất bản ${escapeHtml(String(yearStr))}</span>
               </div>
-            ` : ""}
+              
+              <h2 style="font-size: 20px; font-weight: 700; line-height: 1.4; margin: 0 0 12px 0; color: #09090b;">
+                ${escapeHtml(titleStr)}
+              </h2>
+              
+              <div style="font-size: 13.5px; color: #52525b; margin-bottom: 8px;">
+                <b>Tác giả:</b> ${escapeHtml(authorsStr)}
+              </div>
+              <div style="font-size: 13.5px; color: #52525b; margin-bottom: 18px;">
+                <b>Nguồn xuất bản:</b> ${escapeHtml(sourceStr)}
+              </div>
 
-            <div style="margin-top: 20px; padding-top: 18px; border-top: 1px solid #e4e4e7;">
-              <h3 style="font-size: 14.5px; font-weight: 700; margin: 0 0 10px 0; text-transform: uppercase; letter-spacing: 0.03em; color: #18181b;">
-                Tóm Tắt Nội Dung Nghiên Cứu (Abstract)
-              </h3>
-              <p style="font-size: 14px; line-height: 1.75; color: #3f3f46; white-space: pre-wrap; margin: 0;">
-                ${escapeHtml(abstractStr || "Đang cập nhật tóm tắt từ hệ thống...")}
-              </p>
+              ${sourceUrl ? `
+                <div style="margin: 18px 0 24px 0; padding: 16px; background: #fafafa; border: 1px solid #e4e4e7; border-radius: 8px;">
+                  <div style="font-size: 12.5px; color: #71717a; margin-bottom: 10px;">
+                    Tài liệu này được công bố chính thức trên trang của nhà xuất bản / cơ sở dữ liệu học thuật. Nhấn nút bên dưới để truy cập trực tiếp bài báo gốc:
+                  </div>
+                  <a href="${escapeHtml(sourceUrl)}" target="_blank" rel="noopener noreferrer" style="display: inline-flex; align-items: center; gap: 8px; padding: 10px 20px; background: #18181b; color: #ffffff; text-decoration: none; border-radius: 6px; font-size: 13.5px; font-weight: 600; transition: background 0.15s ease;">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                      <polyline points="15 3 21 3 21 9"/>
+                      <line x1="10" y1="14" x2="21" y2="3"/>
+                    </svg>
+                    <span>Truy Cập Bài Báo Gốc Tại Nhà Xuất Bản ↗</span>
+                  </a>
+                </div>
+              ` : ""}
+
+              <div style="margin-top: 20px; padding-top: 18px; border-top: 1px solid #e4e4e7;">
+                <h3 style="font-size: 14.5px; font-weight: 700; margin: 0 0 10px 0; text-transform: uppercase; letter-spacing: 0.03em; color: #18181b;">
+                  Tóm Tắt Nội Dung Nghiên Cứu (Abstract)
+                </h3>
+                <p style="font-size: 14px; line-height: 1.75; color: #3f3f46; white-space: pre-wrap; margin: 0;">
+                  ${escapeHtml(abstractStr || "Đang cập nhật tóm tắt từ hệ thống...")}
+                </p>
+              </div>
             </div>
-          </div>
-        `;
+          `;
+        }
       }
     }
 

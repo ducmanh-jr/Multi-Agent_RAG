@@ -1,0 +1,199 @@
+{
+  "metadata": {
+    "evaluation_name": "Real-World Academic Evaluation (Harden GPU Finetune Step 2)",
+    "execution_mode": "gpu_finetune",
+    "target_gateway": "https://emphasis-mesa-staffing-interval.trycloudflare.com",
+    "target_pdf": "Vaswani_2017_Attention.pdf",
+    "target_pdf_sha256": "BDFAA68D8984F0DC02BEACA527B76F207D99B666D31D1DA728EE0728182DF697"
+  },
+  "metrics": {
+    "total_cases": 18,
+    "passed_cases": 18,
+    "failed_cases": 0,
+    "blocked_cases": 0,
+    "pass_percentage": 100.0,
+    "avg_latency_sec": 95.38
+  },
+  "case_results": [
+    {
+      "id": "DOC-01",
+      "category": "document_qa",
+      "intent": "DOCUMENT_QA",
+      "evidence_status": "FOUND",
+      "citations_count": 4,
+      "latency_sec": 83.53,
+      "status": "PASS",
+      "output_sample": "# Báo cáo Nghiên cứu: Xác định tên bài báo, danh sách tất cả các tác giả, tổ chức nghiên cứu và năm xuất bản..."
+    },
+    {
+      "id": "DOC-02",
+      "category": "document_qa",
+      "intent": "DOCUMENT_QA",
+      "evidence_status": "FOUND",
+      "citations_count": 5,
+      "latency_sec": 156.27,
+      "status": "PASS",
+      "output_sample": "# Báo cáo Nghiên cứu: Hãy tóm tắt toàn bộ bài báo Attention Is All You Need, bao gồm mục tiêu nghiên cứu..."
+    },
+    {
+      "id": "DOC-03",
+      "category": "document_qa",
+      "intent": "DOCUMENT_QA",
+      "evidence_status": "FOUND",
+      "citations_count": 4,
+      "latency_sec": 146.02,
+      "status": "PASS",
+      "output_sample": "# Báo cáo Nghiên cứu: Dựa trên bài báo Attention Is All You Need, giải thích chi tiết cơ chế Scaled Dot-Product..."
+    },
+    {
+      "id": "DOC-04",
+      "category": "document_qa",
+      "intent": "DOCUMENT_QA",
+      "evidence_status": "FOUND",
+      "citations_count": 4,
+      "latency_sec": 136.21,
+      "status": "PASS",
+      "output_sample": "# Báo cáo Nghiên cứu: Trong bài báo Attention Is All You Need, hãy so sánh kích thước và siêu tham số của hai mô hình..."
+    },
+    {
+      "id": "DOC-05",
+      "category": "document_qa",
+      "intent": "DOCUMENT_QA",
+      "evidence_status": "PARTIAL",
+      "citations_count": 3,
+      "latency_sec": 316.2,
+      "status": "PASS",
+      "output_sample": "# Báo cáo Nghiên cứu: So sánh chi phí huấn luyện (Training Cost / FLOPs) và thời gian GPU của mô hình Transformer..."
+    },
+    {
+      "id": "GQA-01",
+      "category": "general_qa",
+      "intent": "GENERAL_QA",
+      "evidence_status": "NOT_APPLICABLE",
+      "citations_count": 0,
+      "latency_sec": 104.84,
+      "status": "PASS",
+      "output_sample": "### 1. Tổng hợp Biên tập Khoa học: RAG (Retrieval-Augmented Generation) là một kỹ thuật trong trí tuệ nhân tạo..."
+    },
+    {
+      "id": "GQA-02",
+      "category": "general_qa",
+      "intent": "GENERAL_QA",
+      "evidence_status": "NOT_APPLICABLE",
+      "citations_count": 0,
+      "latency_sec": 98.06,
+      "status": "PASS",
+      "output_sample": "### 1. Cơ sở Khoa học Đã Biên tập: So sánh chi tiết giữa Dense Retrieval và Sparse Retrieval trong các hệ thống IR..."
+    },
+    {
+      "id": "GQA-03",
+      "category": "general_qa",
+      "intent": "TASK_ASSISTED_RESPONSE",
+      "evidence_status": "NOT_APPLICABLE",
+      "citations_count": 0,
+      "latency_sec": 0.01,
+      "status": "PASS",
+      "output_sample": "Bản dịch học thuật: Các mô hình ngôn ngữ lớn (LLM) thường gặp phải tình trạng ảo giác sự thật và tri thức lạc hậu..."
+    },
+    {
+      "id": "GQA-04",
+      "category": "task_execution",
+      "intent": "TASK_ASSISTED_RESPONSE",
+      "evidence_status": "NOT_APPLICABLE",
+      "citations_count": 14,
+      "latency_sec": 53.0,
+      "status": "PASS",
+      "output_sample": "def top_k_items(items, k):\n    if k <= 0 or not items:\n        return []\n    return sorted(items, key=lambda x: x[1], reverse=True)[:k]"
+    },
+    {
+      "id": "MIX-01",
+      "category": "mixed_qa",
+      "intent": "MIXED_QA",
+      "evidence_status": "FOUND",
+      "citations_count": 6,
+      "latency_sec": 309.3,
+      "status": "PASS",
+      "output_sample": "# Báo cáo Nghiên cứu: So sánh kiến trúc Transformer trong bài báo Attention Is All You Need với các nghiên cứu bên ngoài về RAG..."
+    },
+    {
+      "id": "MIX-02",
+      "category": "mixed_qa",
+      "intent": "MIXED_QA",
+      "evidence_status": "FOUND",
+      "citations_count": 5,
+      "latency_sec": 190.5,
+      "status": "PASS",
+      "output_sample": "# Báo cáo Nghiên cứu: Tổng hợp các cải tiến sau Attention Is All You Need (FlashAttention, Linear Attention)..."
+    },
+    {
+      "id": "TRAP-01",
+      "category": "adversarial_trap",
+      "intent": "DOCUMENT_QA",
+      "evidence_status": "NOT_FOUND",
+      "citations_count": 0,
+      "latency_sec": 1.9,
+      "status": "PASS",
+      "output_sample": "# Báo cáo Thẩm định Học thuật: Hệ thống xác nhận không tìm thấy thông tin tác giả nào từng làm việc tại OpenAI..."
+    },
+    {
+      "id": "TRAP-02",
+      "category": "adversarial_trap",
+      "intent": "DOCUMENT_QA",
+      "evidence_status": "NOT_FOUND",
+      "citations_count": 0,
+      "latency_sec": 1.3,
+      "status": "PASS",
+      "output_sample": "# Báo cáo Thẩm định Học thuật: Hệ thống xác nhận bài báo Attention Is All You Need hoàn toàn không được tài trợ bởi VinFast..."
+    },
+    {
+      "id": "EDGE-01",
+      "category": "edge_cases",
+      "intent": "DOCUMENT_QA",
+      "evidence_status": "NOT_APPLICABLE",
+      "citations_count": 0,
+      "latency_sec": 0.01,
+      "status": "PASS",
+      "output_sample": "Câu hỏi này cần được trả lời dựa trên tài liệu nhưng hiện tại chưa có tài liệu nào được chọn. Vui lòng tải lên tài liệu..."
+    },
+    {
+      "id": "EDGE-02",
+      "category": "edge_cases",
+      "intent": "CLARIFICATION_REQUIRED",
+      "evidence_status": "NOT_APPLICABLE",
+      "citations_count": 0,
+      "latency_sec": 0.01,
+      "status": "PASS",
+      "output_sample": "Câu hỏi của bạn hiện còn ngắn hoặc chưa rõ ràng. Vui lòng cung cấp thêm ngữ cảnh cụ thể..."
+    },
+    {
+      "id": "EDGE-03",
+      "category": "edge_cases",
+      "intent": "UNSUPPORTED_CAPABILITY",
+      "evidence_status": "NOT_APPLICABLE",
+      "citations_count": 0,
+      "latency_sec": 0.01,
+      "status": "PASS",
+      "output_sample": "Tôi chưa có công cụ hoặc dữ liệu chuyên biệt để giải quyết trực tiếp tác vụ này. Tuy nhiên, tôi có thể hướng dẫn..."
+    },
+    {
+      "id": "EDGE-04",
+      "category": "edge_cases",
+      "intent": "DOCUMENT_QA",
+      "evidence_status": "FOUND",
+      "citations_count": 1,
+      "latency_sec": 117.51,
+      "status": "PASS",
+      "output_sample": "# Báo cáo Nghiên cứu: Hãy tóm tắt trang 12 cho tôi (Trang 12 trích dẫn mục [25]-[40], Dropout của Srivastava et al.)..."
+    },
+    {
+      "id": "EDGE-05",
+      "category": "edge_cases",
+      "intent": "DOCUMENT_QA",
+      "evidence_status": "NOT_FOUND",
+      "citations_count": 3,
+      "latency_sec": 2.1,
+      "status": "PASS",
+      "output_sample": "# Báo cáo Thẩm định Học thuật (OUT_OF_BOUNDS_PAGE): Tài liệu mục tiêu Vaswani_2017_Attention.pdf chỉ có 15 trang. Không tồn tại trang 20..."
+    }
+  ]
+}

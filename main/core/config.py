@@ -34,6 +34,12 @@ class Settings:
         default_factory=lambda: os.getenv("REMOTE_INFERENCE_URL", "").rstrip("/")
     )
     REMOTE_TIMEOUT_SECONDS: int = int(os.getenv("REMOTE_TIMEOUT_SECONDS", "90"))
+    SUPERVISOR_ADMIN_TOKEN: str = field(
+        default_factory=lambda: os.getenv("SUPERVISOR_ADMIN_TOKEN", "")
+    )
+    INFERENCE_API_KEY: str = field(
+        default_factory=lambda: os.getenv("INFERENCE_API_KEY", "") or os.getenv("SUPERVISOR_ADMIN_TOKEN", "")
+    )
 
     # Local CPU Inference Engine (Ollama / Llama.cpp / GGUF on user's PC)
     LOCAL_CPU_URL: str = field(
@@ -44,6 +50,9 @@ class Settings:
     )
 
     # Granular Per-Agent Execution Modes: "api" | "model" | "cpu"
+    AGENT_ROUTER_MODE: str = field(
+        default_factory=lambda: os.getenv("AGENT_ROUTER_MODE", "api").lower()
+    )
     AGENT_RETRIEVAL_MODE: str = field(
         default_factory=lambda: os.getenv("AGENT_RETRIEVAL_MODE", "api").lower()
     )
@@ -61,9 +70,10 @@ class Settings:
     )
 
     def get_agent_mode(self, agent_name: str) -> str:
-        """Returns 'api' or 'model' for the specified agent."""
+        """Returns execution mode for the specified agent."""
         clean_name = agent_name.lower().replace("agent", "").replace("_", "").strip()
         name_map = {
+            "router": "AGENT_ROUTER_MODE",
             "retrieval": "AGENT_RETRIEVAL_MODE",
             "reader": "AGENT_READER_MODE",
             "summarizer": "AGENT_SUMMARIZER_MODE",
@@ -71,12 +81,13 @@ class Settings:
             "writer": "AGENT_WRITER_MODE",
         }
         attr = name_map.get(clean_name, f"AGENT_{clean_name.upper()}_MODE")
-        return getattr(self, attr, "api")
+        return getattr(self, attr, self.EXECUTION_MODE)
 
     def set_agent_mode(self, agent_name: str, mode: str):
-        """Sets 'api' or 'model' for the specified agent."""
+        """Sets execution mode for the specified agent."""
         clean_name = agent_name.lower().replace("agent", "").replace("_", "").strip()
         name_map = {
+            "router": "AGENT_ROUTER_MODE",
             "retrieval": "AGENT_RETRIEVAL_MODE",
             "reader": "AGENT_READER_MODE",
             "summarizer": "AGENT_SUMMARIZER_MODE",
@@ -89,6 +100,7 @@ class Settings:
 
     def get_all_agent_modes(self) -> dict[str, str]:
         return {
+            "router": self.AGENT_ROUTER_MODE,
             "retrieval": self.AGENT_RETRIEVAL_MODE,
             "reader": self.AGENT_READER_MODE,
             "summarizer": self.AGENT_SUMMARIZER_MODE,

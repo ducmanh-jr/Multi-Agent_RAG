@@ -78,8 +78,8 @@ _TASK_ASSISTED_PATTERNS = [
 
 _WEB_RESEARCH_PATTERNS = [
     r"\b(tìm(?:\s+kiếm)?\s+(?:các\s+)?(?:bài\s+báo|tài\s+liệu|nghiên\s+cứu|công\s+trình)|search\s+(?:for\s+)?papers?|find\s+papers?)\b",
-    r"\b(nghiên\s+cứu\s+(?:mới(?:\s+nhất)?|mở\s+rộng|gần\s+đây|hiện\s+đại)|bài\s+báo\s+(?:mới(?:\s+nhất)?|gần\s+đây)|recent\s+(?:papers?|research)|latest\s+(?:papers?|research|release|version))\b",
-    r"\b(phiên\s+bản\s+mới\s+nhất|tin\s+tức\s+mới\s+nhất|cập\s+nhật\s+mới\s+nhất|arxiv|openalex)\b",
+    r"\b(nghiên\s+cứu\s+(?:mới(?:\s+nhất)?|mở\s+rộng|gần\s+đây|hiện\s+đại|bên\s+ngoài|ngoài)|bài\s+báo\s+(?:mới(?:\s+nhất)?|gần\s+đây|bên\s+ngoài|ngoài)|recent\s+(?:papers?|research)|latest\s+(?:papers?|research|release|version)|external\s+(?:research|papers?|studies))\b",
+    r"\b(phiên\s+bản\s+mới\s+nhất|tin\s+tức\s+mới\s+nhất|cập\s+nhật\s+mới\s+nhất|arxiv|openalex|nghiên\s+cứu\s+bên\s+ngoài|tri\s+thức\s+bên\s+ngoài|external\s+sources?)\b",
 ]
 
 _EXPLICIT_DOCUMENT_PATTERNS = [

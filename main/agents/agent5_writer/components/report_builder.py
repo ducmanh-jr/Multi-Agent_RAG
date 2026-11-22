@@ -15,6 +15,36 @@ from agents.agent5_writer.components.gap_analyzer import (
 )
 
 
+def batch_translate_claims_if_needed(claims: list[str], is_query_vn: bool) -> dict[str, str]:
+    """Batch translates a list of English claims to academic Vietnamese in ONE single fast LLM call."""
+    if not is_query_vn or not claims:
+        return {}
+    needed = []
+    for c in claims:
+        c_clean = c.strip()
+        if len(re.findall(r"[à-ỹÀ-Ỹ]", c_clean)) < 5 and len(c_clean) > 15 and c_clean not in needed:
+            needed.append(c_clean)
+    if not needed:
+        return {}
+    try:
+        from utils.llm_client import llm_client
+        prompt = (
+            "Bạn là dịch giả khoa học hàn lâm. Hãy dịch từng nhận định sau sang TIẾNG VIỆT học thuật chuẩn xác, "
+            "giữ nguyên các chỉ số khoa học và thuật ngữ kỹ thuật trong ngoặc đơn (mỗi nhận định trên một dòng bắt đầu bằng - ):\n"
+            + "\n".join(f"- {c}" for c in needed)
+            + "\n\nBản dịch tiếng Việt học thuật:"
+        )
+        res = llm_client.generate(prompt=prompt, agent="router", max_tokens=min(1500, len(needed) * 90))
+        lines = [line.strip().lstrip("-*• ").strip() for line in (res or "").split("\n") if line.strip().lstrip("-*• ")]
+        mapping = {}
+        for orig, vi in zip(needed, lines):
+            if len(re.findall(r"[à-ỹÀ-Ỹ]", vi)) >= 3:
+                mapping[orig] = vi
+        return mapping
+    except Exception:
+        return {}
+
+
 def build_academic_report(
     query: str,
     verified_claims: list[dict[str, Any]],
@@ -40,6 +70,14 @@ def build_academic_report(
     rejected_claims = [
         c if isinstance(c, dict) else (c.to_dict() if hasattr(c, "to_dict") else {"claim": str(c), "claim_text": str(c), "text": str(c)})
         for c in (rejected_claims or [])
+    ]
+    retrieved_docs = [
+        d if isinstance(d, dict) else (d.to_dict() if hasattr(d, "to_dict") else {"text": str(d), "preview": str(d), "title": "Tài liệu", "doc_id": "doc_1", "page_no": 1})
+        for d in (retrieved_docs or [])
+    ]
+    evidence_spans = [
+        s if isinstance(s, dict) else (s.to_dict() if hasattr(s, "to_dict") else {"quote": str(s), "doc_id": "doc_1", "page_no": 1})
+        for s in (evidence_spans or [])
     ]
     is_ood = any(
         phrase in (answer or "").lower()
@@ -114,6 +152,27 @@ def build_academic_report(
             })
 
     # 2. Comprehensive Synthesis (always prioritize the full answer, removing any brief quick-answer prefixes)
+    is_query_vn = bool(re.search(r"[à-ỹÀ-Ỹ]", query) or any(kw in query.lower() for kw in ["tóm tắt", "tom-tat", "tổng quan"]))
+
+    # Batch translate claims to academic Vietnamese if query is in Vietnamese
+    raw_claims_to_check = []
+    for vc in verified_claims:
+        t = (vc.get("claim") or vc.get("text") or "").strip()
+        if t:
+            raw_claims_to_check.append(t)
+    for rc in rejected_claims:
+        t = (rc.get("claim") or rc.get("text") or "").strip()
+        if t:
+            raw_claims_to_check.append(t)
+
+    claim_trans_map = batch_translate_claims_if_needed(raw_claims_to_check, is_query_vn)
+
+    if answer and is_query_vn and len(answer.strip()) > 30:
+        for orig, vi in claim_trans_map.items():
+            if orig in answer:
+                answer = answer.replace(orig, vi)
+        answer = re.sub(r"Trọng tâm Phần (\d+): [A-Za-z0-9\s,\-\.]+", r"Nội dung trọng tâm Phần \1", answer)
+
     if answer and len(answer.strip()) > 30:
         clean_ans = answer.strip()
         clean_ans = re.sub(r"^>\s*\*\*Câu trả lời trực tiếp:\*\*\s*", "", clean_ans, flags=re.IGNORECASE).strip()
@@ -147,7 +206,7 @@ def build_academic_report(
 
         summary_narrative = (
             f"Dựa trên dữ liệu đối soát từ các tài liệu khoa học được chọn, nghiên cứu này xác thực và tổng hợp đầy đủ các luận điểm then chốt nhằm giải đáp câu hỏi: *\"{query}\"*:\n\n"
-            + "\n".join(f"- {s}" for s in clean_sentences[:7])
+            + "\n".join(f"- {claim_trans_map.get(s, s)}" for s in clean_sentences[:7])
         )
     elif rejected_claims and any(rc.get("text") or rc.get("claim") for rc in rejected_claims):
         r_sentences = []
@@ -158,7 +217,7 @@ def build_academic_report(
                 r_sentences.append(t)
         summary_narrative = (
             f"Dựa trên thông tin trích xuất sơ bộ từ tài liệu cho câu hỏi *\"{query}\"*:\n\n"
-            + "\n\n".join(f"- {s}" for s in r_sentences[:6])
+            + "\n\n".join(f"- {claim_trans_map.get(s, s)}" for s in r_sentences[:6])
         )
     else:
         summary_narrative = (
@@ -184,7 +243,8 @@ def build_academic_report(
                 ref_mark = f"[{r['ref_id']}]"
                 break
 
-        findings_lines.append(f"- **Nhận định {len(findings_lines)+1}:** {claim_text} {ref_mark}")
+        translated_claim = claim_trans_map.get(claim_text, claim_text)
+        findings_lines.append(f"- **Nhận định {len(findings_lines)+1}:** {translated_claim} {ref_mark}")
 
     if not findings_lines:
         findings_str = "> *Không có nhận định nào vượt qua vòng kiểm chứng nghiêm ngặt do thiếu chứng cứ gốc.*"
@@ -197,7 +257,8 @@ def build_academic_report(
         disclaimer_lines = []
         for rc in rejected_claims:
             c_txt = rc.get("claim") or rc.get("text") or ""
-            disclaimer_lines.append(f"- [Lưu ý] *{c_txt}* — Lý do: {rc.get('reasoning', 'Thiếu bằng chứng xác thực')}")
+            translated_c = claim_trans_map.get(c_txt, c_txt)
+            disclaimer_lines.append(f"- [Lưu ý] *{translated_c}* — Lý do: {rc.get('reasoning', 'Thiếu bằng chứng xác thực')}")
         disclaimer_block = f"\n\n### [Lưu ý] Các điểm chưa đủ căn cứ hoặc bị bác bỏ:\n" + "\n".join(disclaimer_lines)
 
     # 5. Bibliography block

@@ -54,8 +54,11 @@ class GPUFinetuneFactCheckerAgent(BaseAgent):
             "hoàn toàn không được đề cập" in answer
             or "không được đề cập" in answer
             or "Đánh giá tương quan:" in answer
+            or "không tồn tại trang" in answer.lower()
+            or ("chỉ có" in answer.lower() and "trang" in answer.lower())
             or state.get("critic_action") == "out_of_domain"
             or state.get("is_out_of_domain")
+            or state.get("answer_status") == "NOT_FOUND_IN_DOCUMENT"
         ):
             verified = [
                 ClaimCheckResult(
@@ -140,17 +143,8 @@ class GPUFinetuneFactCheckerAgent(BaseAgent):
                     prob = float(ev.get("confidence", 0.95))
                     reason = ev.get("reason", "")
 
-                    if "BGE NLI Head:" in reason:
-                        if "CONTRADICT" in raw_status:
-                            status = "SUPPORT"
-                        elif "NEUTRAL" in raw_status:
-                            status = "CONTRADICT"
-                        else:
-                            status = "NOT_ENOUGH_INFO"
-                    else:
-                        status = raw_status
-
-                    calibrated_reason = f"BGE NLI Head: {status} (p={prob:.2f})" if "BGE NLI Head:" in reason else (reason or f"Status: {status}")
+                    status = raw_status
+                    calibrated_reason = reason or f"BGE NLI Head: {status} (p={prob:.2f})"
 
                     if status in ("SUPPORT", "SUPPORTED", "TRUE", "PASS"):
                         verified.append(ClaimCheckResult(claim_text=txt, status="SUPPORT", reason=calibrated_reason).to_dict())

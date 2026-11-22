@@ -34,8 +34,24 @@ class UnifiedLLMClient:
 
     def __init__(self):
         self.settings = settings
-        self.http_client = httpx.Client(timeout=120.0)
+        self.http_client = httpx.Client(
+            timeout=httpx.Timeout(connect=15.0, read=120.0, write=30.0, pool=30.0)
+        )
         self._circuit_breaker_until: float = 0.0
+
+    def _get_remote_headers(self) -> dict[str, str]:
+        """Provides authentication headers for Kaggle Remote Inference Gateway."""
+        headers: dict[str, str] = {}
+        api_key = (
+            getattr(self.settings, "INFERENCE_API_KEY", "")
+            or getattr(self.settings, "SUPERVISOR_ADMIN_TOKEN", "")
+            or os.environ.get("INFERENCE_API_KEY", "")
+            or os.environ.get("SUPERVISOR_ADMIN_TOKEN", "")
+        )
+        if api_key:
+            headers["X-API-Key"] = api_key
+            headers["Authorization"] = f"Bearer {api_key}"
+        return headers
 
     def generate(
         self,
@@ -45,9 +61,10 @@ class UnifiedLLMClient:
         max_tokens: int = 2048,
         json_mode: bool = False,
         agent: Optional[str] = None,
+        mode: Optional[str] = None,
     ) -> str:
         """Main generation entry point with Semantic SQLite Cache and multi-tier fallback."""
-        target_mode = self.settings.get_agent_mode(agent) if agent else self.settings.EXECUTION_MODE
+        target_mode = mode or (self.settings.get_agent_mode(agent) if agent else self.settings.EXECUTION_MODE)
         target_mode = (target_mode or "cpu_max").lower()
 
         agent_str = agent or "default"
@@ -225,14 +242,20 @@ class UnifiedLLMClient:
         try:
             url = f"{base_url}/{clean_ep}"
             effective_timeout = float(timeout if timeout is not None else self.settings.REMOTE_TIMEOUT_SECONDS)
-            resp = self.http_client.post(url, json=payload, timeout=effective_timeout)
+            resp = self.http_client.post(
+                url,
+                json=payload,
+                headers=self._get_remote_headers(),
+                timeout=effective_timeout
+            )
             if resp.status_code == 200:
                 data = resp.json()
                 if isinstance(data, dict):
                     return data
         except Exception as exc:
             logger.info(f"[Kaggle Specialist] Dedicated endpoint /{clean_ep} fallback to /generate ({exc})")
-            if "timeout" in str(exc).lower() or "timed out" in str(exc).lower():
+            exc_str = str(exc).lower()
+            if any(k in exc_str for k in ["timeout", "timed out", "disconnected", "connection closed", "connection reset"]):
                 raise exc
 
         # Fallback to /generate with canonical adapter name ('router', 'generator', 'critic')
@@ -525,9 +548,13 @@ class UnifiedLLMClient:
             payload["adapter"] = canonical_adapter_name(str(payload["adapter"]))
 
         # 1. Try /generate (primary endpoint in kaggle_worker.ipynb)
+        headers = self._get_remote_headers()
         if task == "generate":
+            sys_inst = payload.get("system_instruction")
+            if sys_inst and "prompt" in payload and str(sys_inst).strip() not in str(payload["prompt"]):
+                payload["prompt"] = f"{str(sys_inst).strip()}\n\n{str(payload['prompt']).strip()}"
             try:
-                resp = self.http_client.post(f"{base_url}/generate", json=payload, timeout=timeout)
+                resp = self.http_client.post(f"{base_url}/generate", json=payload, headers=headers, timeout=timeout)
                 if resp.status_code == 200:
                     self._circuit_breaker_until = 0.0  # Reset breaker on success
                     result = resp.json()
@@ -539,7 +566,7 @@ class UnifiedLLMClient:
                             or json.dumps(result, ensure_ascii=False)
                         )
                     return str(result)
-            except (httpx.TimeoutException, httpx.ConnectError) as exc:
+            except (httpx.TimeoutException, httpx.ConnectError, httpx.NetworkError, httpx.RemoteProtocolError) as exc:
                 self._circuit_breaker_until = time.time() + 10.0
                 raise RuntimeError(f"Không thể kết nối tới Kaggle GPU Worker tại {base_url}.") from exc
             except Exception:
@@ -547,12 +574,12 @@ class UnifiedLLMClient:
         else:
             try:
                 url = f"{base_url}/api/{task}"
-                resp = self.http_client.post(url, json=payload, timeout=timeout)
+                resp = self.http_client.post(url, json=payload, headers=headers, timeout=timeout)
                 if resp.status_code == 200:
                     self._circuit_breaker_until = 0.0  # Reset breaker on success
                     result = resp.json()
                     return result.get("output", result)
-            except (httpx.TimeoutException, httpx.ConnectError) as exc:
+            except (httpx.TimeoutException, httpx.ConnectError, httpx.NetworkError, httpx.RemoteProtocolError) as exc:
                 self._circuit_breaker_until = time.time() + 10.0
                 raise RuntimeError(f"Không thể kết nối tới Kaggle GPU Worker tại {base_url}.") from exc
             except Exception:
@@ -575,12 +602,12 @@ class UnifiedLLMClient:
         if payload.get("json_mode"):
             v1_payload["response_format"] = {"type": "json_object"}
         try:
-            resp = self.http_client.post(v1_url, json=v1_payload, timeout=timeout)
+            resp = self.http_client.post(v1_url, json=v1_payload, headers=headers, timeout=timeout)
             if resp.status_code == 200:
                 self._circuit_breaker_until = 0.0
                 data = resp.json()
                 return data["choices"][0]["message"]["content"]
-        except (httpx.TimeoutException, httpx.ConnectError) as exc:
+        except (httpx.TimeoutException, httpx.ConnectError, httpx.NetworkError, httpx.RemoteProtocolError) as exc:
             self._circuit_breaker_until = time.time() + 10.0
             raise RuntimeError(f"Không thể kết nối tới Kaggle GPU Worker tại {base_url}.") from exc
         except Exception:

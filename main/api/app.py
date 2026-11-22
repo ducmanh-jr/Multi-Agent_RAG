@@ -416,9 +416,11 @@ async def test_remote_url():
                 except Exception:
                     health_data = {}
                 mw = health_data.get('model_worker') or health_data.get('active_mode') or 'Kaggle Dual T4 Worker'
+                active_mode = health_data.get('active_mode') or ('gpu_max' if mw == 'vllm_32b_awq' else 'gpu_finetune')
                 return {
                     "is_online": True,
                     "details": f"Online - {health_data.get('gpu_count', 2)}x GPU ({mw})",
+                    "active_mode": active_mode,
                     "raw_health": health_data,
                 }
 
@@ -1412,13 +1414,36 @@ async def upload_document_api(file: UploadFile = File(...)):
 
         _UPLOAD_STATUS[upload_id] = {"upload_id": upload_id, "status": "indexing", "percent": 75}
         size = os.path.getsize(file_path)
-        doc_type = "pdf" if safe_filename.lower().endswith(".pdf") else "text"
+        ext = os.path.splitext(safe_filename)[1].lower()
+        doc_type = "pdf" if ext == ".pdf" else "text"
+        kind_map = {".pdf": "PDF", ".md": "MD", ".markdown": "MD", ".docx": "DOCX"}
+        kind = kind_map.get(ext, "TXT")
+
+        # Parse chunks immediately so metadata (page_count, chunk_count, abstract) is accurate in UI
+        doc_metadata: dict[str, Any] = {"kind": kind}
+        try:
+            from core.tools import load_or_parse_selected_pdf
+            parsed_chunks = load_or_parse_selected_pdf(os.path.abspath(file_path))
+            if parsed_chunks:
+                doc_metadata["chunk_count"] = len(parsed_chunks)
+                doc_metadata["page_count"] = max(
+                    (int(c.get("page_no") or 1) for c in parsed_chunks), default=1
+                )
+                first_text = re.sub(r"\s+", " ", str(parsed_chunks[0].get("text") or "")).strip()
+                if first_text:
+                    doc_metadata["abstract"] = (
+                        first_text[:450] + "..." if len(first_text) > 450 else first_text
+                    )
+        except Exception as parse_exc:
+            logger.warning(f"[Upload] Pre-indexing metadata skipped for '{safe_filename}': {parse_exc}")
+
         doc_info = db.save_document(
             doc_id=doc_id,
             name=safe_filename,
             path=os.path.abspath(file_path),
             size=size,
             doc_type=doc_type,
+            metadata=doc_metadata,
         )
         _UPLOAD_STATUS[upload_id] = {
             "upload_id": upload_id,
@@ -2033,7 +2058,8 @@ def resolve_slash_prompt(p: str) -> str:
 
 async def create_run(req: CreateRunRequest):
     """Creates and starts an asynchronous multi-agent research run with SQLite persistence."""
-    prompt = resolve_slash_prompt(req.question or req.query)
+    raw_question = (req.question or req.query or "").strip()
+    prompt = resolve_slash_prompt(raw_question)
     if not prompt:
         raise HTTPException(status_code=400, detail="Question cannot be empty.")
 
@@ -2043,6 +2069,49 @@ async def create_run(req: CreateRunRequest):
         target_doc_ids = [d for d in req.document_ids if d]
     elif req.document_id:
         target_doc_ids = [req.document_id]
+
+    # Guard: Summarization requests require exactly 1 document selected
+    low_raw = raw_question.lower()
+    low_prompt = prompt.lower()
+    is_compare_req = any(
+        kw in low_raw or kw in low_prompt
+        for kw in ["/so-sanh", "/so_sanh", "so sánh", "so sanh", "đối chiếu", "doi chieu", "khác biệt", "giống nhau", "compare"]
+    )
+    is_summary_req = (
+        low_raw.startswith(("/tom-tat", "/tom_tat", "/summary", "/summarize"))
+        or (
+            not is_compare_req
+            and any(kw in low_raw or kw in low_prompt for kw in ["tóm tắt", "tom tat", "summarize", "summary"])
+        )
+    )
+    if len(target_doc_ids) > 1 and is_summary_req:
+        msg = (
+            f"Bạn đang tích chọn **{len(target_doc_ids)} bài báo/tài liệu** cùng lúc. "
+            f"Vui lòng **chỉ chọn 1 bài báo** để hệ thống thực hiện tóm tắt chính xác "
+            f"(hoặc sử dụng lệnh `/so-sanh` nếu bạn muốn đối chiếu nhiều tài liệu)."
+        )
+        doc_id = target_doc_ids[0]
+        db.save_run(
+            run_id=run_id,
+            question=prompt,
+            status="completed",
+            document_id=doc_id,
+            session_id=req.session_id,
+        )
+        trace_item = {
+            "node": "SupervisorPlanner",
+            "stage": "Guard",
+            "action": f"Phát hiện chọn {len(target_doc_ids)} tài liệu cho lệnh tóm tắt • Yêu cầu chỉ chọn 1 tài liệu",
+            "duration": "0.1s",
+            "duration_sec": 0.1,
+        }
+        updated_record = db.update_run_result(
+            run_id=run_id,
+            status="completed",
+            final_report=msg,
+            reasoning_trace=[trace_item],
+        )
+        return updated_record or db.get_run(run_id)
 
     pdf_paths: list[str] = []
     for d_id in target_doc_ids:
@@ -2455,25 +2524,13 @@ async def execute_research_stream(req: DirectResearchRequest):
 
 
 
-# Mount static Web Workspace UI & Assets
-
+# Mount static Web Workspace UI (Demo 2) & Assets
+@app.get("/", include_in_schema=False)
 @app.get("/demo2", include_in_schema=False)
 def redirect_to_demo2_slash():
     return RedirectResponse(url="/demo2/", status_code=307)
 
 web_demo2_dir = os.path.join(settings.BASE_DIR, "web_demo2")
-
 if os.path.exists(web_demo2_dir):
-
     app.mount("/demo2", StaticFiles(directory=web_demo2_dir, html=True), name="web_demo2")
-
-
-
-web_dir = os.path.join(settings.BASE_DIR, "web")
-
-if os.path.exists(web_dir):
-
-    app.mount("/assets", StaticFiles(directory=web_dir), name="assets")
-
-    app.mount("/", StaticFiles(directory=web_dir, html=True), name="web")
 

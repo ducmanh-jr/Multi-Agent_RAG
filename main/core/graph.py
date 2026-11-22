@@ -124,15 +124,25 @@ def direct_assistant_node(state: AgentState) -> dict[str, Any]:
     query = (state.get("query") or "").strip()
     primary_intent = state.get("primary_intent", "GENERAL_QA")
     system_prompt = (
-        "Bạn là Trợ lý AI đa năng. Trả lời trực diện, ĐÚNG VÀ ĐỦ, không thừa, không thiếu. "
-        "Đây là câu hỏi kiến thức chung hoặc hỗ trợ viết code/hướng dẫn kỹ thuật — không giả vờ trích dẫn PDF."
+        "Bạn là Trợ lý Nghiên cứu AI và Kỹ sư Phần mềm chuyên nghiệp. "
+        "Trả lời trực tiếp, rõ ràng, chính xác, tuân thủ nghiêm ngặt văn phong khoa học. "
+        "Nếu người dùng yêu cầu dịch thuật văn bản kỹ thuật, hãy dịch chuẩn xác sang tiếng Việt học thuật, "
+        "dịch đúng các thuật ngữ chuyên ngành (ví dụ: Large Language Models = mô hình ngôn ngữ lớn, "
+        "factual hallucinations = ảo giác sự thật, knowledge obsolescence = tri thức lạc hậu/lỗi thời, "
+        "Retrieval-Augmented Generation = Tạo sinh tăng cường truy xuất, external knowledge store = kho tri thức ngoài). "
+        "Nếu là câu hỏi kiến thức chung hoặc viết mã nguồn, hãy giải thích khúc chiết và cung cấp code hoàn chỉnh. "
+        "Không giả vờ trích dẫn tài liệu nội bộ khi trả lời kiến thức chung."
     )
     try:
+        active_mode = state.get("mode") or getattr(settings, "EXECUTION_MODE", "gpu_finetune")
         answer = llm_client.generate(
             prompt=query,
             system_instruction=system_prompt,
             temperature=0.2,
+            max_tokens=512,
             json_mode=False,
+            mode=active_mode,
+            agent="direct_assistant",
         )
         answer = (answer or "").strip()
         if answer.startswith("{") and answer.endswith("}"):
@@ -596,8 +606,23 @@ def route_after_fact_check(state: AgentState) -> Literal["writer_node", "retry_l
     no_new_evidence = state.get("no_new_evidence", False)
     max_loops = state.get("max_reflection_loops") or state.get("max_iterations") or settings.MAX_ORCHESTRATOR_RETRY
 
-    if label in ["support", "supported"]:
-        logger.info("[Routing] Fact-check: SUPPORT -> Tiến hành viết báo cáo cuối cùng.")
+    evidence_status = str(state.get("evidence_status") or "").upper()
+    verified_claims = state.get("verified_claims") or []
+
+    if label in ["support", "supported"] or evidence_status == "FOUND":
+        logger.info("[Routing] Fact-check: SUPPORT/FOUND -> Tiến hành viết báo cáo cuối cùng.")
+        return "writer_node"
+
+    # If substantial verified claims already exist and we have PARTIAL evidence from the target document:
+    # proceed directly to WriterNode to synthesize what was verified and report disclaimers,
+    # rather than triggering an expensive, hallucinatory re-query loop!
+    if evidence_status == "PARTIAL" and len(verified_claims) >= 1:
+        logger.info(f"[Routing] Fact-check: PARTIAL với {len(verified_claims)} mệnh đề đã xác minh -> Chuyển sang WriterNode.")
+        return "writer_node"
+
+    primary_intent = state.get("primary_intent", "")
+    if primary_intent == "MIXED_QA" or state.get("is_out_of_domain"):
+        logger.info(f"[Routing] {primary_intent or 'Out-of-Domain'}: Không lặp tìm kiếm nội bộ vô nghĩa -> Chuyển thẳng sang WriterNode.")
         return "writer_node"
 
     if retry_count >= max_loops or no_new_evidence:

@@ -155,6 +155,9 @@ ADAPTER_ALIASES: dict[str, str] = {
     "writer": "writer",
     "agent5_writer": "writer",
     "fn_writer": "writer",
+    "direct_assistant": "writer",
+    "general_qa": "writer",
+    "assistant": "writer",
 }
 
 

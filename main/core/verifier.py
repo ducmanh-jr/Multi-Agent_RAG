@@ -26,7 +26,7 @@ from utils.logger import logger
 TRAINING_LAB_GENERATOR_SYSTEM_PROMPT = """Bạn là một Trợ lý Nghiên cứu AI chuyên nghiệp (Academic RAG Summarizer).
 Nhiệm vụ của bạn là đọc hiểu ngữ cảnh (Context) được cung cấp và trả lời câu hỏi (Question) của người dùng một cách chính xác, khách quan và có căn cứ.
 
-QUY TẮC BẮT BUỘC:
+NGUYÊN TẮC THỰC THI:
 1. CHỈ sử dụng thông tin có trong Context. Tuyệt đối KHÔNG tự bịa đặt (hallucinate) hoặc dùng kiến thức bên ngoài nếu Context không đề cập.
 2. Nếu Context KHÔNG chứa đủ thông tin để trả lời câu hỏi, hãy tuyên bố rõ ràng: "Tài liệu hiện tại không cung cấp đủ thông tin để trả lời câu hỏi này."
 3. Mọi lập luận đưa ra trong câu trả lời phải được chứng minh bằng các trích dẫn nguyên văn (evidence_spans) lấy từ Context và gắn ký hiệu trích dẫn [1], [2].
@@ -368,7 +368,24 @@ def split_answer_into_atomic_claims(
             else:
                 txt = str(c).strip()
                 ev_ids = []
+
+            # Clean common artifacts and prefixes
+            txt = re.sub(r"^(?:claims?|luận điểm|nhận định|kết quả)\s*[:\-•]?\s*", "", txt, flags=re.IGNORECASE).strip()
+            txt = re.sub(r"^Table\s+", "", txt, flags=re.IGNORECASE).strip()
+
             if len(txt) >= 15:
+                # Filter table formatting and non-propositional header fragments
+                if txt.startswith("|") or txt.count("|") >= 2 or re.match(r"^[\s\|\-\:\+\=\_]+$", txt):
+                    continue
+                table_keywords = ["model", "bleu", "training cost", "flops", "en-de", "en-fr", "table 2"]
+                if sum(1 for kw in table_keywords if kw in txt.lower()) >= 2 and not any(ch.isdigit() for ch in txt):
+                    continue
+                if len(txt.split()) < 4:
+                    continue
+                dangling_endings = (" than", " with", " and", " or", " as", " the", " of", " in", " to", " that", " is", " are")
+                if any(txt.lower().endswith(end) for end in dangling_endings):
+                    continue
+
                 if not ev_ids and source_units:
                     best_u = find_best_supporting_unit(txt, source_units)
                     ev_ids = [best_u["id"]] if best_u else [source_units[0]["id"]]
@@ -389,7 +406,20 @@ def split_answer_into_atomic_claims(
     claims_out: list[dict[str, Any]] = []
     for s in raw_sents:
         s_clean = re.sub(r"^[#•\-\*\d.)\s]+", "", s).strip()
+        s_clean = re.sub(r"^(?:claims?|luận điểm|nhận định|kết quả)\s*[:\-•]?\s*", "", s_clean, flags=re.IGNORECASE).strip()
+        s_clean = re.sub(r"^Table\s+", "", s_clean, flags=re.IGNORECASE).strip()
         if len(s_clean) < 25 or s_clean.startswith("```") or s_clean.endswith(":"):
+            continue
+        # Filter table markdown, separators, and non-propositional table header fragments
+        if s_clean.startswith("|") or s_clean.count("|") >= 2 or re.match(r"^[\s\|\-\:\+\=\_]+$", s_clean):
+            continue
+        table_keywords = ["model", "bleu", "training cost", "flops", "en-de", "en-fr", "table 2"]
+        if sum(1 for kw in table_keywords if kw in s_clean.lower()) >= 2 and not any(ch.isdigit() for ch in s_clean):
+            continue
+        if len(s_clean.split()) < 4:
+            continue
+        dangling_endings = (" than", " with", " and", " or", " as", " the", " of", " in", " to", " that", " is", " are")
+        if any(s_clean.lower().endswith(end) for end in dangling_endings):
             continue
         if any(
             skip in s_clean.lower()

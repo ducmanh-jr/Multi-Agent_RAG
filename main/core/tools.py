@@ -85,35 +85,141 @@ def load_or_parse_selected_pdf(
 
     doc_title = Path(resolved).stem
     doc_title = re.sub(r"^[0-9a-f]{8}_", "", doc_title)
+    ext = Path(resolved).suffix.lower()
     chunks: list[dict[str, Any]] = []
 
-    try:
-        import fitz  # PyMuPDF
-
-        pdf_doc = fitz.open(resolved)
+    # 1. Standard PDF Parsing with PyMuPDF
+    if ext == ".pdf":
         try:
-            for page_idx, page in enumerate(pdf_doc):
-                page_no = page_idx + 1
-                raw_text = page.get_text("text") or ""
-                clean_text = re.sub(r"[ \t]+", " ", raw_text).strip()
-                if not clean_text:
+            import fitz  # PyMuPDF
+
+            pdf_doc = fitz.open(resolved)
+            try:
+                for page_idx, page in enumerate(pdf_doc):
+                    page_no = page_idx + 1
+                    raw_text = page.get_text("text") or ""
+                    clean_text = re.sub(r"[ \t]+", " ", raw_text).strip()
+                    if not clean_text:
+                        continue
+
+                    # Split into sentences first so chunks never cut mid-sentence
+                    sentences = [
+                        s.strip()
+                        for s in re.split(r"(?<=[.!?।])\s+|\n{2,}", clean_text)
+                        if len(s.strip()) > 12
+                    ]
+                    if not sentences:
+                        sentences = [clean_text]
+
+                    current_sents: list[str] = []
+                    current_words = 0
+                    sub_idx = 1
+
+                    for sent in sentences:
+                        w_count = len(sent.split())
+                        if current_words + w_count > chunk_size_words and current_sents:
+                            chunk_body = " ".join(current_sents).strip()
+                            cid = f"{doc_title}_p{page_no}_c{sub_idx}"
+                            chunks.append(
+                                {
+                                    "id": cid,
+                                    "chunk_id": cid,
+                                    "doc_id": doc_title,
+                                    "title": doc_title,
+                                    "page_no": page_no,
+                                    "page": page_no,
+                                    "text": chunk_body,
+                                    "content": chunk_body,
+                                    "sentences": list(current_sents),
+                                    "source_path": resolved,
+                                    "is_selected_pdf": True,
+                                }
+                            )
+                            sub_idx += 1
+                            current_sents = current_sents[-2:] if len(current_sents) >= 2 else current_sents[-1:]
+                            current_words = sum(len(x.split()) for x in current_sents)
+
+                        current_sents.append(sent)
+                        current_words += w_count
+
+                    if current_sents:
+                        chunk_body = " ".join(current_sents).strip()
+                        cid = f"{doc_title}_p{page_no}_c{sub_idx}"
+                        chunks.append(
+                            {
+                                "id": cid,
+                                "chunk_id": cid,
+                                "doc_id": doc_title,
+                                "title": doc_title,
+                                "page_no": page_no,
+                                "page": page_no,
+                                "text": chunk_body,
+                                "content": chunk_body,
+                                "sentences": list(current_sents),
+                                "source_path": resolved,
+                                "is_selected_pdf": True,
+                            }
+                        )
+            finally:
+                pdf_doc.close()
+        except Exception as exc:
+            logger.warning(f"[ToolRegistry] PyMuPDF parse failed on '{resolved}', falling back to text: {exc}")
+
+    # 2. Multi-Format Text/Markdown/DOCX/Log Parsing (or PDF Fallback)
+    if not chunks:
+        raw_text = ""
+        if ext == ".docx":
+            try:
+                import docx
+                doc = docx.Document(resolved)
+                paras = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
+                for tbl in doc.tables:
+                    for row in tbl.rows:
+                        row_vals = [c.text.strip() for c in row.cells]
+                        if any(row_vals):
+                            paras.append(" | ".join(row_vals))
+                raw_text = "\n\n".join(paras)
+            except Exception as exc:
+                logger.warning(f"[ToolRegistry] DOCX parse error on '{resolved}': {exc}")
+        else:
+            for enc in ["utf-8", "utf-8-sig", "latin-1"]:
+                try:
+                    with open(resolved, "r", encoding=enc, errors="replace") as f:
+                        raw_text = f.read()
+                    break
+                except Exception:
                     continue
 
-                # Split into sentences first so chunks never cut mid-sentence
+        if raw_text and raw_text.strip():
+            clean_text = raw_text.strip()
+            # Split by section headers, form feeds, or horizontal rules to preserve structure
+            sections = re.split(r"(?:\x0c|\n(?=#+\s)|\n-{3,}\n)", clean_text)
+            page_no = 1
+            sub_idx = 1
+            current_page_words = 0
+            current_sents = []
+            current_words = 0
+
+            for sec in sections:
+                sec = sec.strip()
+                if not sec:
+                    continue
                 sentences = [
                     s.strip()
-                    for s in re.split(r"(?<=[.!?।])\s+|\n{2,}", clean_text)
-                    if len(s.strip()) > 12
+                    for s in re.split(r"(?<=[.!?।])\s+|\n{2,}", sec)
+                    if len(s.strip()) > 8
                 ]
                 if not sentences:
-                    sentences = [clean_text]
-
-                current_sents: list[str] = []
-                current_words = 0
-                sub_idx = 1
+                    sentences = [sec]
 
                 for sent in sentences:
                     w_count = len(sent.split())
+                    # Virtual page break around ~400 words per page
+                    if current_page_words + w_count > 400 and current_sents:
+                        page_no += 1
+                        current_page_words = 0
+                        sub_idx = 1
+
                     if current_words + w_count > chunk_size_words and current_sents:
                         chunk_body = " ".join(current_sents).strip()
                         cid = f"{doc_title}_p{page_no}_c{sub_idx}"
@@ -133,35 +239,31 @@ def load_or_parse_selected_pdf(
                             }
                         )
                         sub_idx += 1
-                        # Keep last 2 sentences for sliding window overlap
                         current_sents = current_sents[-2:] if len(current_sents) >= 2 else current_sents[-1:]
                         current_words = sum(len(x.split()) for x in current_sents)
 
                     current_sents.append(sent)
                     current_words += w_count
+                    current_page_words += w_count
 
-                if current_sents:
-                    chunk_body = " ".join(current_sents).strip()
-                    cid = f"{doc_title}_p{page_no}_c{sub_idx}"
-                    chunks.append(
-                        {
-                            "id": cid,
-                            "chunk_id": cid,
-                            "doc_id": doc_title,
-                            "title": doc_title,
-                            "page_no": page_no,
-                            "page": page_no,
-                            "text": chunk_body,
-                            "content": chunk_body,
-                            "sentences": list(current_sents),
-                            "source_path": resolved,
-                            "is_selected_pdf": True,
-                        }
-                    )
-        finally:
-            pdf_doc.close()
-    except Exception as exc:
-        logger.warning(f"[ToolRegistry] PyMuPDF parse failed on '{resolved}': {exc}")
+            if current_sents:
+                chunk_body = " ".join(current_sents).strip()
+                cid = f"{doc_title}_p{page_no}_c{sub_idx}"
+                chunks.append(
+                    {
+                        "id": cid,
+                        "chunk_id": cid,
+                        "doc_id": doc_title,
+                        "title": doc_title,
+                        "page_no": page_no,
+                        "page": page_no,
+                        "text": chunk_body,
+                        "content": chunk_body,
+                        "sentences": list(current_sents),
+                        "source_path": resolved,
+                        "is_selected_pdf": True,
+                    }
+                )
 
     if chunks:
         with _PDF_CACHE_LOCK:
@@ -187,9 +289,26 @@ def read_pdf_page_tool(pdf_path: Optional[str], page_number: int = 1) -> str:
 
 
 def extract_table_or_equations_tool(pdf_path: Optional[str], page_number: int = 1) -> str:
-    """Extracts structured tables and numerical rows from a specific PDF page using PyMuPDF find_tables()."""
+    """Extracts structured tables and numerical rows from a specific PDF page using PyMuPDF find_tables() or markdown tables."""
     if not pdf_path or not os.path.exists(str(pdf_path)):
-        return "Không có đường dẫn PDF hợp lệ để trích xuất bảng."
+        return "Không có đường dẫn tài liệu hợp lệ để trích xuất bảng."
+
+    ext = Path(str(pdf_path)).suffix.lower()
+    if ext != ".pdf":
+        # Extract markdown table rows from text/markdown file
+        chunks = load_or_parse_selected_pdf(pdf_path)
+        matching_chunks = [c for c in chunks if int(c.get("page_no") or 1) == page_number] or chunks
+        tables = []
+        for c in matching_chunks:
+            txt = c.get("text", "")
+            if "|" in txt:
+                table_lines = [line.strip() for line in txt.splitlines() if "|" in line]
+                if len(table_lines) >= 2:
+                    tables.append("\n".join(table_lines))
+        if tables:
+            return f"### Bảng (Trang {page_number})\n" + "\n\n".join(tables[:2])
+        return f"Không phát hiện bảng biểu trên trang {page_number}."
+
     try:
         import fitz
 

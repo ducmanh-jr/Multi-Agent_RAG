@@ -31,8 +31,7 @@ echo ============================================================
 echo   MULTI-AGENT RESEARCH RAG - KHOI DONG HE THONG
 echo ============================================================
 echo   Python   : %PYTHON_EXE%
-echo   Web UI   : http://localhost:8000
-echo   Demo2 UI : http://localhost:8000/demo2/
+echo   Web Demo 2 : http://localhost:8000 (tu dong mo /demo2/)
 echo ============================================================
 echo.
 

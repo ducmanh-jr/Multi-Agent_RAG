@@ -34,6 +34,8 @@ GENERIC_COMMON_WORDS = {
     "bài báo", "tài liệu", "nghiên cứu", "tác giả", "công bố", "bài", "báo",
     "trích dẫn", "chính xác", "con số", "theo công bố", "nếu có", "cho biết",
     "thông tin", "dữ liệu", "kết quả", "phát hiện", "được nêu", "được trình bày",
+    "nội", "dung", "nội dung", "trang", "mục", "phần", "đoạn", "bảng", "hình", "chi tiết",
+    "page", "section", "table", "figure",
     # English common interrogatives, prepositions & academic stop words
     "what", "which", "where", "when", "why", "how", "who", "whom", "whose",
     "this", "that", "these", "those", "there", "here",
@@ -140,22 +142,36 @@ def check_out_of_domain(query: str, source_units: list[dict[str, Any]]) -> Tuple
             return True, f"quoted_entities_absent: {substantive_quotes}"
     # 2. Summary / Overview / Comparison commands are always in-domain (meta-document queries)
     is_slash_cmd = clean_q.startswith("/")
-    is_general_summary = is_slash_cmd or any(
-        kw in clean_q.lower()
-        for kw in [
-            "tóm tắt", "tổng quan", "nội dung chính", "/tom-tat", "/so-sanh",
-            "so sánh", "đóng góp", "/dong-gop", "điểm mới", "ưu nhược điểm", "tom-tat"
-        ]
+    is_doc_structural_query = bool(
+        re.search(r"\b(?:trang|page|bảng|table|hình|figure|mục|phần|section)\s*\d*\b", clean_q, re.IGNORECASE)
+    )
+    is_general_summary = (
+        is_slash_cmd
+        or is_doc_structural_query
+        or any(
+            kw in clean_q.lower()
+            for kw in [
+                "tóm tắt", "tổng quan", "nội dung chính", "nội dung", "/tom-tat", "/so-sanh",
+                "so sánh", "đóng góp", "/dong-gop", "điểm mới", "ưu nhược điểm", "tom-tat",
+                "tổng hợp", "tương đồng", "khác biệt", "giống nhau", "khác nhau", "đối chiếu"
+            ]
+        )
     )
     if is_general_summary:
         return False, "summary_overview"
 
-    # Identify synthetic machine document IDs/hashes (to prevent random hash tokens from matching as subjects)
+    # Identify synthetic machine document IDs/hashes and document filenames
     doc_id_tokens = set()
+    doc_filenames = set()
     for u in source_units:
         raw_id = str(getattr(u, "doc_id", None) or (u.get("doc_id", "") if isinstance(u, dict) else "")).lower()
-        for tok in re.findall(r"\b[a-f0-9]{6,}\b", raw_id):
-            doc_id_tokens.add(tok)
+        if raw_id:
+            doc_filenames.add(raw_id)
+            for tok in re.findall(r"\b[a-f0-9]{6,}\b", raw_id):
+                doc_id_tokens.add(tok)
+            for part in re.split(r"[._\-\s]+", raw_id):
+                if len(part) >= 2:
+                    doc_filenames.add(part.lower())
 
     # 3. Check for specific foreign/English technical identifiers (e.g. Kafka, ZooKeeper, Kubernetes)
     foreign_terms = [
@@ -164,6 +180,7 @@ def check_out_of_domain(query: str, source_units: list[dict[str, Any]]) -> Tuple
         and not re.search(r"[à-ỹÀ-Ỹ]", t)
         and t.lower() not in GENERIC_COMMON_WORDS
         and t.lower() not in doc_id_tokens
+        and t.lower() not in doc_filenames
     ]
     words_in_q = clean_q.split()
     first_word = words_in_q[0] if words_in_q else ""
@@ -176,19 +193,46 @@ def check_out_of_domain(query: str, source_units: list[dict[str, Any]]) -> Tuple
         elif t[0].isupper() or any(c.isupper() for c in t[1:]) or '_' in t or '-' in t:
             tech_named.append(t)
     if tech_named:
-        missing_tech = [t for t in tech_named if not _has_phrase(t, doc_l, doc_unaccent, query_has_accents)]
+        missing_tech = []
+        for t in tech_named:
+            if t.lower() in doc_filenames:
+                continue
+            if _has_phrase(t, doc_l, doc_unaccent, query_has_accents):
+                continue
+            sub_parts = [p for p in re.split(r"[._-]+", t) if len(p) >= 3 and not p.isdigit()]
+            if sub_parts and all(_has_phrase(p, doc_l, doc_unaccent, query_has_accents) for p in sub_parts):
+                continue
+            missing_tech.append(t)
         if len(missing_tech) >= max(1, int(len(tech_named) * 0.5)):
             # All named technical identifiers asked in query are absent from document
             return True, f"foreign_term_absent: {missing_tech}"
 
     # 4. Check core subject phrases & compound n-grams
     phrases = extract_core_subject_phrases(clean_q)
-    matched_phrases = [p for p in phrases if _has_phrase(p, doc_l, doc_unaccent, query_has_accents)]
+    matched_phrases = []
+    for p in phrases:
+        if _has_phrase(p, doc_l, doc_unaccent, query_has_accents):
+            matched_phrases.append(p)
+        else:
+            # Check constituent subwords (e.g. 'Vaswani', 'Attention' in 'Vaswani_2017_Attention.pdf')
+            subwords = [w for w in re.split(r"[_.\-\s]+", p) if len(w) >= 3 and not w.isdigit() and w.lower() not in GENERIC_COMMON_WORDS]
+            if subwords and any(_has_phrase(w, doc_l, doc_unaccent, query_has_accents) for w in subwords):
+                matched_phrases.append(p)
+
     substantive_matches = [
         p for p in matched_phrases
         if not set(re.findall(r"\w+", p.lower())).issubset(doc_id_tokens | GENERIC_COMMON_WORDS)
     ]
     if not substantive_matches:
+        # Check meta-document query intent (e.g. asking for authors, title, affiliations, publication date)
+        meta_doc_keywords = [
+            "tác giả", "tên bài báo", "tiêu đề", "năm xuất bản", "tổ chức", "tổ chức nghiên cứu",
+            "ai viết", "xuất bản năm", "công bố năm", "thuộc trường", "thuộc viện", "thuộc công ty",
+            "bài báo này", "tài liệu này"
+        ]
+        if any(kw in clean_q.lower() for kw in meta_doc_keywords):
+            return False, "meta_document_query"
+
         # Fallback check: Check if any contiguous 2-to-4 word sequence from query appears verbatim in document text
         words_lower = re.findall(r"\w+", clean_q.lower())
         found_contiguous = False
