@@ -142,10 +142,15 @@ class AtomicClaim:
         **kwargs: Any,
     ):
         import uuid
-        self.id = id or kwargs.get("claim_id") or f"claim_{uuid.uuid4().hex[:8]}"
         self.text = text or kwargs.get("claim") or kwargs.get("claim_text") or ""
         self.claim = self.text
         self.claim_text = self.text
+        default_id = (
+            f"claim_{hashlib.sha256(self.text.strip().encode('utf-8')).hexdigest()[:12]}"
+            if self.text.strip()
+            else f"claim_{uuid.uuid4().hex[:8]}"
+        )
+        self.id = id or kwargs.get("claim_id") or default_id
         ev = list(evidence_ids) if evidence_ids is not None else []
         u_id = unit_id or kwargs.get("evidence_unit_id") or kwargs.get("source_unit_id")
         if u_id and u_id not in ev:
@@ -190,7 +195,8 @@ class ClaimCheckResult:
         self.claim_text = claim_text or claim or text or ""
         self.claim = self.claim_text
         self.text = self.claim_text
-        self.claim_id = claim_id or f"claim_{abs(hash(self.claim_text)) % 10000}"
+        digest = hashlib.sha256(self.claim_text.strip().encode("utf-8")).hexdigest()[:12]
+        self.claim_id = claim_id or f"claim_{digest}"
         self.status = str(status).upper() if status else "SUPPORT"
         self.reason = reason or rationale or "Verified by Fact-Checker"
         self.rationale = self.reason

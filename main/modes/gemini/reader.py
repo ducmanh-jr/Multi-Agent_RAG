@@ -44,25 +44,26 @@ class GeminiReaderAgent(BaseAgent):
         document_schema: dict[str, Any] = {}
         failed_pdfs: list[dict[str, str]] = []
 
-        # 2. Extract Markdown tables from top hit pages when a PDF is selected
-        if pdf_path and os.path.exists(str(pdf_path)):
-            doc_id = os.path.splitext(os.path.basename(str(pdf_path)))[0]
-            for p_no in sorted(list(pages_covered))[:3]:
-                try:
-                    table_md = extract_table_or_equations_tool(pdf_path, p_no)
-                except Exception:
-                    table_md = ""
-                if table_md and ("Bảng" in table_md and "|" in table_md):
-                    unit = SourceUnit(
-                        id=f"{doc_id}_p{p_no}_table",
-                        text=table_md,
-                        doc_id=doc_id,
-                        page_no=p_no,
-                        character_offset=curr_offset,
-                    )
-                    if merge_or_append_unit(unit, by_hash, ordered_units):
-                        merged_dups += 1
-                    curr_offset += len(table_md) + 1
+        # 2. Extract Markdown tables from top hit pages across all selected PDFs
+        for p_path in pdf_paths:
+            if p_path and os.path.exists(str(p_path)):
+                doc_id = os.path.splitext(os.path.basename(str(p_path)))[0]
+                for p_no in sorted(list(pages_covered))[:3]:
+                    try:
+                        table_md = extract_table_or_equations_tool(p_path, p_no)
+                    except Exception:
+                        table_md = ""
+                    if table_md and ("Bảng" in table_md and "|" in table_md):
+                        unit = SourceUnit(
+                            id=f"{doc_id}_p{p_no}_table",
+                            text=table_md,
+                            doc_id=doc_id,
+                            page_no=p_no,
+                            character_offset=curr_offset,
+                        )
+                        if merge_or_append_unit(unit, by_hash, ordered_units):
+                            merged_dups += 1
+                        curr_offset += len(table_md) + 1
 
         if not ordered_units and pdf_paths:
             failed_pdfs, extra_merged, curr_offset = ingest_pdf_fallbacks(

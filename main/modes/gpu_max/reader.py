@@ -1,7 +1,7 @@
 """
 GPU Max Mode - Agentic Reader Agent (L3-L4 32B Reasoning on Dual T4).
-Converts ranked retrieved chunks from the selected PDF into SourceUnits and extracts
-structured Markdown tables on top hit pages.
+Converts ranked retrieved chunks from the selected PDF(s) into deduplicated SourceUnits
+with multi-source provenance and extracts structured Markdown tables on top hit pages.
 """
 
 from __future__ import annotations
@@ -9,55 +9,49 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from agents.agent2_reader.tools.pdf_parser import parse_pdf_document
+from agents.agent2_reader.tools.reader_pipeline import (
+    build_source_units_from_docs,
+    collect_unique_pdf_paths,
+    ingest_pdf_fallbacks,
+    merge_or_append_unit,
+)
 from core.base_agent import BaseAgent
 from core.state import AgentState, SourceUnit
-from core.tools import extract_table_or_equations_tool
+from core.tools import extract_table_or_equations_tool, load_or_parse_selected_pdf
 
 
 class GPUMaxReaderAgent(BaseAgent):
-    """Reader Agent for GPU Max Mode: Ranked SourceUnit builder + Table Extractor."""
+    """Reader Agent for GPU Max Mode: Ranked SourceUnit builder + Multi-PDF Dedup & Table Extractor."""
 
     def __init__(self, max_internal_retry: int = 2):
         super().__init__(name="GPUMaxReaderAgent", max_internal_retry=max_internal_retry)
 
     def run(self, state: AgentState) -> dict[str, Any]:
         pdf_path = state.get("pdf_path")
-        pdf_paths = state.get("pdf_paths") or ([pdf_path] if pdf_path else [])
+        pdf_paths = collect_unique_pdf_paths(pdf_path, state.get("pdf_paths"))
         retrieved_docs = state.get("retrieved_docs", []) or []
 
         self.logger.info(
             f"[GPU Max Reader] Building SourceUnits from {len(retrieved_docs)} chunks "
-            f"(pdf_paths={len(pdf_paths)})"
+            f"(pdf_count={len(pdf_paths)})"
         )
 
-        source_units: list[dict[str, Any]] = []
+        ordered_units, by_hash, pages_covered, merged_dups, curr_offset = build_source_units_from_docs(
+            retrieved_docs,
+            limit=12,
+            deduplicate=True,
+        )
         document_schema: dict[str, Any] = {}
-        curr_offset = 0
-        pages_covered: set[int] = set()
-
-        for idx, d in enumerate(retrieved_docs[:10]):
-            t = str(d.get("text") or d.get("content") or "").strip()
-            if not t:
-                continue
-            d_id = str(d.get("doc_id") or d.get("title") or f"doc_{idx + 1}")
-            p_no = int(d.get("page_no") or d.get("page") or 1)
-            pages_covered.add(p_no)
-            unit = SourceUnit(
-                id=str(d.get("id") or f"{d_id}_p{p_no}_u{idx + 1}"),
-                text=t,
-                doc_id=d_id,
-                page_no=p_no,
-                character_offset=curr_offset,
-            )
-            source_units.append(unit.to_dict())
-            curr_offset += len(t) + 1
+        failed_pdfs: list[dict[str, str]] = []
 
         for p_path in pdf_paths:
             if p_path and os.path.exists(str(p_path)):
                 doc_id = os.path.splitext(os.path.basename(str(p_path)))[0]
                 for p_no in sorted(list(pages_covered))[:3]:
-                    table_md = extract_table_or_equations_tool(p_path, p_no)
+                    try:
+                        table_md = extract_table_or_equations_tool(p_path, p_no)
+                    except Exception:
+                        table_md = ""
                     if table_md and ("Bảng" in table_md and "|" in table_md):
                         unit = SourceUnit(
                             id=f"{doc_id}_p{p_no}_table",
@@ -66,27 +60,53 @@ class GPUMaxReaderAgent(BaseAgent):
                             page_no=p_no,
                             character_offset=curr_offset,
                         )
-                        source_units.append(unit.to_dict())
+                        if merge_or_append_unit(unit, by_hash, ordered_units):
+                            merged_dups += 1
                         curr_offset += len(table_md) + 1
 
-                if not source_units:
-                    schema, units = parse_pdf_document(p_path)
-                    document_schema = schema
-                    source_units.extend([u.to_dict() for u in units[:12]])
+        covered_stems = {
+            os.path.splitext(os.path.basename(str(u.doc_id or "")))[0].lower()
+            for u in ordered_units
+            if u.doc_id
+        }
+        uncovered_pdfs = [
+            p for p in pdf_paths
+            if os.path.splitext(os.path.basename(str(p)))[0].lower() not in covered_stems
+        ]
+        if uncovered_pdfs:
+            failed_pdfs, extra_merged, curr_offset = ingest_pdf_fallbacks(
+                uncovered_pdfs,
+                ordered_units=ordered_units,
+                units_by_content_hash=by_hash,
+                pages_covered=pages_covered,
+                curr_offset=curr_offset,
+                chunk_loader=load_or_parse_selected_pdf,
+                max_units_per_pdf=8,
+                deduplicate=True,
+            )
+            merged_dups += extra_merged
+
+        source_units = [u.to_dict() for u in ordered_units]
 
         if not document_schema:
             document_schema = {
                 "doc_id": source_units[0]["doc_id"] if source_units else "unknown",
                 "pages_covered": sorted(list(pages_covered)),
                 "total_units": len(source_units),
+                "failed_pdfs": failed_pdfs,
+                "dedup_merged_count": merged_dups,
             }
 
         trace = self.log_action(
             "gpu_max_reading_completed",
             {
-                "has_pdf": bool(pdf_path),
+                "has_pdf": bool(pdf_paths),
+                "pdf_count": len(pdf_paths),
                 "total_units": len(source_units),
                 "pages_covered": sorted(list(pages_covered)),
+                "dedup_merged_count": merged_dups,
+                "failed_pdf_count": len(failed_pdfs),
+                "failed_pdfs": failed_pdfs,
             },
         )
 
@@ -95,5 +115,3 @@ class GPUMaxReaderAgent(BaseAgent):
             "source_units": source_units,
             "reasoning_trace": [trace],
         }
-
-
