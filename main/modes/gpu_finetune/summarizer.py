@@ -148,6 +148,7 @@ class GPUFinetuneSummarizerAgent(BaseAgent):
         critic_action = "approve"
         critique_text = ""
         critic_out = None
+        last_gen_usage: dict[str, Any] = {}
         is_vi_query = bool(re.search(r"[à-ỹÀ-Ỹ]", clean_q))
 
         # Explicit Vietnamese Academic Language Directive
@@ -188,6 +189,7 @@ class GPUFinetuneSummarizerAgent(BaseAgent):
                 )
                 if isinstance(gen_dict, dict) and isinstance(gen_dict.get("usage"), dict):
                     u = gen_dict["usage"]
+                    last_gen_usage = u
                     self.logger.info(
                         f"[GPU Finetune Generator] engine={u.get('engine')} "
                         f"tokens={u.get('completion_tokens')} latency={u.get('latency_sec')}s "
@@ -342,6 +344,7 @@ class GPUFinetuneSummarizerAgent(BaseAgent):
                 "critic_action": critic_action,
                 "critique": critique_text,
                 "claims_count": len(current_claims),
+                "usage": last_gen_usage,
             },
         )
 

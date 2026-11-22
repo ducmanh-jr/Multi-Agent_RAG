@@ -22,7 +22,14 @@ def batch_translate_claims_if_needed(claims: list[str], is_query_vn: bool) -> di
     needed = []
     for c in claims:
         c_clean = c.strip()
-        if len(re.findall(r"[à-ỹÀ-Ỹ]", c_clean)) < 5 and len(c_clean) > 15 and c_clean not in needed:
+        # Skip claims already in Vietnamese, short fragments, file paths, or markdown table rows
+        if (
+            len(re.findall(r"[à-ỹÀ-Ỹ]", c_clean)) < 4
+            and len(c_clean) > 25
+            and ":\\" not in c_clean
+            and c_clean.count("|") < 2
+            and c_clean not in needed
+        ):
             needed.append(c_clean)
     if not needed:
         return {}

@@ -116,8 +116,9 @@ class GPUFinetuneWriterAgent(BaseAgent):
 
         final_report = ""
         report_data: dict[str, Any] = {}
+        writer_usage: dict[str, Any] = {}
 
-        # 1. Attempt generation via fine-tuned DoRA model on Remote GPU Worker
+        # 1. Attempt generation via fine-tuned LoRA+rsLoRA model on Remote GPU Worker
         if self.settings.REMOTE_INFERENCE_URL:
             try:
                 v_claims_text = "\n".join([f"- {c.get('claim_text') or c.get('text') or str(c)}" for c in verified_claims])
@@ -146,6 +147,7 @@ class GPUFinetuneWriterAgent(BaseAgent):
                 )
                 if isinstance(res, dict) and isinstance(res.get("usage"), dict):
                     wu = res["usage"]
+                    writer_usage = wu
                     self.logger.info(
                         f"[GPU Finetune Writer] engine={wu.get('engine')} "
                         f"tokens={wu.get('completion_tokens')} latency={wu.get('latency_sec')}s "
@@ -201,7 +203,7 @@ class GPUFinetuneWriterAgent(BaseAgent):
                     ref_lines.append(f"[{i}] **Tài liệu** (Trang 1). *\"{str(r)}...\"*")
             final_report += "\n\n## 4. Danh mục Tài liệu Trích dẫn (Evidence References)\n" + "\n".join(ref_lines)
 
-        trace = self.log_action("gpu_finetune_report_written", {"length": len(final_report), "model": "dora_rs_lora"})
+        trace = self.log_action("gpu_finetune_report_written", {"length": len(final_report), "model": "lora_rslora", "usage": writer_usage})
 
         # Extract structured citations from final_report and state
         existing_citations = list(state.get("citations") or [])
