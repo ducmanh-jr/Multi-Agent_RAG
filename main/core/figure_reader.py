@@ -179,15 +179,17 @@ def _resolve_vision_provider(configured: str, mode: str) -> str:
     if not configured:
         return ""
     settings = get_run_settings()
+    from core.provider_router import is_gemini_permitted
+
     if configured == "auto":
-        if mode in {"gemini", "api", "local_api", "hybrid"} and settings.GEMINI_API_KEY:
+        if is_gemini_permitted(mode, role="reader") and settings.GEMINI_API_KEY:
             return "gemini"
         if mode in {"cpu_max", "hybrid"} and settings.FIGURE_VISION_MODEL:
             return "ollama"
         return ""
     if configured == "ollama":
         return "ollama"
-    if configured == "gemini" and mode in {"gemini", "api", "local_api", "hybrid"}:
+    if configured == "gemini" and is_gemini_permitted(mode, role="reader"):
         return "gemini"
     return ""
 

@@ -46,8 +46,10 @@ class HybridReaderAgent(BaseAgent):
         except Exception as e:
             self.logger.warning(f"[Hybrid Reader] Local PyMuPDF failed ({e}), cascading to Gemini...")
 
-        # Priority 3 (Cuối cùng): Gemini Vision Reader API
-        if caps.get("gemini", {}).get("online"):
+        # Priority 3 (Cuối cùng): Gemini Vision Reader API (only if permitted by ProviderRouter policy)
+        from core.provider_router import is_gemini_permitted
+
+        if caps.get("gemini", {}).get("online") and is_gemini_permitted("hybrid", role="reader"):
             try:
                 return self._gemini_reader.run_in_mode(state, "gemini")
             except Exception as e:

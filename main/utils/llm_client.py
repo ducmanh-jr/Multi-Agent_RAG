@@ -127,8 +127,10 @@ class UnifiedLLMClient:
                 set_cached_llm(cache_key, prompt, response_text)
             return response_text
 
-        # 2. Cloud Foundation Model (Explicit 'gemini' or 'api' mode)
-        if self.settings.GEMINI_API_KEY:
+        # 2. Cloud Foundation Model (Enforced by centralized Provider Policy Gate)
+        from core.provider_router import is_gemini_permitted
+
+        if self.settings.GEMINI_API_KEY and is_gemini_permitted(target_mode, role=agent or ""):
             try:
                 response_text = self._call_gemini(
                     prompt, system_instruction, temperature, max_tokens, json_mode
@@ -137,6 +139,13 @@ class UnifiedLLMClient:
                 raise
             except Exception as e:
                 logger.warning(f"Gemini API call failed: {e}. Trying fallback provider...")
+        elif self.settings.GEMINI_API_KEY and not is_gemini_permitted(target_mode, role=agent or ""):
+            logger.info(
+                "[ProviderGate] Blocked Gemini API call under mode='%s' (profile='%s', agent='%s').",
+                target_mode,
+                getattr(self.settings, "HYBRID_PROVIDER_PROFILE", "auto"),
+                agent or "",
+            )
 
         # 3. Fallback to DeepSeek / OpenAI-compatible API if Gemini fails
         if not response_text and (self.settings.DEEPSEEK_API_KEY or self.settings.OPENAI_API_KEY):

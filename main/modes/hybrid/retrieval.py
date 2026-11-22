@@ -108,46 +108,51 @@ class HybridRetrievalAgent(BaseAgent):
         planning_backend = "local_supervisor"
 
         caps = probe_all_capabilities()
+        from core.provider_router import provider_router
 
-        # =====================================================================
-        # Tier 1 (Primary - Gemini API): Deep Intent & STORM Planning
-        # =====================================================================
-        if caps.get("gemini", {}).get("online") and retry_count == 0:
-            try:
-                raw = llm_client.generate_json(
-                    json.dumps({"question": query}, ensure_ascii=False),
-                    system_instruction=_EXPANSION_INSTRUCTION, agent="retrieval",
-                )
-                expansion = _SearchExpansion.model_validate(raw)
-                sub_queries = list(dict.fromkeys([query, *expansion.sub_queries, *sub_queries]))[:4]
-                required_entities = list(dict.fromkeys([*required_entities, *expansion.required_entities]))[:8]
-                alpha = expansion.alpha
-                planning_backend = "cloud_router"
-            except Exception as e:
-                self.logger.warning(f"[Hybrid Retrieval] Tier 1 Gemini planning failed ({e}), cascading to Tier 2...")
-
-        # =====================================================================
-        # Tier 2 (Fallback 1 - GPU Finetune Router LoRA): If Gemini failed/offline
-        # =====================================================================
+        planner_chain = provider_router.resolve_chain("planner", state=state, caps=caps)
         is_gpu_online = caps.get("gpu_finetune", {}).get("online") or caps.get("gpu_ft", {}).get("online")
-        if planning_backend == "local_supervisor" and is_gpu_online and retry_count == 0:
-            try:
-                router_res = llm_client.call_kaggle_specialist(
-                    endpoint="api/router",
-                    payload={"query": query, "adapter": "router"},
-                    adapter="router",
-                )
-                lora_plan = RouterPlanOutput.from_dict(router_res, default_query=query)
-                for lsq in lora_plan.sub_queries[:2]:
-                    if lsq not in sub_queries:
-                        sub_queries.append(lsq)
-                alpha = lora_plan.alpha
-                planning_backend = "gpu_finetune_router_lora"
-            except Exception:
-                pass
 
-        # Generate STORM research perspectives to augment queries
-        if planning_backend == "local_supervisor" and not caps.get("gemini", {}).get("online") and not is_gpu_online:
+        # Execute planner backends strictly in ProviderRouter policy order
+        if retry_count == 0:
+            for backend in planner_chain:
+                if backend == "gemini" and caps.get("gemini", {}).get("online"):
+                    try:
+                        raw = llm_client.generate_json(
+                            json.dumps({"question": query}, ensure_ascii=False),
+                            system_instruction=_EXPANSION_INSTRUCTION, agent="retrieval",
+                        )
+                        expansion = _SearchExpansion.model_validate(raw)
+                        sub_queries = list(dict.fromkeys([query, *expansion.sub_queries, *sub_queries]))[:4]
+                        required_entities = list(dict.fromkeys([*required_entities, *expansion.required_entities]))[:8]
+                        alpha = expansion.alpha
+                        planning_backend = "cloud_router"
+                        break
+                    except Exception as e:
+                        self.logger.warning(f"[Hybrid Retrieval] Gemini planning failed ({e}), cascading...")
+                elif backend == "gpu_finetune" and is_gpu_online:
+                    try:
+                        router_res = llm_client.call_kaggle_specialist(
+                            endpoint="api/router",
+                            payload={"query": query, "adapter": "router"},
+                            adapter="router",
+                        )
+                        lora_plan = RouterPlanOutput.from_dict(router_res, default_query=query)
+                        for lsq in lora_plan.sub_queries[:2]:
+                            if lsq not in sub_queries:
+                                sub_queries.append(lsq)
+                        alpha = lora_plan.alpha
+                        planning_backend = "gpu_finetune_router_lora"
+                        break
+                    except Exception:
+                        pass
+                elif backend == "local":
+                    break
+
+        # Generate STORM research perspectives only if Gemini/LLM is allowed in planner_chain
+        if planning_backend == "local_supervisor" and "gemini" not in planner_chain and not is_gpu_online:
+            perspectives, storm_subs = [], []
+        elif "gemini" not in planner_chain and not is_gpu_online:
             perspectives, storm_subs = [], []
         else:
             perspectives, storm_subs = generate_research_perspectives(query)

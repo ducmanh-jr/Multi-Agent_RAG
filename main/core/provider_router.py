@@ -76,6 +76,21 @@ def assert_provider_allowed(provider: str, execution_mode: Optional[str], *, rol
         )
 
 
+def is_gemini_permitted(execution_mode: Optional[str], *, role: str = "") -> bool:
+    """
+    Single centralized policy check governing whether any Gemini API call is allowed.
+    Enforces both execution-mode isolation AND HYBRID_PROVIDER_PROFILE=local_only zero-Gemini mode.
+    """
+    mode = _clean(execution_mode) or "cpu_min"
+    if not is_provider_allowed("gemini", mode):
+        return False
+    if mode in {"hybrid", "auto", "optimal"}:
+        profile = _clean(getattr(get_run_settings(), "HYBRID_PROVIDER_PROFILE", "auto")) or "auto"
+        if profile == "local_only":
+            return False
+    return True
+
+
 def load_hybrid_provider_policy(overrides: Optional[Mapping[str, str]] = None) -> dict[str, str]:
     """
     Loads the effective Hybrid role -> provider policy from defaults + settings + optional overrides.
@@ -175,7 +190,10 @@ class HybridProviderRouter:
         if role_key == "planner":
             preferred = policy.get("planner", "gemini")
             chain = []
-            if preferred == "gemini":
+            if profile == "local_only":
+                if gpu_ft_online:
+                    chain.append("gpu_finetune")
+            elif preferred == "gemini":
                 if gemini_online:
                     chain.append("gemini")
                 if gpu_ft_online:
