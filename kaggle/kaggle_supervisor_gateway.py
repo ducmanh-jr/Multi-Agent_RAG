@@ -29,6 +29,7 @@ if hasattr(sys.stdout, "reconfigure"):
     except Exception:
         pass
 import time
+from collections import defaultdict
 from typing import Any, Optional
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
@@ -57,6 +58,41 @@ INFERENCE_TOKEN = (
     or ADMIN_TOKEN
 )
 PUBLIC_TUNNEL = os.environ.get("PUBLIC_TUNNEL", "false").strip().lower() in ("true", "1", "yes")
+
+# Cloudflare-aware per-IP sliding window rate limiter (default: 60 req/60s; <=0 disables)
+RATE_LIMIT_REQUESTS = int(os.environ.get("RATE_LIMIT_REQUESTS", "60"))
+RATE_LIMIT_WINDOW = float(os.environ.get("RATE_LIMIT_WINDOW", "60.0"))
+_rate_limit_lock = asyncio.Lock()
+_client_request_history: dict[str, list[float]] = defaultdict(list)
+
+
+def get_client_ip(request: Request) -> str:
+    """Extracts the real client IP, prioritizing CF-Connecting-IP, X-Forwarded-For, then client.host."""
+    cf_ip = request.headers.get("cf-connecting-ip")
+    if cf_ip and cf_ip.strip():
+        return cf_ip.strip()
+    x_forwarded_for = request.headers.get("x-forwarded-for")
+    if x_forwarded_for and x_forwarded_for.strip():
+        return x_forwarded_for.split(",")[0].strip()
+    return request.client.host if request.client else "127.0.0.1"
+
+
+async def check_inference_rate_limit(request: Request):
+    """Per-IP sliding window rate limiter protecting Kaggle GPU endpoints from abuse."""
+    if RATE_LIMIT_REQUESTS <= 0:
+        return
+    client_ip = get_client_ip(request)
+    now = time.time()
+    async with _rate_limit_lock:
+        cutoff = now - RATE_LIMIT_WINDOW
+        active_timestamps = [t for t in _client_request_history[client_ip] if t > cutoff]
+        if len(active_timestamps) >= RATE_LIMIT_REQUESTS:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Too Many Requests: Vượt quá giới hạn tần suất ({RATE_LIMIT_REQUESTS} requests/{int(RATE_LIMIT_WINDOW)}s).",
+            )
+        active_timestamps.append(now)
+        _client_request_history[client_ip] = active_timestamps
 
 
 def _active_admin_token() -> str:
@@ -281,7 +317,11 @@ async def get_logs():
 # REVERSE PROXY ROUTER (Guarded by Worker Lease & vLLM Adapter)
 # ==============================================================================
 
-@app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE"], dependencies=[Depends(verify_inference_auth)])
+@app.api_route(
+    "/{path:path}",
+    methods=["GET", "POST", "PUT", "DELETE"],
+    dependencies=[Depends(verify_inference_auth), Depends(check_inference_rate_limit)],
+)
 async def proxy_all(request: Request, path: str):
     # 1. State check: fail closed if actively transitioning
     if worker_manager.transition_state in ("draining", "stopping", "reclaiming_vram", "spawning"):
