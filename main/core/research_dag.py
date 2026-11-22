@@ -444,3 +444,250 @@ def execute_retrieval_dag(
             round_index=round_index,
         )
     )
+
+
+def pending_dag_investigation_queries(manifest: Mapping[str, Any] | None) -> list[str]:
+    """Returns queries for any PENDING gap_investigate (or investigate) nodes in the DAG manifest."""
+    if not isinstance(manifest, Mapping):
+        return []
+    nodes = manifest.get("nodes") or []
+    gap_queries = [
+        str(n.get("query") or "").strip()
+        for n in nodes
+        if isinstance(n, Mapping)
+        and n.get("kind") == "gap_investigate"
+        and str(n.get("status") or TaskStatus.PENDING) == str(TaskStatus.PENDING)
+        and str(n.get("query") or "").strip()
+    ]
+    if gap_queries:
+        return list(dict.fromkeys(gap_queries))
+    inv_queries = [
+        str(n.get("query") or "").strip()
+        for n in nodes
+        if isinstance(n, Mapping)
+        and n.get("kind") == "investigate"
+        and str(n.get("status") or TaskStatus.PENDING) == str(TaskStatus.PENDING)
+        and str(n.get("query") or "").strip()
+    ]
+    return list(dict.fromkeys(inv_queries))
+
+
+def sync_dag_manifest_from_retrieval(
+    manifest: Mapping[str, Any] | None,
+    trace_event: Mapping[str, Any] | None = None,
+    *,
+    retrieved_count: int = 0,
+) -> dict[str, Any]:
+    """
+    Synchronizes PENDING investigation and merge nodes in the DAG manifest with actual
+    TaskScheduler execution outcomes (or single-branch retrieval outcomes).
+    """
+    if not isinstance(manifest, Mapping) or not manifest.get("nodes"):
+        return dict(manifest or {})
+    updated = dict(manifest)
+    nodes = [dict(n) for n in (manifest.get("nodes") or []) if isinstance(n, Mapping)]
+
+    task_by_id: dict[str, Mapping[str, Any]] = {}
+    task_by_query: dict[str, Mapping[str, Any]] = {}
+    if isinstance(trace_event, Mapping):
+        for t in trace_event.get("tasks") or []:
+            if isinstance(t, Mapping) and t.get("id"):
+                task_by_id[str(t["id"])] = t
+                q = str(t.get("query") or "").strip()
+                if q:
+                    task_by_query[_query_signature(q)] = t
+
+    any_branch_completed = retrieved_count > 0
+    for node in nodes:
+        kind = node.get("kind")
+        curr_status = str(node.get("status") or TaskStatus.PENDING)
+        if curr_status != str(TaskStatus.PENDING):
+            continue
+        if kind in {"investigate", "gap_investigate"}:
+            nid = str(node.get("id") or "")
+            q_sig = _query_signature(str(node.get("query") or ""))
+            matched = task_by_id.get(nid) or task_by_query.get(q_sig)
+            meta = dict(node.get("metadata") or {})
+            if matched:
+                st = str(matched.get("status") or TaskStatus.COMPLETED)
+                node["status"] = st
+                meta["attempts"] = int(matched.get("attempts") or 1)
+                meta["hits"] = int(matched.get("hits") or 0)
+                if matched.get("error"):
+                    meta["error"] = matched["error"]
+                if st == str(TaskStatus.COMPLETED):
+                    any_branch_completed = True
+            else:
+                node["status"] = str(TaskStatus.COMPLETED if retrieved_count > 0 else TaskStatus.FAILED)
+                meta["hits"] = retrieved_count
+            node["metadata"] = meta
+        elif kind == "merge":
+            nid = str(node.get("id") or "")
+            matched = task_by_id.get(nid)
+            meta = dict(node.get("metadata") or {})
+            if matched:
+                node["status"] = str(matched.get("status") or TaskStatus.COMPLETED)
+                meta["merged_chunks"] = int(matched.get("hits") or retrieved_count)
+            else:
+                node["status"] = str(TaskStatus.COMPLETED if any_branch_completed else TaskStatus.FAILED)
+                meta["merged_chunks"] = retrieved_count
+            node["metadata"] = meta
+
+    updated["nodes"] = nodes
+    updated["completed_tasks"] = sum(
+        1 for n in nodes if str(n.get("status")) == str(TaskStatus.COMPLETED)
+    )
+    return updated
+
+
+def mark_dag_stage_status(
+    manifest: Mapping[str, Any] | None,
+    kind: TaskKind,
+    status: TaskStatus | str,
+    *,
+    metadata_update: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Marks the latest PENDING (or latest matching) node of `kind` with `status` and optional metadata."""
+    if not isinstance(manifest, Mapping) or not manifest.get("nodes"):
+        return dict(manifest or {})
+    updated = dict(manifest)
+    nodes = [dict(n) for n in (manifest.get("nodes") or []) if isinstance(n, Mapping)]
+    target_idx = None
+    for idx, node in enumerate(nodes):
+        if node.get("kind") == kind and str(node.get("status") or TaskStatus.PENDING) == str(TaskStatus.PENDING):
+            target_idx = idx
+            break
+    if target_idx is None:
+        for idx in range(len(nodes) - 1, -1, -1):
+            if nodes[idx].get("kind") == kind:
+                target_idx = idx
+                break
+    if target_idx is not None:
+        node = dict(nodes[target_idx])
+        node["status"] = str(TaskStatus(status))
+        if metadata_update:
+            node["metadata"] = {**dict(node.get("metadata") or {}), **dict(metadata_update)}
+        nodes[target_idx] = node
+    updated["nodes"] = nodes
+    updated["completed_tasks"] = sum(
+        1 for n in nodes if str(n.get("status")) == str(TaskStatus.COMPLETED)
+    )
+    return updated
+
+
+async def execute_full_research_dag_async(
+    dag: DynamicResearchDAG,
+    initial_state: Mapping[str, Any] | None = None,
+    *,
+    retrieve_branch: Callable[[str], dict[str, Any]] | None = None,
+    retrieve_fn: Callable[[str], dict[str, Any]] | None = None,
+    synthesize_fn: Callable[[dict[str, Any]], dict[str, Any]],
+    verify_fn: Callable[[dict[str, Any]], dict[str, Any]],
+    write_fn: Callable[[dict[str, Any]], dict[str, Any]],
+    top_k: int = 10,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """
+    Executes the entire end-to-end ResearchPlan DAG (investigate_* -> merge_evidence ->
+    synthesize -> verify -> write) through TaskScheduler with strict dependency enforcement.
+    Returns (final_state, updated_dag_manifest).
+    """
+    retriever = retrieve_branch or retrieve_fn
+    if retriever is None:
+        raise ValueError("Either retrieve_branch or retrieve_fn must be provided.")
+    state: dict[str, Any] = dict(initial_state or {})
+    top_k_val = int(state.get("top_k") or top_k or 10)
+    tasks = [node.to_task() for node in dag.nodes.values()]
+    policies = {
+        nid: TaskPolicy(
+            timeout_seconds=dag.budget.task_timeout_seconds,
+            max_retries=dag.budget.max_task_retries if node.kind in {"investigate", "gap_investigate"} else 0,
+            retry_delay_seconds=0.1,
+            retry_on=(TimeoutError,),
+        )
+        for nid, node in dag.nodes.items()
+    }
+    scheduler = TaskScheduler(
+        tasks,
+        max_concurrency=dag.budget.max_concurrency,
+        task_policies=policies,
+        run_timeout_seconds=dag.budget.run_timeout_seconds,
+    )
+
+    async def _executor(task: ResearchTask, deps: Mapping[str, TaskOutcome]) -> Any:
+        node = dag.nodes[task.id]
+        if node.kind in {"investigate", "gap_investigate"}:
+            return await asyncio.to_thread(retriever, node.query)
+        if node.kind == "merge":
+            branch_lists: list[list[dict[str, Any]]] = []
+            for dep_out in deps.values():
+                if dep_out.status == TaskStatus.COMPLETED and isinstance(dep_out.output, dict):
+                    docs = dep_out.output.get("retrieved_docs") or []
+                    if isinstance(docs, list):
+                        branch_lists.append(docs)
+            if not branch_lists:
+                raise RuntimeError("No investigation branch produced evidence.")
+            merged_docs = merge_branch_chunks(branch_lists, top_k=top_k_val)
+            state["retrieved_docs"] = merged_docs
+            state.setdefault("source_units", merged_docs)
+            return {"retrieved_docs": merged_docs}
+        if node.kind == "synthesize":
+            out = await asyncio.to_thread(synthesize_fn, dict(state))
+            if isinstance(out, dict):
+                state.update(out)
+            return out
+        if node.kind == "verify":
+            out = await asyncio.to_thread(verify_fn, dict(state))
+            if isinstance(out, dict):
+                state.update(out)
+            return out
+        if node.kind == "write":
+            out = await asyncio.to_thread(write_fn, dict(state))
+            if isinstance(out, dict):
+                state.update(out)
+            return out
+        return {}
+
+    outcomes = await scheduler.run(_executor)
+    manifest = dag.to_manifest()
+    for node_entry in manifest["nodes"]:
+        nid = node_entry["id"]
+        if nid in outcomes:
+            out = outcomes[nid]
+            node_entry["status"] = str(out.status)
+            meta = dict(node_entry.get("metadata") or {})
+            meta["attempts"] = out.attempts
+            if out.error:
+                meta["error"] = type(out.error).__name__
+            node_entry["metadata"] = meta
+    manifest["completed_tasks"] = sum(
+        1 for n in manifest["nodes"] if str(n.get("status")) == str(TaskStatus.COMPLETED)
+    )
+    state.setdefault("document_schema", {})
+    state["document_schema"] = {**dict(state["document_schema"]), "research_dag": manifest}
+    return state, manifest
+
+
+def execute_full_research_dag(
+    dag: DynamicResearchDAG,
+    initial_state: Mapping[str, Any] | None = None,
+    *,
+    retrieve_branch: Callable[[str], dict[str, Any]] | None = None,
+    retrieve_fn: Callable[[str], dict[str, Any]] | None = None,
+    synthesize_fn: Callable[[dict[str, Any]], dict[str, Any]],
+    verify_fn: Callable[[dict[str, Any]], dict[str, Any]],
+    write_fn: Callable[[dict[str, Any]], dict[str, Any]],
+    top_k: int = 10,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Synchronous wrapper for full end-to-end ResearchPlan DAG execution via TaskScheduler."""
+    return run_coro_sync(
+        execute_full_research_dag_async(
+            dag,
+            initial_state,
+            retrieve_branch=retrieve_branch,
+            retrieve_fn=retrieve_fn,
+            synthesize_fn=synthesize_fn,
+            verify_fn=verify_fn,
+            write_fn=write_fn,
+            top_k=top_k,
+        )
+    )
