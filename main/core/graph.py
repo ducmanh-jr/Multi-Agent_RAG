@@ -9,13 +9,20 @@ from core.comparison_plan import (
     compare_documents, comparison_schedule, get_comparison_budget, incomplete_comparison, review_comparison,
     run_coro_sync,
 )
-from core.config import RunConfig, agent_inference_mode, use_run_config
+from core.config import RunConfig, agent_inference_mode, get_run_settings, use_run_config
 from core.coordination import decide_handoff, fact_check_accepted
+from core.evidence_store import EvidenceStore
 from core.figure_qa import (
     add_figure_evidence, attach_answer_figures, check_visual_answer,
     draft_visual_answer, figure_context, write_visual_answer,
 )
 from core.handoff_inputs import prepare_handoff_input
+from core.provider_router import is_gemini_permitted
+from core.research_dag import (
+    build_research_dag_plan,
+    execute_retrieval_dag,
+    replan_research_dag_for_gaps,
+)
 from core.state import AgentState
 from core.supervisor import supervisor_planner
 from modes.registry import get_active_agents, get_agent_runners, normalize_mode, resolve_agent_modes
@@ -24,24 +31,83 @@ from utils.logger import logger
 
 # ===================== NODE FUNCTIONS =====================
 
-def orchestrator_router_node(state: AgentState) -> dict[str, Any]:
+def orchestrator_router_node(
+    state: AgentState,
+    *,
+    planner_llm_fn: Optional[Callable[[str], Any]] = None,
+) -> dict[str, Any]:
     """
     Agentic Supervisor Router Node (L3-L4):
     Phân tích query, phân loại intent + độ phức tạp (LOW/MEDIUM/HIGH),
-    tách sub_queries đa bước và trích xuất thực thể bắt buộc.
+    tách sub_queries đa bước (kết hợp LLM DAG Planner khi chế độ cho phép)
+    và dựng kế hoạch ResearchPlan DAG đã kiểm chứng.
     """
     query = state.get("query", "")
     retry_count = state.get("retry_count", 0)
     evidence_gaps = state.get("evidence_gaps") or []
 
-    plan = supervisor_planner.plan_query(
+    base_plan = supervisor_planner.plan_query(
         query=query,
         evidence_gaps=evidence_gaps,
         retry_count=retry_count,
     )
+    plan = base_plan
+    planning_source = "deterministic"
+
+    custom_llm_fn = planner_llm_fn or state.get("planner_llm_fn")
+    if callable(custom_llm_fn):
+        refined = supervisor_planner.plan_query_with_llm(
+            query=query,
+            evidence_gaps=evidence_gaps,
+            retry_count=retry_count,
+            llm_fn=custom_llm_fn,
+        )
+        if refined is not base_plan and refined.reasoning.startswith("LLM-Refined"):
+            plan = refined
+            planning_source = "llm_refined"
+    else:
+        run_settings = get_run_settings()
+        active_mode = (
+            run_settings.get_inference_mode("retrieval")
+            or run_settings.EXECUTION_MODE
+            or "cpu_min"
+        )
+        should_refine = (
+            retry_count == 0
+            and base_plan.complexity in {"MEDIUM", "HIGH"}
+            and is_gemini_permitted(active_mode, role="planner")
+            and bool(getattr(run_settings, "GEMINI_API_KEY", ""))
+        )
+        if should_refine:
+            from utils.llm_client import llm_client
+
+            def _planner_llm(prompt: str) -> Any:
+                with agent_inference_mode("gemini"):
+                    return llm_client.generate_json(prompt, agent="retrieval")
+
+            refined = supervisor_planner.plan_query_with_llm(
+                query=query,
+                evidence_gaps=evidence_gaps,
+                retry_count=retry_count,
+                llm_fn=_planner_llm,
+            )
+            if refined.reasoning.startswith("LLM-Refined"):
+                plan = refined
+                planning_source = "llm_refined"
+
+    dag = build_research_dag_plan(
+        plan,
+        evidence_gaps=evidence_gaps,
+        round_index=retry_count,
+    )
+    dag_manifest = dag.to_manifest()
+    existing_schema = dict(state.get("document_schema") or {})
+    existing_schema["research_dag"] = dag_manifest
+
     logger.info(
         f"[Supervisor Planner] Query='{query[:70]}' | Intent={plan.intent} | "
-        f"Complexity={plan.complexity} | SubQueries={len(plan.sub_queries)} | Retry={retry_count}"
+        f"Complexity={plan.complexity} | SubQueries={len(plan.sub_queries)} | "
+        f"Source={planning_source} | DAGTasks={dag_manifest['total_tasks']} | Retry={retry_count}"
     )
 
     intent_labels = {
@@ -63,10 +129,12 @@ def orchestrator_router_node(state: AgentState) -> dict[str, Any]:
         "action": f"Phân tích mục tiêu: Ý định '{intent_desc}' • Độ phức tạp '{plan.complexity}' • Tự động phân rã {len(plan.sub_queries)} sub-queries",
         "intent": plan.intent,
         "complexity": plan.complexity,
+        "planning_source": planning_source,
         "sub_queries": plan.sub_queries,
         "required_entities": plan.required_entities,
         "alpha": plan.alpha,
         "top_k": plan.top_k,
+        "dag_task_count": dag_manifest["total_tasks"],
         "retry_count": retry_count,
     }
     return {
@@ -79,6 +147,7 @@ def orchestrator_router_node(state: AgentState) -> dict[str, Any]:
         "alpha": plan.alpha,
         "top_k": plan.top_k,
         "retry_count": retry_count,
+        "document_schema": existing_schema,
         "reasoning_trace": [trace],
     }
 
@@ -200,6 +269,7 @@ _agents: dict[str, Any] = {}
 def build_research_rag_graph(
     mode: Optional[str] = None, *, run_config: RunConfig | None = None, auto_scout: bool = True,
     parallel_retrieval: bool = False, comparison_plan: bool = False,
+    planner_llm_fn: Optional[Callable[[str], Any]] = None,
 ):
     """Build a run-local team. Only the two reviewing roles can initiate corrective work."""
     run_config = run_config or RunConfig.capture()
@@ -340,6 +410,35 @@ def build_research_rag_graph(
             update = run_comparison_step(role, inputs, comparison, previous)
         elif pilot_enabled and role == "retrieval":
             update = run_agents[role](inputs, parallel_search=True)
+        elif parallel_retrieval and role == "retrieval":
+            sub_queries = list(dict.fromkeys(
+                q.strip() for q in (inputs.get("sub_queries") or [])
+                if isinstance(q, str) and q.strip()
+            ))
+            if len(sub_queries) >= 2:
+                def _run_branch(branch_query: str) -> dict[str, Any]:
+                    branch_state = {
+                        **inputs,
+                        "query": branch_query,
+                        "sub_queries": [branch_query],
+                    }
+                    return run_agents["retrieval"](branch_state)
+
+                dag_update, dag_trace = execute_retrieval_dag(
+                    sub_queries,
+                    _run_branch,
+                    top_k=int(inputs.get("top_k") or 10),
+                    round_index=int(state.get("retry_count") or 0),
+                )
+                if dag_update.get("retrieved_docs"):
+                    update = {
+                        **dag_update,
+                        "reasoning_trace": [dag_trace],
+                    }
+                else:
+                    update = run_agents[role](inputs)
+            else:
+                update = run_agents[role](inputs)
         else:
             update = run_agents[role](inputs)
         if role == "reader" and comparison is None:
@@ -387,6 +486,23 @@ def build_research_rag_graph(
                 "allow_scout_handoff": bool(auto_scout),
                 "reasoning_trace": [*(state.get("reasoning_trace") or []), *trace],
             }
+            if role == "fact_checker":
+                schema = dict(update.get("document_schema") or state.get("document_schema") or {})
+                store = EvidenceStore.from_state(reviewed)
+                schema["evidence_store"] = store.to_dict()
+                gaps = reviewed.get("evidence_gaps") or []
+                if gaps:
+                    replanned = replan_research_dag_for_gaps(schema.get("research_dag"), gaps)
+                    schema["research_dag"] = replanned
+                    if replanned.get("added_gap_tasks", 0) > 0:
+                        trace.append({
+                            "agent": "task_scheduler",
+                            "action": "research_dag_replanned",
+                            "round_index": replanned["round_index"],
+                            "added_gap_tasks": replanned["added_gap_tasks"],
+                            "total_tasks": replanned["total_tasks"],
+                        })
+                update["document_schema"] = schema
             decision = decide_handoff(role, reviewed)
             if decision is not None:
                 attempt = state.get("retry_count", 0) + 1
@@ -438,7 +554,8 @@ def build_research_rag_graph(
     workflow = StateGraph(AgentState)
 
     # Bind the snapshot at the node boundary, including when LangGraph runs in an executor.
-    workflow.add_node("orchestrator_router", use_run_config(run_config)(orchestrator_router_node))
+    router_fn = partial(orchestrator_router_node, planner_llm_fn=planner_llm_fn) if planner_llm_fn else orchestrator_router_node
+    workflow.add_node("orchestrator_router", use_run_config(run_config)(router_fn))
     workflow.add_node("scout_node", use_run_config(run_config)(agent_inference_mode(scout_mode)(_run_scout)))
     for role in ("retrieval", "reader", "summarizer", "fact_checker"):
         workflow.add_node(f"{role}_node", use_run_config(run_config)(partial(run_specialist, role)))
