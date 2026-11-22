@@ -209,6 +209,20 @@ def _create_tables(conn: sqlite3.Connection):
         );
     """)
 
+    # 6. Run Checkpoints Table (PR-08: durable per-node state & DAG recovery)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS run_checkpoints (
+            run_id TEXT NOT NULL,
+            step_index INTEGER NOT NULL,
+            node_name TEXT NOT NULL,
+            state_json TEXT NOT NULL,
+            evidence_store_json TEXT DEFAULT '{}',
+            dag_json TEXT DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (run_id, step_index)
+        );
+    """)
+
     conn.commit()
 
 
@@ -824,6 +838,119 @@ def log_api_usage(provider: str, model: str, endpoint: str = "generateContent", 
         conn.close()
     except Exception as e:
         logger.warning(f"Failed to log API usage for {provider}/{model}: {e}")
+
+
+# ===================== RUN CHECKPOINTS & RECOVERY (PR-08) =====================
+
+def _json_safe_snapshot(data: Any) -> str:
+    return json.dumps(data, ensure_ascii=False, default=str)
+
+
+def save_run_checkpoint(
+    run_id: str,
+    step_index: int,
+    node_name: str,
+    state_snapshot: dict[str, Any],
+    *,
+    evidence_store: Optional[dict[str, Any]] = None,
+    dag_state: Optional[dict[str, Any]] = None,
+) -> bool:
+    """Persists a recoverable node-level checkpoint for a research run."""
+    if not run_id:
+        return False
+    now = datetime.datetime.now().isoformat()
+    try:
+        with db_session() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO run_checkpoints
+                    (run_id, step_index, node_name, state_json, evidence_store_json, dag_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id,
+                    int(step_index),
+                    str(node_name),
+                    _json_safe_snapshot(state_snapshot),
+                    _json_safe_snapshot(evidence_store or {}),
+                    _json_safe_snapshot(dag_state or {}),
+                    now,
+                ),
+            )
+            conn.commit()
+        return True
+    except Exception as exc:
+        logger.warning("Failed to save checkpoint for run %s step %s: %s", run_id, step_index, exc)
+        return False
+
+
+def _decode_checkpoint_row(row: sqlite3.Row) -> dict[str, Any]:
+    def _loads(raw: Any) -> dict[str, Any]:
+        if not raw:
+            return {}
+        try:
+            val = json.loads(raw)
+            return val if isinstance(val, dict) else {}
+        except Exception:
+            return {}
+
+    return {
+        "run_id": row["run_id"],
+        "step_index": int(row["step_index"]),
+        "node_name": row["node_name"],
+        "state": _loads(row["state_json"]),
+        "evidence_store": _loads(row["evidence_store_json"]),
+        "dag": _loads(row["dag_json"]),
+        "created_at": row["created_at"],
+    }
+
+
+def get_latest_run_checkpoint(run_id: str) -> Optional[dict[str, Any]]:
+    """Returns the most recent persisted checkpoint for `run_id`, or None."""
+    with db_session() as conn:
+        row = conn.execute(
+            """
+            SELECT run_id, step_index, node_name, state_json, evidence_store_json, dag_json, created_at
+            FROM run_checkpoints
+            WHERE run_id = ?
+            ORDER BY step_index DESC
+            LIMIT 1
+            """,
+            (run_id,),
+        ).fetchone()
+    return _decode_checkpoint_row(row) if row else None
+
+
+def list_run_checkpoints(run_id: str) -> list[dict[str, Any]]:
+    """Returns all checkpoints for `run_id` ordered chronologically by step_index."""
+    with db_session() as conn:
+        rows = conn.execute(
+            """
+            SELECT run_id, step_index, node_name, state_json, evidence_store_json, dag_json, created_at
+            FROM run_checkpoints
+            WHERE run_id = ?
+            ORDER BY step_index ASC
+            """,
+            (run_id,),
+        ).fetchall()
+    return [_decode_checkpoint_row(row) for row in rows]
+
+
+def list_recoverable_runs() -> list[dict[str, Any]]:
+    """Returns runs that were interrupted (processing/failed/timed_out) and have a saved checkpoint."""
+    with db_session() as conn:
+        rows = conn.execute(
+            """
+            SELECT r.id AS run_id, r.question, r.status, r.created_at,
+                   MAX(c.step_index) AS last_step_index
+            FROM research_runs r
+            INNER JOIN run_checkpoints c ON c.run_id = r.id
+            WHERE r.status IN ('processing', 'failed', 'timed_out', 'cancelled')
+            GROUP BY r.id
+            ORDER BY r.created_at DESC
+            """
+        ).fetchall()
+    return [dict(row) for row in rows]
 
 
 # Initialize on import

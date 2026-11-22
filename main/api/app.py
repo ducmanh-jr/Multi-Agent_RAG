@@ -1814,6 +1814,49 @@ def export_run_trace(run_id: str):
     return {"trace": run_record.get("reasoning_trace") or []}
 
 
+@app.get("/api/runs/{run_id}/checkpoints")
+def get_run_checkpoints(run_id: str):
+    """Returns persisted SQLite node checkpoints, DAG state, and EvidenceStore summary for a run."""
+    run_record = db.get_run(run_id)
+    if not run_record:
+        raise HTTPException(status_code=404, detail="Run not found.")
+    checkpoints = db.list_run_checkpoints(run_id)
+    latest = checkpoints[-1] if checkpoints else None
+    return {
+        "run_id": run_id,
+        "checkpoint_count": len(checkpoints),
+        "latest_step": latest["step_index"] if latest else None,
+        "latest_node": latest["node_name"] if latest else None,
+        "evidence_store": latest["evidence_store"] if latest else {},
+        "research_dag": latest["dag"] if latest else {},
+        "checkpoints": [
+            {
+                "step_index": c["step_index"],
+                "node_name": c["node_name"],
+                "created_at": c["created_at"],
+            }
+            for c in checkpoints
+        ],
+    }
+
+
+@app.post("/api/runs/{run_id}/resume")
+async def resume_run_endpoint(run_id: str, mode: Optional[str] = None):
+    """Resumes an interrupted/failed research run from its latest persisted SQLite checkpoint."""
+    try:
+        effective_mode = normalize_mode(mode) if mode else None
+        run = await research_runs.resume(run_id, config=RunConfig.capture(), mode=effective_mode)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Run not found.")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {
+        **run.record,
+        "answer_status": run_answer_status(run.record),
+        "run_manifest": get_run_manifest(run.record),
+    }
+
+
 
 
 

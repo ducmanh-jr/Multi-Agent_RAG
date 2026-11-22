@@ -109,6 +109,10 @@ class ResearchRequest:
     comparison_plan: bool = False
     comparison_timeout_seconds: float = DEFAULT_COMPARISON_TIMEOUT_SECONDS
     token_budget: int | None = None
+    resume_state: dict[str, Any] | None = None
+    resumed_from_run_id: str | None = None
+    resumed_from_step: int | None = None
+    resumed_from_node: str | None = None
 
 
 @dataclass(frozen=True)
@@ -162,6 +166,41 @@ class ResearchRunService:
         # Keep acceptance and scheduling together if the HTTP caller disconnects during admission.
         return await asyncio.shield(self._admit(request, stream))
 
+    async def resume(
+        self,
+        source_run_id: str,
+        *,
+        config: RunConfig | None = None,
+        mode: str | None = None,
+    ) -> ResearchRun:
+        """Creates a recovered run initialized from the latest persisted SQLite checkpoint."""
+        record = await asyncio.to_thread(db.get_run, source_run_id)
+        if not record:
+            raise KeyError(f"Run '{source_run_id}' not found.")
+        checkpoint = await asyncio.to_thread(db.get_latest_run_checkpoint, source_run_id)
+        if not checkpoint:
+            raise ValueError(f"Run '{source_run_id}' has no persisted checkpoints to resume from.")
+
+        ckpt_state = checkpoint.get("state") or {}
+        doc_ids = tuple(d for d in (record.get("document_ids") or []) if isinstance(d, str) and d)
+        pdf_path = ckpt_state.get("pdf_path")
+        run_cfg = config or RunConfig.capture()
+        request = ResearchRequest(
+            query=str(ckpt_state.get("query") or record.get("question") or ""),
+            config=run_cfg,
+            mode=mode,
+            document_ids=doc_ids,
+            pdf_path=pdf_path if not doc_ids else None,
+            auto_scout=False,
+            parallel_retrieval=True,
+            session_id=record.get("session_id"),
+            resume_state=ckpt_state,
+            resumed_from_run_id=source_run_id,
+            resumed_from_step=checkpoint.get("step_index"),
+            resumed_from_node=checkpoint.get("node_name"),
+        )
+        return await self.start(request)
+
     async def _admit(self, request: ResearchRequest, stream: bool) -> ResearchRun:
         sources = await asyncio.to_thread(_resolve_selection, request.document_ids, request.pdf_path)
         scout_enabled = request.auto_scout and not sources
@@ -173,6 +212,13 @@ class ResearchRunService:
             token_budget=request.token_budget,
         )
         traces = [admission]
+        if request.resumed_from_run_id:
+            traces.append({
+                "action": "run_resumed_from_checkpoint",
+                "source_run_id": request.resumed_from_run_id,
+                "resumed_from_step": request.resumed_from_step,
+                "resumed_from_node": request.resumed_from_node,
+            })
         comparison_query = (
             admission["configuration"]["comparison_plan_enabled"]
             and supervisor_planner.plan_query(request.query).is_comparative_query
@@ -245,6 +291,14 @@ class ResearchRunService:
             "retry_count": 0,
             "chat_history": request.chat_history,
         }
+        if isinstance(request.resume_state, dict):
+            for key in (
+                "intent", "complexity", "sub_queries", "required_entities",
+                "alpha", "top_k", "retry_count", "retrieved_docs", "source_units",
+                "evidence_gaps", "document_schema",
+            ):
+                if key in request.resume_state and request.resume_state[key] is not None:
+                    state[key] = deepcopy(request.resume_state[key])
         if request.max_reflection_loops is not None:
             state["max_reflection_loops"] = request.max_reflection_loops
         deadline_at = execution.budget.deadline_at if execution else None
@@ -269,6 +323,7 @@ class ResearchRunService:
                         comparison_plan=request.comparison_plan,
                     )
                     start_time = time.monotonic()
+                    step_counter = 0
                     async with aclosing(graph.astream(state.copy(), stream_mode="updates")) as updates:
                         while await asyncio.to_thread(db.run_is_processing, run_id):
                             chunk = await anext(updates, None)
@@ -301,6 +356,28 @@ class ResearchRunService:
                                     trace.update(duration=f"{elapsed}s", duration_sec=elapsed, timestamp=time.time())
                                 traces.extend(node_traces)
                                 state.update(output)
+                                step_counter += 1
+                                schema_snap = state.get("document_schema") or {}
+                                checkpoint_state = {
+                                    key: state.get(key)
+                                    for key in (
+                                        "query", "pdf_path", "pdf_paths", "intent", "complexity",
+                                        "sub_queries", "required_entities", "alpha", "top_k",
+                                        "retry_count", "retrieved_docs", "source_units", "answer",
+                                        "claims", "evidence_spans", "verified_claims", "rejected_claims",
+                                        "evidence_gaps", "fact_check_label", "answer_status", "document_schema",
+                                    )
+                                    if key in state
+                                }
+                                await asyncio.to_thread(
+                                    db.save_run_checkpoint,
+                                    run_id,
+                                    step_counter,
+                                    node,
+                                    checkpoint_state,
+                                    evidence_store=schema_snap.get("evidence_store"),
+                                    dag_state=schema_snap.get("research_dag"),
+                                )
                                 progress = [
                                     event for event in traces
                                     if not (execution or ledger.limit is not None)
