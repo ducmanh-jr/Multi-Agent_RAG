@@ -182,15 +182,29 @@ def _start_vllm_engine(adapter_paths: dict[str, str]) -> bool:
     if gpu_count < 1:
         return False
 
-    model_id = os.getenv("BASE_QWEN_MODEL_ID", "Qwen/Qwen2.5-7B-Instruct")
-    tp_size = 2 if gpu_count >= 2 else 1
-    gpu_util = os.environ.get("VLLM_FINETUNE_GPU_UTIL", "0.78" if tp_size == 2 else "0.85")
+    strategy = os.environ.get("VLLM_FINETUNE_STRATEGY", "awq_tp1").strip().lower()
+    if strategy == "fp16_tp2" and gpu_count >= 2:
+        model_id = os.getenv("BASE_QWEN_MODEL_ID", "Qwen/Qwen2.5-7B-Instruct")
+        tp_size = 2
+        gpu_util = os.environ.get("VLLM_FINETUNE_GPU_UTIL", "0.78")
+        quant_args: list[str] = []
+        sub_env = os.environ.copy()
+    else:
+        # Default 'awq_tp1': Run Qwen2.5-7B-Instruct-AWQ on GPU 0 (TP=1) to eliminate PCIe All-Reduce bottleneck on T4x2!
+        model_id = os.getenv("BASE_QWEN_AWQ_MODEL_ID", "Qwen/Qwen2.5-7B-Instruct-AWQ")
+        tp_size = 1
+        gpu_util = os.environ.get("VLLM_FINETUNE_GPU_UTIL", "0.86")
+        quant_args = ["--quantization", "awq"]
+        sub_env = os.environ.copy()
+        sub_env["CUDA_VISIBLE_DEVICES"] = "0"
+
     lora_args = [f"{name}={path}" for name, path in adapter_paths.items()]
 
     cmd = [
         sys.executable, "-m", "vllm.entrypoints.openai.api_server",
         "--model", model_id,
         "--dtype", "half",
+        *quant_args,
         "--tensor-parallel-size", str(tp_size),
         "--gpu-memory-utilization", str(gpu_util),
         "--max-model-len", os.environ.get("VLLM_MAX_MODEL_LEN", "4096"),
@@ -206,13 +220,14 @@ def _start_vllm_engine(adapter_paths: dict[str, str]) -> bool:
     if os.environ.get("VLLM_ENFORCE_EAGER", "0") == "1":
         cmd.append("--enforce-eager")
 
-    print(f"[Worker] Starting vLLM Multi-LoRA Engine (TP={tp_size}, FP16, gpu_util={gpu_util}) on :{_vllm_port}...")
+    print(f"[Worker] Starting vLLM Multi-LoRA Engine (strategy={strategy}, model={model_id}, TP={tp_size}, gpu_util={gpu_util}) on :{_vllm_port}...")
     log_path = Path("/kaggle/working/vllm_finetune.log") if Path("/kaggle/working").exists() else Path("vllm_finetune.log")
     log_file = open(log_path, "w", encoding="utf-8")
 
     popen_kwargs: dict[str, Any] = {
         "stdout": log_file,
         "stderr": subprocess.STDOUT,
+        "env": sub_env,
     }
     if os.name != "nt":
         popen_kwargs["start_new_session"] = True
