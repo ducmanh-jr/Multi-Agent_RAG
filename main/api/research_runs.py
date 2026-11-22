@@ -6,13 +6,15 @@ import time
 import uuid
 from contextlib import aclosing
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from langgraph.graph import END
+
 from api.citations import file_sha256, pin_citation_provenance
 from api.figures import pin_answer_figures
-from api.run_manifest import manifest_event
+from api.run_manifest import RUN_MANIFEST_ACTION, manifest_event
 from core import db
 from core.citation_audit import get_citation_audit
 from core.comparison_plan import (
@@ -20,7 +22,7 @@ from core.comparison_plan import (
     incomplete_comparison, use_comparison_budget,
 )
 from core.config import RunConfig
-from core.graph import build_research_rag_graph
+from core.graph import build_research_rag_graph, resolve_next_node_after_checkpoint
 from core.supervisor import supervisor_planner
 from core.task_scheduler import ScheduleTimeoutError
 from core.token_usage import RunTokenLedger, capture_token_usage
@@ -31,6 +33,42 @@ from utils.logger import logger
 WAITING_MESSAGE = "Vui lòng chọn một tài liệu trong kho hoặc bật Auto-Scout để bắt đầu nghiên cứu."
 WAITING_REPORT = f"# Thông báo Hệ thống\n\n> **Trạng thái:** `WAITING_FOR_DOCUMENT`\n\n{WAITING_MESSAGE}"
 DOCUMENT_EXTENSIONS = {".pdf", ".txt", ".md"}
+CHECKPOINT_STATE_KEYS = (
+    "query",
+    "pdf_path",
+    "pdf_paths",
+    "intent",
+    "complexity",
+    "sub_queries",
+    "required_entities",
+    "is_numeric_query",
+    "is_comparative_query",
+    "alpha",
+    "top_k",
+    "retry_count",
+    "max_reflection_loops",
+    "retrieved_docs",
+    "seen_chunks",
+    "no_new_evidence",
+    "source_units",
+    "answer",
+    "short_answer",
+    "claims",
+    "evidence_spans",
+    "critic_action",
+    "critic_feedback",
+    "verified_claims",
+    "rejected_claims",
+    "evidence_gaps",
+    "fact_check_label",
+    "answer_status",
+    "confidence",
+    "final_report",
+    "statistical_audit",
+    "code_verification",
+    "document_schema",
+    "reasoning_trace",
+)
 
 
 def _source_path(value: str | None) -> Path | None:
@@ -113,6 +151,7 @@ class ResearchRequest:
     resumed_from_run_id: str | None = None
     resumed_from_step: int | None = None
     resumed_from_node: str | None = None
+    resume_start_at_node: str | None = None
 
 
 @dataclass(frozen=True)
@@ -181,30 +220,89 @@ class ResearchRunService:
         if not checkpoint:
             raise ValueError(f"Run '{source_run_id}' has no persisted checkpoints to resume from.")
 
-        ckpt_state = checkpoint.get("state") or {}
+        manifest_cfg: dict[str, Any] = {}
+        for event in record.get("reasoning_trace") or []:
+            if isinstance(event, dict) and event.get("action") == RUN_MANIFEST_ACTION:
+                if isinstance(event.get("configuration"), dict):
+                    manifest_cfg = dict(event["configuration"])
+                break
+
+        saved_agent_modes = (
+            dict(manifest_cfg["agent_modes"])
+            if isinstance(manifest_cfg.get("agent_modes"), dict)
+            else None
+        )
+        effective_mode = mode if mode is not None else manifest_cfg.get("mode_override")
+        run_cfg = config or RunConfig.capture(agent_modes=saved_agent_modes)
+        if config is not None and saved_agent_modes and effective_mode is None:
+            run_cfg = replace(
+                config,
+                AGENT_RETRIEVAL_MODE=saved_agent_modes.get("retrieval", config.AGENT_RETRIEVAL_MODE),
+                AGENT_READER_MODE=saved_agent_modes.get("reader", config.AGENT_READER_MODE),
+                AGENT_SUMMARIZER_MODE=saved_agent_modes.get("summarizer", config.AGENT_SUMMARIZER_MODE),
+                AGENT_FACT_CHECKER_MODE=saved_agent_modes.get("fact_checker", config.AGENT_FACT_CHECKER_MODE),
+                AGENT_WRITER_MODE=saved_agent_modes.get("writer", config.AGENT_WRITER_MODE),
+            )
+
+        ckpt_state = dict(checkpoint.get("state") or {})
         doc_ids = tuple(d for d in (record.get("document_ids") or []) if isinstance(d, str) and d)
-        pdf_path = ckpt_state.get("pdf_path")
-        run_cfg = config or RunConfig.capture()
+        ckpt_paths = list(ckpt_state.get("pdf_paths") or [])
+        pdf_path = ckpt_state.get("pdf_path") or (ckpt_paths[0] if ckpt_paths else None)
+        comparison_plan = bool(manifest_cfg.get("comparison_plan_requested", False))
+        retrieval_cfg = manifest_cfg.get("retrieval") if isinstance(manifest_cfg.get("retrieval"), dict) else {}
+        limits_cfg = manifest_cfg.get("limits") if isinstance(manifest_cfg.get("limits"), dict) else {}
+        parallel_retrieval = bool(retrieval_cfg.get("parallel_requested", True))
+        auto_scout = bool(manifest_cfg.get("auto_scout_requested", False))
+        max_reflection_loops = limits_cfg.get("requested_reflection_loops")
+        if max_reflection_loops is None and "max_reflection_loops" in ckpt_state:
+            max_reflection_loops = ckpt_state.get("max_reflection_loops")
+        token_budget = manifest_cfg.get("token_budget")
+        comparison_timeout_seconds = float(
+            manifest_cfg.get("comparison_timeout_seconds") or DEFAULT_COMPARISON_TIMEOUT_SECONDS
+        )
+        start_at_node = resolve_next_node_after_checkpoint(
+            checkpoint.get("node_name"),
+            ckpt_state,
+            comparison_plan=comparison_plan,
+        )
+
         request = ResearchRequest(
             query=str(ckpt_state.get("query") or record.get("question") or ""),
             config=run_cfg,
-            mode=mode,
+            mode=effective_mode,
             document_ids=doc_ids,
             pdf_path=pdf_path if not doc_ids else None,
-            auto_scout=False,
-            parallel_retrieval=True,
+            auto_scout=auto_scout,
+            max_reflection_loops=max_reflection_loops,
+            parallel_retrieval=parallel_retrieval,
+            comparison_plan=comparison_plan,
+            comparison_timeout_seconds=comparison_timeout_seconds,
+            token_budget=token_budget,
             session_id=record.get("session_id"),
             resume_state=ckpt_state,
             resumed_from_run_id=source_run_id,
             resumed_from_step=checkpoint.get("step_index"),
             resumed_from_node=checkpoint.get("node_name"),
+            resume_start_at_node=start_at_node,
         )
         return await self.start(request)
 
     async def _admit(self, request: ResearchRequest, stream: bool) -> ResearchRun:
-        sources = await asyncio.to_thread(_resolve_selection, request.document_ids, request.pdf_path)
-        scout_enabled = request.auto_scout and not sources
-        waiting = not sources and not scout_enabled
+        resume_paths = (
+            [p for p in (request.resume_state.get("pdf_paths") or []) if isinstance(p, str) and p]
+            if isinstance(request.resume_state, dict)
+            else []
+        )
+        if not request.document_ids and len(resume_paths) > 1:
+            sources = await asyncio.to_thread(_resolve_paths, resume_paths)
+        else:
+            sources = await asyncio.to_thread(_resolve_selection, request.document_ids, request.pdf_path)
+        has_checkpoint_evidence = bool(
+            isinstance(request.resume_state, dict)
+            and (request.resume_state.get("source_units") or request.resume_state.get("retrieved_docs"))
+        )
+        scout_enabled = request.auto_scout and not sources and not has_checkpoint_evidence
+        waiting = not sources and not scout_enabled and not has_checkpoint_evidence
         admission = manifest_event(
             request.config, mode=request.mode, auto_scout=request.auto_scout, scout_enabled=scout_enabled,
             reflection_loops=request.max_reflection_loops, parallel_retrieval=request.parallel_retrieval,
@@ -218,6 +316,7 @@ class ResearchRunService:
                 "source_run_id": request.resumed_from_run_id,
                 "resumed_from_step": request.resumed_from_step,
                 "resumed_from_node": request.resumed_from_node,
+                "resume_start_at_node": request.resume_start_at_node,
             })
         comparison_query = (
             admission["configuration"]["comparison_plan_enabled"]
@@ -292,13 +391,12 @@ class ResearchRunService:
             "chat_history": request.chat_history,
         }
         if isinstance(request.resume_state, dict):
-            for key in (
-                "intent", "complexity", "sub_queries", "required_entities",
-                "alpha", "top_k", "retry_count", "retrieved_docs", "source_units",
-                "evidence_gaps", "document_schema",
-            ):
+            for key in CHECKPOINT_STATE_KEYS:
                 if key in request.resume_state and request.resume_state[key] is not None:
                     state[key] = deepcopy(request.resume_state[key])
+            if paths:
+                state["pdf_path"] = paths[0]
+                state["pdf_paths"] = paths
         if request.max_reflection_loops is not None:
             state["max_reflection_loops"] = request.max_reflection_loops
         deadline_at = execution.budget.deadline_at if execution else None
@@ -316,14 +414,22 @@ class ResearchRunService:
             watcher = asyncio.create_task(interrupt())
         try:
             async with timeout:
-                if await asyncio.to_thread(db.run_is_processing, run_id):
-                    graph = await asyncio.to_thread(
-                        build_research_rag_graph, mode=request.mode, run_config=request.config,
-                        auto_scout=request.auto_scout and not sources, parallel_retrieval=request.parallel_retrieval,
-                        comparison_plan=request.comparison_plan,
-                    )
+                if (
+                    request.resume_start_at_node not in {END, "__end__"}
+                    and await asyncio.to_thread(db.run_is_processing, run_id)
+                ):
+                    graph_kwargs: dict[str, Any] = {
+                        "mode": request.mode,
+                        "run_config": request.config,
+                        "auto_scout": request.auto_scout and not sources,
+                        "parallel_retrieval": request.parallel_retrieval,
+                        "comparison_plan": request.comparison_plan,
+                    }
+                    if request.resume_start_at_node:
+                        graph_kwargs["start_at_node"] = request.resume_start_at_node
+                    graph = await asyncio.to_thread(build_research_rag_graph, **graph_kwargs)
                     start_time = time.monotonic()
-                    step_counter = 0
+                    step_counter = int(request.resumed_from_step or 0)
                     async with aclosing(graph.astream(state.copy(), stream_mode="updates")) as updates:
                         while await asyncio.to_thread(db.run_is_processing, run_id):
                             chunk = await anext(updates, None)
@@ -360,13 +466,7 @@ class ResearchRunService:
                                 schema_snap = state.get("document_schema") or {}
                                 checkpoint_state = {
                                     key: state.get(key)
-                                    for key in (
-                                        "query", "pdf_path", "pdf_paths", "intent", "complexity",
-                                        "sub_queries", "required_entities", "alpha", "top_k",
-                                        "retry_count", "retrieved_docs", "source_units", "answer",
-                                        "claims", "evidence_spans", "verified_claims", "rejected_claims",
-                                        "evidence_gaps", "fact_check_label", "answer_status", "document_schema",
-                                    )
+                                    for key in CHECKPOINT_STATE_KEYS
                                     if key in state
                                 }
                                 await asyncio.to_thread(

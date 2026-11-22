@@ -21,8 +21,12 @@ from core.provider_router import is_gemini_permitted
 from core.research_dag import (
     build_research_dag_plan,
     execute_retrieval_dag,
+    mark_dag_stage_status,
+    pending_dag_investigation_queries,
     replan_research_dag_for_gaps,
+    sync_dag_manifest_from_retrieval,
 )
+from core.research_tasks import TaskStatus
 from core.state import AgentState
 from core.supervisor import supervisor_planner
 from modes.registry import get_active_agents, get_agent_runners, normalize_mode, resolve_agent_modes
@@ -263,6 +267,47 @@ def route_after_fact_check(state: AgentState) -> str:
     return "writer_node" if fact_check_accepted(state) else "escalation_node"
 
 
+def resolve_next_node_after_checkpoint(
+    completed_node: str | None,
+    state: AgentState,
+    *,
+    comparison_plan: bool = False,
+) -> str:
+    """Resolve the exact successor node to execute when resuming after `completed_node`."""
+    node = (completed_node or "").strip()
+    if not node:
+        return "orchestrator_router"
+    if node == "orchestrator_router":
+        return "scout_node"
+    if node == "scout_node":
+        return route_after_scout(state)
+    if node == "retrieval_node":
+        if comparison_plan:
+            schedule = comparison_schedule(state.get("reasoning_trace") or [])
+            if schedule is not None:
+                return "comparison_review_node" if schedule["status"] == "COMPLETED" else END
+        return "reader_node"
+    if node == "reader_node":
+        if comparison_plan:
+            schedule = comparison_schedule(state.get("reasoning_trace") or [])
+            if schedule is not None:
+                return "comparison_review_node" if schedule["status"] == "COMPLETED" else END
+        return "summarizer_node"
+    if node == "summarizer_node":
+        return route_after_summarizer(state)
+    if node == "fact_checker_node":
+        return route_after_fact_check(state)
+    if node == "comparison_review_node":
+        trace = state.get("reasoning_trace") or []
+        last = trace[-1] if trace else {}
+        if last.get("action") != "agent_handoff":
+            return END
+        return "comparison_review_node" if last.get("recipient") == "summarizer" else f"{last['recipient']}_node"
+    if node in {"writer_node", "escalation_node", END, "__end__"}:
+        return END
+    return "orchestrator_router"
+
+
 _agents: dict[str, Any] = {}
 
 
@@ -270,6 +315,7 @@ def build_research_rag_graph(
     mode: Optional[str] = None, *, run_config: RunConfig | None = None, auto_scout: bool = True,
     parallel_retrieval: bool = False, comparison_plan: bool = False,
     planner_llm_fn: Optional[Callable[[str], Any]] = None,
+    start_at_node: Optional[str] = None,
 ):
     """Build a run-local team. Only the two reviewing roles can initiate corrective work."""
     run_config = run_config or RunConfig.capture()
@@ -396,12 +442,27 @@ def build_research_rag_graph(
     def run_specialist(role: str, state: AgentState) -> dict[str, Any]:
         request = _handoff_for(state, role, "recipient")
         inputs = prepare_handoff_input(state, request) if request else state
+        existing_schema = dict(inputs.get("document_schema") or state.get("document_schema") or {})
+        dag_manifest = existing_schema.get("research_dag") if isinstance(existing_schema.get("research_dag"), dict) else None
+        gap_queries = (
+            pending_dag_investigation_queries(dag_manifest)
+            if role == "retrieval" and state.get("retry_count", 0) > 0
+            else []
+        )
+        if gap_queries:
+            merged_sub_queries = list(dict.fromkeys([
+                *gap_queries,
+                *(q.strip() for q in (inputs.get("sub_queries") or []) if isinstance(q, str) and q.strip()),
+            ]))
+            inputs = {**inputs, "sub_queries": merged_sub_queries}
+
         visual = figure_context(inputs).get("explicit", False)
         previous = comparison_schedule(state.get("reasoning_trace") or []) if comparison_enabled and role == "reader" else None
         comparison = (
             supervisor_planner.plan_document_comparison(inputs)
             if comparison_enabled and (role == "retrieval" or (previous and request)) else None
         )
+        dag_trace: dict[str, Any] | None = None
         if visual and role == "summarizer":
             update = draft_visual_answer(inputs)
         elif visual and role == "fact_checker":
@@ -410,7 +471,7 @@ def build_research_rag_graph(
             update = run_comparison_step(role, inputs, comparison, previous)
         elif pilot_enabled and role == "retrieval":
             update = run_agents[role](inputs, parallel_search=True)
-        elif parallel_retrieval and role == "retrieval":
+        elif (parallel_retrieval or bool(gap_queries)) and role == "retrieval":
             sub_queries = list(dict.fromkeys(
                 q.strip() for q in (inputs.get("sub_queries") or [])
                 if isinstance(q, str) and q.strip()
@@ -441,6 +502,16 @@ def build_research_rag_graph(
                 update = run_agents[role](inputs)
         else:
             update = run_agents[role](inputs)
+
+        if role == "retrieval" and dag_manifest is not None:
+            schema = dict(update.get("document_schema") or existing_schema)
+            schema["research_dag"] = sync_dag_manifest_from_retrieval(
+                dag_manifest,
+                dag_trace,
+                retrieved_count=len(update.get("retrieved_docs") or []),
+            )
+            update = {**update, "document_schema": schema}
+
         if role == "reader" and comparison is None:
             update = add_figure_evidence(inputs, update, reader_mode)
         if role == "reader" and comparison is None and state.get("retry_count") and state.get("source_units"):
@@ -479,6 +550,18 @@ def build_research_rag_graph(
                 **update,
             }
 
+        if role == "summarizer":
+            schema = dict(update.get("document_schema") or state.get("document_schema") or {})
+            if isinstance(schema.get("research_dag"), dict):
+                has_answer = bool((update.get("answer") or state.get("answer") or "").strip())
+                schema["research_dag"] = mark_dag_stage_status(
+                    schema.get("research_dag"),
+                    "synthesize",
+                    TaskStatus.COMPLETED if has_answer else TaskStatus.FAILED,
+                    metadata_update={"claims_count": len(update.get("claims") or [])},
+                )
+                update = {**update, "document_schema": schema}
+
         if not visual and role in {"summarizer", "fact_checker"}:
             reviewed = {
                 **state,
@@ -486,12 +569,24 @@ def build_research_rag_graph(
                 "allow_scout_handoff": bool(auto_scout),
                 "reasoning_trace": [*(state.get("reasoning_trace") or []), *trace],
             }
+            decision = decide_handoff(role, reviewed)
             if role == "fact_checker":
                 schema = dict(update.get("document_schema") or state.get("document_schema") or {})
                 store = EvidenceStore.from_state(reviewed)
                 schema["evidence_store"] = store.to_dict()
+                if isinstance(schema.get("research_dag"), dict):
+                    schema["research_dag"] = mark_dag_stage_status(
+                        schema.get("research_dag"),
+                        "verify",
+                        TaskStatus.COMPLETED,
+                        metadata_update={
+                            "fact_check_label": reviewed.get("fact_check_label"),
+                            "verified_count": len(reviewed.get("verified_claims") or []),
+                            "rejected_count": len(reviewed.get("rejected_claims") or []),
+                        },
+                    )
                 gaps = reviewed.get("evidence_gaps") or []
-                if gaps:
+                if gaps and decision is not None and decision.recipient in {"retrieval", "scout", "reader"}:
                     replanned = replan_research_dag_for_gaps(schema.get("research_dag"), gaps)
                     schema["research_dag"] = replanned
                     if replanned.get("added_gap_tasks", 0) > 0:
@@ -503,13 +598,24 @@ def build_research_rag_graph(
                             "total_tasks": replanned["total_tasks"],
                         })
                 update["document_schema"] = schema
-            decision = decide_handoff(role, reviewed)
             if decision is not None:
                 attempt = state.get("retry_count", 0) + 1
                 trace.append({**decision.as_trace(), "agent": role, "retry_count": attempt})
                 update["retry_count"] = attempt
         update["reasoning_trace"] = trace
         return update
+
+    def _mark_write_stage(state: AgentState, result: dict[str, Any]) -> dict[str, Any]:
+        schema = dict(result.get("document_schema") or state.get("document_schema") or {})
+        if isinstance(schema.get("research_dag"), dict):
+            schema["research_dag"] = mark_dag_stage_status(
+                schema.get("research_dag"),
+                "write",
+                TaskStatus.COMPLETED,
+                metadata_update={"confidence": result.get("confidence")},
+            )
+            result = {**result, "document_schema": schema}
+        return result
 
     def _writer_node(state: AgentState) -> dict[str, Any]:
         writer = write_visual_answer if figure_context(state).get("explicit") else run_agents["writer"]
@@ -524,10 +630,13 @@ def build_research_rag_graph(
             result["confidence"] = "low"
         else:
             result.setdefault("confidence", "high" if state.get("verified_claims") else "low")
-        return attach_answer_figures(state, result)
+        return _mark_write_stage(state, attach_answer_figures(state, result))
 
     def _escalation(state: AgentState) -> dict[str, Any]:
-        return attach_answer_figures(state, _write_escalated_report(state, run_agents["writer"]))
+        return _mark_write_stage(
+            state,
+            attach_answer_figures(state, _write_escalated_report(state, run_agents["writer"])),
+        )
 
     def _comparison_review(state: AgentState) -> dict[str, Any]:
         evidence = comparison_schedule(state.get("reasoning_trace") or [])
@@ -562,7 +671,27 @@ def build_research_rag_graph(
     workflow.add_node("escalation_node", use_run_config(run_config)(_escalation))
     workflow.add_node("writer_node", use_run_config(run_config)(_writer_node))
 
-    workflow.add_edge(START, "orchestrator_router")
+    valid_entry_nodes = [
+        "orchestrator_router",
+        "scout_node",
+        "retrieval_node",
+        "reader_node",
+        "summarizer_node",
+        "fact_checker_node",
+        "writer_node",
+        "escalation_node",
+    ]
+    if comparison_enabled:
+        valid_entry_nodes.append("comparison_review_node")
+
+    if start_at_node and start_at_node in valid_entry_nodes and start_at_node != "orchestrator_router":
+        workflow.add_conditional_edges(
+            START,
+            lambda _state, _target=start_at_node: _target,
+            valid_entry_nodes,
+        )
+    else:
+        workflow.add_edge(START, "orchestrator_router")
     workflow.add_edge("orchestrator_router", "scout_node")
     workflow.add_conditional_edges("scout_node", route_after_scout, ["retrieval_node", END])
     if comparison_enabled:
