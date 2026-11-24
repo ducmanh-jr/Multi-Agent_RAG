@@ -61,6 +61,7 @@ RERANKER_REVISIONS = {
 }
 RERANKER_BATCH_SIZE = 4
 RERANKER_MAX_TOKENS = 512
+DEFAULT_HF_FACTCHECK_MODEL = "MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7"
 
 
 def find_weight_path(sub_path: str) -> Optional[str]:
@@ -205,30 +206,34 @@ def load_qwen_lora_cluster():
         **revision_arg,
     )
 
-    # Attach PEFT LoRA Adapters
-    try:
-        from peft import PeftModel
+    # Attach PEFT LoRA Adapters (skipped when QWEN_USE_BASE_INSTRUCT=true, e.g., pure Qwen3-8B/14B testing)
+    use_base_instruct = os.getenv("QWEN_USE_BASE_INSTRUCT", "false").strip().lower() in ("true", "1", "yes")
+    if use_base_instruct:
+        print(f"[Worker] QWEN_USE_BASE_INSTRUCT=true -> Running pure base model '{model_id}' without legacy LoRA adapters.")
+    else:
+        try:
+            from peft import PeftModel
 
-        adapter_paths = {
-            "generator": "03_agent3_summarizer/generator_qlora",
-            "router": "01_agent1_router",
-            "critic": "03_agent3_summarizer/critic_qlora",
-            "writer": "05_agent5_writer",
-        }
-        for adapter, sub_path in adapter_paths.items():
-            path = find_weight_path(sub_path)
-            if not path or not os.path.exists(path):
-                continue
-            if _loaded_adapters:
-                model.load_adapter(path, adapter_name=adapter)
-            else:
-                model = PeftModel.from_pretrained(model, path, adapter_name=adapter)
-            _adapter_revisions[adapter] = _checkpoint_sha256(Path(path), adapter=True)
-            _loaded_adapters.append(adapter)
-            print(f"[Worker] Attached adapter '{adapter}' from {path}")
+            adapter_paths = {
+                "generator": "03_agent3_summarizer/generator_qlora",
+                "router": "01_agent1_router",
+                "critic": "03_agent3_summarizer/critic_qlora",
+                "writer": "05_agent5_writer",
+            }
+            for adapter, sub_path in adapter_paths.items():
+                path = find_weight_path(sub_path)
+                if not path or not os.path.exists(path):
+                    continue
+                if _loaded_adapters:
+                    model.load_adapter(path, adapter_name=adapter)
+                else:
+                    model = PeftModel.from_pretrained(model, path, adapter_name=adapter)
+                _adapter_revisions[adapter] = _checkpoint_sha256(Path(path), adapter=True)
+                _loaded_adapters.append(adapter)
+                print(f"[Worker] Attached adapter '{adapter}' from {path}")
 
-    except Exception as e:
-        print(f"[Worker WARNING] Failed to attach LoRA adapters: {e}")
+        except Exception as e:
+            print(f"[Worker WARNING] Failed to attach LoRA adapters: {e}")
 
     if local_base:
         _qwen_model_name = "local-qwen"
@@ -245,6 +250,7 @@ def load_qwen_lora_cluster():
 def generate_with_qwen(
     prompt: str, adapter: str = "generator", max_new_tokens: int = 1536, temperature: float = 0.2,
     system_instruction: Optional[str] = None, response: Response | None = None,
+    enable_thinking: bool = False,
 ) -> str:
     with _qwen_generation_lock:
         model, tokenizer = load_qwen_lora_cluster()
@@ -252,8 +258,9 @@ def generate_with_qwen(
             raise HTTPException(503, detail="Generator model unavailable")
 
         adapter_context = nullcontext()
-        if adapter == "none":
-            if _loaded_adapters:
+        use_base_instruct = os.getenv("QWEN_USE_BASE_INSTRUCT", "false").strip().lower() in ("true", "1", "yes")
+        if adapter == "none" or (use_base_instruct and adapter not in _loaded_adapters):
+            if _loaded_adapters and hasattr(model, "disable_adapter"):
                 adapter_context = model.disable_adapter()
         elif adapter in _loaded_adapters:
             try:
@@ -265,7 +272,15 @@ def generate_with_qwen(
 
         messages = [{"role": "system", "content": system_instruction}] if system_instruction else []
         messages.append({"role": "user", "content": prompt})
-        text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        try:
+            if "qwen3" in (_qwen_model_name or "").lower():
+                text = tokenizer.apply_chat_template(
+                    messages, tokenize=False, add_generation_prompt=True, enable_thinking=enable_thinking
+                )
+            else:
+                text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        except TypeError:
+            text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         inputs = tokenizer([text], return_tensors="pt").to(model.device)
 
         with adapter_context, torch.no_grad():
@@ -296,30 +311,53 @@ def load_factcheck_model():
         if "factcheck" in _models:
             return _models["factcheck"], _tokenizers["factcheck"]
 
+        prefer_hf_nli = os.getenv("PREFER_HF_SOTA_NLI", "false").strip().lower() in ("true", "1", "yes")
+        hf_model_id = os.getenv("FACTCHECK_MODEL_ID", "").strip()
+        if prefer_hf_nli and not hf_model_id:
+            hf_model_id = DEFAULT_HF_FACTCHECK_MODEL
+
         fc_path = find_weight_path("04_agent4_fact_checker")
-        if not fc_path:
+        candidates: list[tuple[str, bool]] = []
+        if hf_model_id:
+            candidates.append((hf_model_id, False))
+        if fc_path:
+            candidates.append((fc_path, True))
+
+        if not candidates:
             print("[Worker WARNING] 04_agent4_fact_checker path not found.")
             return None, None
 
-        print(f"[Worker] Loading Agent 4 Fact-Checker NLI Head from {fc_path} on cuda:1...")
-        try:
-            from transformers import AutoModelForSequenceClassification, AutoTokenizer
-            target_device = 1 if torch.cuda.device_count() >= 2 else 0
-            tokenizer = AutoTokenizer.from_pretrained(fc_path, trust_remote_code=True)
-            model = AutoModelForSequenceClassification.from_pretrained(
-                fc_path,
-                torch_dtype=torch.float16,
-                device_map={"": target_device},
-                trust_remote_code=True,
-            )
-            model.eval()
-            _factcheck_revision = _checkpoint_sha256(Path(fc_path))
-            _models["factcheck"] = model
-            _tokenizers["factcheck"] = tokenizer
-            return model, tokenizer
-        except Exception as e:
-            print(f"[Worker ERROR] Failed loading Fact-Checker model: {e}")
-            return None, None
+        for source_id, is_local_dir in candidates:
+            print(f"[Worker] Loading Agent 4 Fact-Checker NLI Head from {source_id} on cuda:1...")
+            try:
+                from transformers import AutoModelForSequenceClassification, AutoTokenizer
+                target_device = 1 if torch.cuda.device_count() >= 2 else 0
+                has_cuda = bool(getattr(torch, "cuda", None) and torch.cuda.is_available())
+                dtype = torch.float16 if has_cuda else getattr(torch, "float32", torch.float16)
+                rev_kwargs: dict[str, Any] = {}
+                if not is_local_dir:
+                    hub_rev = _hub_revision(source_id)
+                    if hub_rev:
+                        rev_kwargs["revision"] = hub_rev
+                tokenizer = AutoTokenizer.from_pretrained(source_id, trust_remote_code=True, **rev_kwargs)
+                model = AutoModelForSequenceClassification.from_pretrained(
+                    source_id,
+                    torch_dtype=dtype,
+                    device_map={"": target_device} if has_cuda else None,
+                    trust_remote_code=True,
+                    **rev_kwargs,
+                )
+                model.eval()
+                if is_local_dir:
+                    _factcheck_revision = _checkpoint_sha256(Path(source_id))
+                else:
+                    _factcheck_revision = rev_kwargs.get("revision") or hashlib.sha256(source_id.encode("utf-8")).hexdigest()
+                _models["factcheck"] = model
+                _tokenizers["factcheck"] = tokenizer
+                return model, tokenizer
+            except Exception as e:
+                print(f"[Worker ERROR] Failed loading Fact-Checker model from {source_id}: {e}")
+        return None, None
 
 
 # =====================================================================
@@ -434,15 +472,21 @@ def healthcheck():
 
     active_models = list(_models.keys())
     loaded_adapters = list(_loaded_adapters)
+    use_base_instruct = os.getenv("QWEN_USE_BASE_INSTRUCT", "false").strip().lower() in ("true", "1", "yes")
     if profile == "hybrid_specialist":
         mandatory_adapters: list[str] = []
         mandatory_models = ["factcheck"]
+    elif use_base_instruct:
+        mandatory_adapters = []
+        mandatory_models = ["qwen_cluster", "factcheck"]
     else:
         mandatory_adapters = ["router", "generator", "critic", "writer"]
         mandatory_models = ["qwen_cluster", "factcheck"]
 
-    adapters_ok = all(ad in loaded_adapters for ad in mandatory_adapters)
-    models_ok = all(m in active_models for m in mandatory_models)
+    missing_adapters = [ad for ad in mandatory_adapters if ad not in loaded_adapters]
+    missing_models = [m for m in mandatory_models if m not in active_models]
+    adapters_ok = len(missing_adapters) == 0
+    models_ok = len(missing_models) == 0
     mandatory_ready = bool(adapters_ok and models_ok)
 
     return {
@@ -456,6 +500,8 @@ def healthcheck():
         "active_models": active_models,
         "mandatory_adapters": mandatory_adapters,
         "mandatory_models": mandatory_models,
+        "missing_adapters": missing_adapters,
+        "missing_models": missing_models,
         "capabilities": {
             "qwen_cluster": "qwen_cluster" in active_models,
             "factcheck": "factcheck" in active_models,
@@ -475,17 +521,21 @@ def router_endpoint(req: RouterRequest, response: Response = None):
     )
     token_limit = max(8, min(int(req.max_new_tokens or 512), 512))
     raw = generate_with_qwen(prompt, adapter="router", max_new_tokens=token_limit, temperature=0.1, response=response)
-    try:
-        m = re.search(r"\{.*\}", raw, re.DOTALL)
-        if m:
-            return json.loads(m.group(0))
-    except Exception:
-        pass
+    parsed = _parse_output_object(raw)
+    if parsed:
+        return parsed
     return {"intent": "academic_research", "sub_queries": [req.query], "alpha": 0.5, "top_k": 6, "raw": raw}
 
 
+def _strip_thinking_tags(raw: str) -> str:
+    if not isinstance(raw, str):
+        return ""
+    return re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+
+
 def _parse_output_object(raw: str) -> dict[str, Any]:
-    match = re.search(r"\{.*\}", raw, re.DOTALL) if isinstance(raw, str) else None
+    cleaned = _strip_thinking_tags(raw)
+    match = re.search(r"\{.*\}", cleaned, re.DOTALL) if cleaned else None
     if not match:
         return {}
     try:
@@ -509,6 +559,17 @@ def summarize_generator(req: SummarizeRequest, response: Response = None):
     max_tok = max(64, min(int(getattr(req, "max_tokens", None) or 768), 1536))
     raw = generate_with_qwen(prompt, adapter="generator", max_new_tokens=max_tok, temperature=0.2, response=response)
     data = _parse_output_object(raw)
+    # Bridge training_lab 2-key schema {"answer": str, "evidence_spans": list} -> 3-key runtime schema
+    if (isinstance(data.get("answer"), str)
+            and isinstance(data.get("evidence_spans"), list)
+            and "claims" not in data):
+        bridged_claims = []
+        for sp in data["evidence_spans"]:
+            if isinstance(sp, str) and sp.strip():
+                bridged_claims.append({"text": sp.strip(), "unit_id": ""})
+            elif isinstance(sp, dict) and sp.get("quote"):
+                bridged_claims.append({"text": str(sp["quote"]).strip(), "unit_id": str(sp.get("unit_id") or "")})
+        data["claims"] = bridged_claims
     if (isinstance(data.get("answer"), str)
             and isinstance(data.get("claims"), list)
             and isinstance(data.get("evidence_spans"), list)):
@@ -529,6 +590,15 @@ def summarize_critic(req: CriticRequest, response: Response = None):
     )
     raw = generate_with_qwen(prompt, adapter="critic", max_new_tokens=512, temperature=0.1, response=response)
     data = _parse_output_object(raw)
+    # Bridge training_lab critic schema (Unsupported_claims / Missing_key_points) -> issues_found
+    if "issues_found" not in data and (
+        isinstance(data.get("Unsupported_claims"), list) or isinstance(data.get("Missing_key_points"), list)
+    ):
+        unsup = [str(x) for x in (data.get("Unsupported_claims") or []) if isinstance(x, str) and x.strip()]
+        missing = [str(x) for x in (data.get("Missing_key_points") or []) if isinstance(x, str) and x.strip()]
+        merged_issues = unsup + missing
+        data["issues_found"] = merged_issues
+        data.setdefault("critique", "; ".join(merged_issues) if merged_issues else "Verified by Critic")
     issues = data.get("issues_found")
     if (isinstance(data.get("is_supported"), bool)
             and data.get("action") in ("accept", "approve", "rewrite", "request_more_context", "lower_confidence")
@@ -590,10 +660,8 @@ def writer_endpoint(req: WriterRequest, response: Response = None):
         writer_max_tok = max(64, min(int(getattr(req, "max_tokens", None) or 512), 1024))
         raw = generate_with_qwen(prompt, adapter="writer", max_new_tokens=writer_max_tok, temperature=0.1,
                                  system_instruction=instruction, response=response)
-        try:
-            order = json.loads(raw)["claim_order"]
-        except (ValueError, KeyError, TypeError):
-            order = []
+        parsed = _parse_output_object(raw)
+        order = parsed.get("claim_order", []) if isinstance(parsed.get("claim_order"), list) else []
         return {"claim_order": order}
 
     # Older clients expect Markdown. Publish only the approved statements they supplied.

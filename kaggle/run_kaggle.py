@@ -278,78 +278,108 @@ def run():
         print(f"    ❌ LỖI NGHIÊM TRỌNG: Không thể đọc hoặc phân tích weights_manifest.json: {e}")
         sys.exit(1)
 
-    # Check which checkpoints exist and have verified cryptographic SHA256 hashes
-    missing_mandatory = []
-    for cp in manifest_checkpoints:
-        is_valid, reason = verify_checkpoint_integrity(cp, weights_dir, verify_sha256=True)
-        if not is_valid and cp.get("is_mandatory", False):
-            missing_mandatory.append((cp.get("id"), reason))
+    # Check if user wants pure SOTA HuggingFace base models (skipping old Drive LoRA zip for fast testing)
+    skip_drive_bundle = (
+        os.environ.get("SKIP_DRIVE_LORA_BUNDLE", "false").strip().lower() in ("true", "1", "yes")
+        or (
+            os.environ.get("QWEN_USE_BASE_INSTRUCT", "false").strip().lower() in ("true", "1", "yes")
+            and os.environ.get("PREFER_HF_SOTA_NLI", "false").strip().lower() in ("true", "1", "yes")
+        )
+    )
 
-    if missing_mandatory:
-        working_dir = "/kaggle/working" if os.path.exists("/kaggle/working") else os.path.abspath(".")
-        download_dir = os.path.join(working_dir, "drive_download")
-        os.makedirs(download_dir, exist_ok=True)
-        drive_folder_id = "1UPF13BNjxFFhd8YFv5PpuyfOR4G-VNte"
-
-        missing_names = [m[0] for m in missing_mandatory]
-        print(f"    🌐 Phát hiện {len(missing_mandatory)} checkpoint bắt buộc chưa hoàn chỉnh ({', '.join(missing_names)}).")
-        print("    🌐 Đang kết nối Google Drive tải gói 'final_weights_bundle.zip' (2.85 GB)...")
-        print("    📊 Tiến độ tải thực tế:")
-        try:
-            gdown.download_folder(id=drive_folder_id, output=download_dir, quiet=False)
-            
-            zip_dest = None
-            for root, _, files in os.walk(download_dir):
-                for f in files:
-                    if f.endswith(".zip"):
-                        zip_dest = os.path.join(root, f)
-                        break
-
-            if zip_dest and os.path.exists(zip_dest):
-                zip_size = os.path.getsize(zip_dest)
-                print(f"\n    📦 Đã tải xong tệp nén: {format_bytes(zip_size)}")
-                print(f"    📂 Đang giải nén vào {weights_dir} (hiển thị % từng tệp)...")
-                
-                with zipfile.ZipFile(zip_dest, "r") as zf:
-                    members = zf.infolist()
-                    for member in tqdm(members, desc="    ⏳ Giải nén mô hình", unit="file"):
-                        zf.extract(member, weights_dir)
-                print("    ✔ Giải nén trọn bộ mô hình hoàn tất thành công!")
-            else:
-                print("    ⚠️ Không tìm thấy tệp zip trong thư mục Drive đã tải.")
-        except Exception as e:
-            print(f"    ⚠️ Lỗi trong quá trình tải Drive: {e}")
+    if skip_drive_bundle:
+        print("    ⚡ Chế độ Pure SOTA HuggingFace Models (SKIP_DRIVE_LORA_BUNDLE=true): Bỏ qua gói LoRA cũ trên Google Drive.")
+        print("    ⚡ Sẽ tải và chạy trực tiếp các mô hình nền SOTA sạch từ Hugging Face Hub để kiểm thử trước khi fine-tune!")
     else:
-        print("    ✔ Toàn bộ trọng số mô hình đã có sẵn và xác thực SHA256 thành công:")
+        # Check which checkpoints exist and have verified cryptographic SHA256 hashes
+        missing_mandatory = []
+        for cp in manifest_checkpoints:
+            is_valid, reason = verify_checkpoint_integrity(cp, weights_dir, verify_sha256=True)
+            if not is_valid and cp.get("is_mandatory", False):
+                missing_mandatory.append((cp.get("id"), reason))
 
-    # Post-staging mandatory cryptographic verification (Fail-Fast)
-    unresolved_mandatory = []
-    print("\n    🔍 Kiểm tra mật mã học SHA256 toàn bộ checkpoint trên đĩa:")
-    for cp in manifest_checkpoints:
-        is_valid, reason = verify_checkpoint_integrity(cp, weights_dir, verify_sha256=True)
-        if not is_valid and cp.get("is_mandatory", False):
-            unresolved_mandatory.append((cp.get("id"), reason))
-        status = "✔ SHA256 HỢP LỆ" if is_valid else (f"❌ HỎNG/THIẾU ({reason})" if cp.get("is_mandatory", False) else f"ℹ️ TÙY CHỌN ({reason})")
-        print(f"      • [{cp.get('id')}] {status} - {cp.get('description', '')}")
+        if missing_mandatory:
+            working_dir = "/kaggle/working" if os.path.exists("/kaggle/working") else os.path.abspath(".")
+            download_dir = os.path.join(working_dir, "drive_download")
+            os.makedirs(download_dir, exist_ok=True)
+            drive_folder_id = "1UPF13BNjxFFhd8YFv5PpuyfOR4G-VNte"
 
-    if unresolved_mandatory:
-        print(f"\n    ❌ DỪNG HỆ THỐNG: Phát hiện {len(unresolved_mandatory)} checkpoint bắt buộc không vượt qua kiểm tra toàn vẹn SHA256:")
-        for cid, reason in unresolved_mandatory:
-            print(f"      - {cid}: {reason}")
-        print("    Vui lòng kiểm tra lại gói trọng số hoặc kết nối mạng trước khi khởi động Supervisor.")
-        sys.exit(1)
+            missing_names = [m[0] for m in missing_mandatory]
+            print(f"    🌐 Phát hiện {len(missing_mandatory)} checkpoint bắt buộc chưa hoàn chỉnh ({', '.join(missing_names)}).")
+            print("    🌐 Đang kết nối Google Drive tải gói 'final_weights_bundle.zip' (2.85 GB)...")
+            print("    📊 Tiến độ tải thực tế:")
+            try:
+                gdown.download_folder(id=drive_folder_id, output=download_dir, quiet=False)
+                
+                zip_dest = None
+                for root, _, files in os.walk(download_dir):
+                    for f in files:
+                        if f.endswith(".zip"):
+                            zip_dest = os.path.join(root, f)
+                            break
+
+                if zip_dest and os.path.exists(zip_dest):
+                    zip_size = os.path.getsize(zip_dest)
+                    print(f"\n    📦 Đã tải xong tệp nén: {format_bytes(zip_size)}")
+                    print(f"    📂 Đang giải nén vào {weights_dir} (hiển thị % từng tệp)...")
+                    
+                    with zipfile.ZipFile(zip_dest, "r") as zf:
+                        members = zf.infolist()
+                        for member in tqdm(members, desc="    ⏳ Giải nén mô hình", unit="file"):
+                            zf.extract(member, weights_dir)
+                    print("    ✔ Giải nén trọn bộ mô hình hoàn tất thành công!")
+                else:
+                    print("    ⚠️ Không tìm thấy tệp zip trong thư mục Drive đã tải.")
+            except Exception as e:
+                print(f"    ⚠️ Lỗi trong quá trình tải Drive: {e}")
+        else:
+            print("    ✔ Toàn bộ trọng số mô hình đã có sẵn và xác thực SHA256 thành công:")
+
+        # Post-staging mandatory cryptographic verification (Fail-Fast)
+        unresolved_mandatory = []
+        print("\n    🔍 Kiểm tra mật mã học SHA256 toàn bộ checkpoint trên đĩa:")
+        for cp in manifest_checkpoints:
+            is_valid, reason = verify_checkpoint_integrity(cp, weights_dir, verify_sha256=True)
+            if not is_valid and cp.get("is_mandatory", False):
+                unresolved_mandatory.append((cp.get("id"), reason))
+            status = "✔ SHA256 HỢP LỆ" if is_valid else (f"❌ HỎNG/THIẾU ({reason})" if cp.get("is_mandatory", False) else f"ℹ️ TÙY CHỌN ({reason})")
+            print(f"      • [{cp.get('id')}] {status} - {cp.get('description', '')}")
+
+        if unresolved_mandatory:
+            allow_hf_fallback = os.environ.get("ALLOW_HF_SOTA_FALLBACK", "false").strip().lower() in ("true", "1", "yes")
+            if allow_hf_fallback:
+                print(f"\n    ⚠️ Cảnh báo: {len(unresolved_mandatory)} checkpoint Drive chưa tải được. Tự động chuyển sang bộ Model SOTA trực tiếp từ Hugging Face Hub!")
+                os.environ["PREFER_HF_SOTA_NLI"] = "true"
+                os.environ["QWEN_USE_BASE_INSTRUCT"] = "true"
+            else:
+                print(f"\n    ❌ DỪNG HỆ THỐNG: Phát hiện {len(unresolved_mandatory)} checkpoint bắt buộc không vượt qua kiểm tra toàn vẹn SHA256:")
+                for cid, reason in unresolved_mandatory:
+                    print(f"      - {cid}: {reason}")
+                print("    Vui lòng kiểm tra lại gói trọng số hoặc kết nối mạng trước khi khởi động Supervisor.")
+                sys.exit(1)
+
+    # Ensure transformers >= 4.51.0 when running Qwen3 models
+    base_model_spec = m_data.get("base_models", {}).get("qwen_7b_base", {})
+    base_model_id = os.environ.get("BASE_QWEN_MODEL_ID", base_model_spec.get("model_id", "Qwen/Qwen2.5-7B-Instruct"))
+    if "qwen3" in base_model_id.lower():
+        try:
+            import transformers as _tf
+            _ver = tuple(int(x) for x in _tf.__version__.split(".")[:2] if x.isdigit())
+            if _ver < (4, 51):
+                print(f"    ⏳ Nâng cấp transformers ({_tf.__version__} -> >=4.51.0) để hỗ trợ {base_model_id}...")
+                subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-U", "transformers>=4.51.0", "accelerate", "bitsandbytes"], check=False)
+        except Exception:
+            pass
 
     # -------------------------------------------------------------------------
-    # Pre-fetch Base Model into local HF cache so Step 4 startup is fast and progress is visible
+    # Pre-fetch Base & Specialist Models into local HF cache so Step 4 startup is fast
     # -------------------------------------------------------------------------
     worker_profile = os.environ.get("KAGGLE_WORKER_PROFILE", "gpu_finetune").strip().lower()
     load_qwen_fallback = os.environ.get("HYBRID_LOAD_QWEN_FALLBACK", "false").strip().lower() in ("true", "1", "yes")
-    base_model_spec = m_data.get("base_models", {}).get("qwen_7b_base", {})
-    base_model_id = os.environ.get("BASE_QWEN_MODEL_ID", base_model_spec.get("model_id", "Qwen/Qwen2.5-7B-Instruct"))
     if worker_profile == "hybrid_specialist" and not load_qwen_fallback:
         print(f"\n    ⚡ Profile 'hybrid_specialist' (HYBRID_LOAD_QWEN_FALLBACK=false): Bỏ qua tải trước {base_model_id} (~15 GB) để khởi động nhanh.")
     else:
-        print(f"\n    🌐 Đồng bộ Base Model {base_model_id} từ Hugging Face Hub:")
+        print(f"\n    🌐 Đồng bộ Base Model {base_model_id} (GPU 0) từ Hugging Face Hub:")
         try:
             from huggingface_hub import snapshot_download
             print(f"      • Bắt đầu tải/kiểm tra cache các shard của {base_model_id}...")
@@ -361,6 +391,32 @@ def run():
             print(f"      ✔ Base Model {base_model_id} đã sẵn sàng 100% trong cache!")
         except Exception as e:
             print(f"      ⚠️ Cảnh báo tải trước Base Model: {e}. Tiến trình Worker sẽ tự tải khi khởi động.")
+
+    # Pre-fetch GPU 1 Specialist Models (BGE-M3, BGE-Reranker-v2-M3, Multilingual NLI)
+    gpu1_hf_models = []
+    if os.environ.get("PRELOAD_RETRIEVAL_MODELS", "false").strip().lower() in ("true", "1", "yes"):
+        gpu1_hf_models.extend([
+            ("BAAI/bge-m3", "Dense Vector Embedding 1024-dim"),
+            (os.environ.get("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3"), "Cross-Encoder Reranker"),
+        ])
+    if os.environ.get("PREFER_HF_SOTA_NLI", "false").strip().lower() in ("true", "1", "yes"):
+        nli_id = os.environ.get("FACTCHECK_MODEL_ID", "MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7")
+        gpu1_hf_models.append((nli_id, "Multilingual 3-Class Fact-Check NLI"))
+
+    if gpu1_hf_models:
+        print("\n    🌐 Đồng bộ cụm Specialist Models (GPU 1) từ Hugging Face Hub:")
+        try:
+            from huggingface_hub import snapshot_download
+            for hf_id, desc in gpu1_hf_models:
+                print(f"      • Đang tải {hf_id} ({desc})...")
+                snapshot_download(
+                    repo_id=hf_id,
+                    allow_patterns=["*.json", "*.safetensors", "*.txt", "tokenizer*", "sentencepiece*", "*.model"],
+                    ignore_patterns=["*.bin", "*.pt", "*.onnx", "*.msgpack"],
+                )
+                print(f"      ✔ {hf_id} đã sẵn sàng!")
+        except Exception as e:
+            print(f"      ⚠️ Cảnh báo tải trước Specialist Models: {e}. Worker sẽ tự tải khi khởi động.")
 
     # -------------------------------------------------------------------------
     # 4. Start Master Supervisor Gateway & Load Dual GPU VRAM

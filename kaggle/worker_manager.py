@@ -668,13 +668,19 @@ class WorkerManager:
                         if resp.status_code == 200:
                             data = resp.json()
                             model_entries = data.get("data", [])
-                            target_id = "Qwen/Qwen2.5-32B-Instruct-AWQ"
+                            target_id = os.environ.get("GPU_MAX_MODEL_ID", "Qwen/Qwen2.5-32B-Instruct-AWQ").strip()
                             manifest_id = (
                                 self.manifest.get("base_models", {})
                                 .get("qwen_32b_awq", {})
                                 .get("model_id")
                             )
-                            valid_ids = {target_id, manifest_id} if manifest_id else {target_id}
+                            valid_ids = {
+                                "Qwen/Qwen2.5-32B-Instruct-AWQ",
+                                "Qwen/Qwen3-32B-AWQ",
+                                target_id,
+                            }
+                            if manifest_id:
+                                valid_ids.add(manifest_id)
                             if any(m.get("id") in valid_ids for m in model_entries):
                                 return True
                     else:
@@ -709,7 +715,11 @@ class WorkerManager:
                                 probe_path = f"{url}/api/factcheck"
                                 probe_payload = {"claims": ["healthcheck"], "context": "healthcheck", "adapter": "factcheck"}
                             else:
-                                mandatory_adapters = ["router", "generator", "critic", "writer"]
+                                use_base_instruct = (
+                                    os.environ.get("QWEN_USE_BASE_INSTRUCT", "false").strip().lower()
+                                    in ("true", "1", "yes")
+                                )
+                                mandatory_adapters = [] if use_base_instruct else ["router", "generator", "critic", "writer"]
                                 adapters_ok = all(ad in loaded_adapters for ad in mandatory_adapters)
                                 models_ok = ("factcheck" in active_models) and ("qwen_cluster" in active_models)
                                 probe_path = f"{url}/api/router"
@@ -872,9 +882,10 @@ class WorkerManager:
 
         try:
             if target_worker == "gpu_max":
+                gpu_max_model = os.environ.get("GPU_MAX_MODEL_ID", "Qwen/Qwen2.5-32B-Instruct-AWQ").strip()
                 cmd = [
                     sys.executable, "-m", "vllm.entrypoints.openai.api_server",
-                    "--model", "Qwen/Qwen2.5-32B-Instruct-AWQ",
+                    "--model", gpu_max_model,
                     "--tensor-parallel-size", "2",
                     "--dtype", "float16",
                     "--quantization", "awq",
