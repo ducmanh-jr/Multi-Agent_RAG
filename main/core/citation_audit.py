@@ -37,26 +37,59 @@ def published_claim_id(item: dict[str, Any], position: int) -> str:
     return claim_id if isinstance(claim_id, str) and claim_id else f"claim_{position}"
 
 
+_SUPERSCRIPT_SUBSCRIPT_TRANSLATION = str.maketrans({
+    "⁰": "0", "¹": "1", "²": "2", "³": "3", "⁴": "4",
+    "⁵": "5", "⁶": "6", "⁷": "7", "⁸": "8", "⁹": "9",
+    "₀": "0", "₁": "1", "₂": "2", "₃": "3", "₄": "4",
+    "₅": "5", "₆": "6", "₇": "7", "₈": "8", "₉": "9",
+    "−": "-", "–": "-", "×": "*", "⋅": "*", "∗": "*",
+})
+
+
 def _normalized(text: str) -> str:
     return " ".join(unicodedata.normalize("NFC", text).split())
 
 
+def _math_normalized(text: str) -> str:
+    """Normalizes PDF ligatures, Unicode math operators, and superscripts/subscripts for equation matching."""
+    nfkc = unicodedata.normalize("NFKC", text or "").translate(_SUPERSCRIPT_SUBSCRIPT_TRANSLATION)
+    # Normalize LaTeX Caret/Subscript digits like x^2 or x_1 to x2 / x1 so they match NFKC-decomposed x² / x₁
+    nfkc = re.sub(r"[\^_]\s*\{?(\d+)\}?", r"\1", nfkc)
+    return " ".join(nfkc.split())
+
+
 def _contains(text: str, excerpt: str) -> bool:
-    if not excerpt or excerpt not in text:
+    if not excerpt:
         return False
-    start = r"(?<!\w)" if excerpt[0].isalnum() else ""
-    end = r"(?!\w)" if excerpt[-1].isalnum() else ""
-    return bool(re.search(start + re.escape(excerpt) + end, text))
+    if excerpt in text:
+        start = r"(?<!\w)" if excerpt[0].isalnum() else ""
+        end = r"(?!\w)" if excerpt[-1].isalnum() else ""
+        if re.search(start + re.escape(excerpt) + end, text):
+            return True
+    m_text = _math_normalized(text)
+    m_excerpt = _math_normalized(excerpt)
+    if not m_excerpt or m_excerpt not in m_text:
+        return False
+    start = r"(?<!\w)" if m_excerpt[0].isalnum() else ""
+    end = r"(?!\w)" if m_excerpt[-1].isalnum() else ""
+    return bool(re.search(start + re.escape(m_excerpt) + end, m_text))
 
 
 _NUMBER = re.compile(r"(?<!\w)[−+-]?\d+(?:[.,/\-]\d+)*(?:\s*%|(?=\s|[^\w.,/\-]|[.,/\-](?!\d)|$))")
-_LOCATOR = re.compile(r"\[\d+\]|\b(?:trang|page|mục|section|hình|figure|table|bảng)\s+\d+\b", re.I)
+_LOCATOR = re.compile(
+    r"\[\d+\]|\b(?:trang|page|mục|section|hình|figure|fig\.?|table|tab\.?|bảng|"
+    r"equation|eq\.?|formula|công\s+thức|phương\s+trình|biểu\s+thức)\s*\(?\d+(?:\.\d+)*\)?(?!\w)",
+    re.I,
+)
 
 
 def _numeric_literals(text: str) -> set[str]:
+    cleaned = _LOCATOR.sub(" ", text or "")
+    # Convert Unicode superscripts/subscripts (e.g. x² -> x^2) so quote 'x²' and claim 'x^2' yield identical numeric sets
+    cleaned = re.sub(r"([⁰¹²³⁴⁵⁶⁷⁸⁹₀₁₂₃₄₅₆₇₈₉]+)", lambda m: "^" + m.group(1).translate(_SUPERSCRIPT_SUBSCRIPT_TRANSLATION), cleaned)
     return {
         re.sub(r"\s+", "", value).replace("−", "-").replace(",", ".")
-        for value in _NUMBER.findall(_LOCATOR.sub(" ", text))
+        for value in _NUMBER.findall(cleaned)
     }
 
 

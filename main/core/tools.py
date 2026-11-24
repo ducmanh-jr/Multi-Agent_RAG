@@ -51,6 +51,140 @@ _TABLE_CAPTION_RE = re.compile(
     r"^\s*(?:Table|Tab\.|Bảng)\s*[A-Z]?\d+(?:[.-]\d+)*\b",
     re.IGNORECASE,
 )
+_EQUATION_LINE_RE = re.compile(
+    r"(?:"
+    r"[A-Za-zΑ-Ωα-ω0-9_)\]}]\s*(?:=|≈|≤|≥|≠|∈|→|⇒)\s*[A-Za-zΑ-Ωα-ω0-9_(\[{−+\-√∑∏∫\\]"
+    r"|[∑∏∫√∂∇]|\\(?:frac|sum|prod|sqrt|int|mathcal|mathbf|text|alpha|beta|gamma|theta|lambda|sigma)\b"
+    r"|\b(?:softmax|argmax|argmin|LayerNorm|Attention|MultiHead|CrossEntropy|KL)\s*\("
+    r"|\(\s*\d+(?:\.\d+)*\s*\)\s*$"
+    r")",
+    re.UNICODE,
+)
+
+
+def _is_math_equation_line(text: str) -> bool:
+    """Detects whether a text line or sentence contains a mathematical formula or numbered equation."""
+    s = (text or "").strip()
+    if len(s) < 3:
+        return False
+    # Exclude plain URLs or key=value config lines without math structure
+    if s.startswith(("http://", "https://")):
+        return False
+    if _EQUATION_LINE_RE.search(s):
+        # Verify it has either a math relation/operator or function call, not just a trailing "(1)" list item
+        if any(op in s for op in ("=", "≈", "≤", "≥", "≠", "∈", "∑", "∏", "∫", "√", "^", "²", "³", "₁", "₂", "\\frac", "\\sum", "softmax", "log(")):
+            return True
+    return False
+
+
+_TRAILING_MATH_OP_RE = re.compile(r"(?:[=≈≤≥≠+−\-*/×⋅∑∏∫√^(\[{])$")
+_LEADING_MATH_CONTINUATION_RE = re.compile(
+    r"^(?:[)\]}]|[+−\-*/×⋅=≈≤≥≠]|\(\s*\d+(?:\.\d+)*\s*\)$)"
+)
+
+
+def _reconstruct_broken_pdf_equations(raw_text: str) -> str:
+    """
+    Reconstructs display equations that PyMuPDF split across consecutive short lines
+    (e.g., unbalanced parentheses, trailing math operators '=', '+', '/', '√', or
+    a standalone equation number '(1)' on the following line).
+    """
+    if not raw_text:
+        return ""
+    raw_lines = raw_text.splitlines()
+    merged_lines: list[str] = []
+    i = 0
+    n = len(raw_lines)
+    while i < n:
+        curr = raw_lines[i].strip()
+        if not curr:
+            merged_lines.append("")
+            i += 1
+            continue
+
+        # Check if `curr` starts or is part of a multi-line equation block
+        open_parens = curr.count("(") - curr.count(")")
+        looks_math = _is_math_equation_line(curr) or bool(_TRAILING_MATH_OP_RE.search(curr))
+        steps = 0
+        while (
+            i + 1 < n
+            and steps < 4
+            and len(curr) < 180
+        ):
+            nxt = raw_lines[i + 1].strip()
+            if not nxt:
+                break
+            should_join = False
+            if looks_math and open_parens > 0 and len(nxt) < 100:
+                should_join = True
+            elif looks_math and _TRAILING_MATH_OP_RE.search(curr) and len(nxt) < 100:
+                should_join = True
+            elif (looks_math or "=" in curr) and _LEADING_MATH_CONTINUATION_RE.match(nxt) and len(nxt) < 80:
+                should_join = True
+            if not should_join:
+                break
+            curr = f"{curr} {nxt}"
+            open_parens = curr.count("(") - curr.count(")")
+            looks_math = True
+            i += 1
+            steps += 1
+
+        merged_lines.append(curr)
+        i += 1
+    return "\n".join(merged_lines)
+
+
+def _extract_page_equation_chunks(
+    raw_text: str,
+    *,
+    doc_title: str,
+    page_no: int,
+    resolved: str,
+    section_title: str,
+) -> list[dict[str, Any]]:
+    """
+    Extracts mathematical equation blocks from page text together with their immediate
+    preceding/following explanatory context (e.g. 'where Q, K, V are...').
+    """
+    if not raw_text or not raw_text.strip():
+        return []
+    lines = [re.sub(r"[ \t]+", " ", ln).strip() for ln in raw_text.splitlines() if ln.strip()]
+    eq_chunks: list[dict[str, Any]] = []
+    seen_bodies: set[str] = set()
+    eq_idx = 0
+
+    for i, line in enumerate(lines):
+        if not _is_math_equation_line(line):
+            continue
+        start_i = max(0, i - 1)
+        end_i = min(len(lines), i + 3)
+        window_lines = lines[start_i:end_i]
+        body = " ".join(window_lines).strip()
+        norm_sig = re.sub(r"\s+", "", body.lower())
+        if not body or norm_sig in seen_bodies:
+            continue
+        seen_bodies.add(norm_sig)
+        eq_idx += 1
+        cid = f"{doc_title}_p{page_no}_eq{eq_idx}"
+        eq_chunks.append(
+            {
+                "id": cid,
+                "chunk_id": cid,
+                "doc_id": doc_title,
+                "title": doc_title,
+                "page_no": page_no,
+                "page": page_no,
+                "text": body,
+                "content": body,
+                "equation": line,
+                "sentences": window_lines,
+                "source_path": resolved,
+                "is_selected_pdf": True,
+                "unit_type": "equation",
+                "section_title": section_title,
+            }
+        )
+    return eq_chunks
 
 
 def _extract_page_text_layout_aware(page: Any) -> str:
@@ -263,11 +397,11 @@ def load_or_parse_selected_pdf(
         try:
             for page_idx, page in enumerate(pdf_doc):
                 page_no = page_idx + 1
-                raw_text = _extract_page_text_layout_aware(page)
+                raw_text = _reconstruct_broken_pdf_equations(_extract_page_text_layout_aware(page))
                 current_section = _detect_section_heading(raw_text, current_section)
                 clean_text = re.sub(r"[ \t]+", " ", raw_text).strip()
 
-                # Extract intact structured tables on this page first so row-column relations survive chunking
+                # Extract intact structured tables and mathematical equation blocks on this page
                 page_tables = _extract_page_table_chunks(
                     page,
                     doc_title=doc_title,
@@ -275,13 +409,20 @@ def load_or_parse_selected_pdf(
                     resolved=resolved,
                     section_title=current_section,
                 )
+                page_equations = _extract_page_equation_chunks(
+                    raw_text,
+                    doc_title=doc_title,
+                    page_no=page_no,
+                    resolved=resolved,
+                    section_title=current_section,
+                )
 
                 if clean_text:
-                    # Split into sentences first so chunks never cut mid-sentence
+                    # Split into sentences first so chunks never cut mid-sentence; keep short math equations intact
                     sentences = [
                         s.strip()
                         for s in re.split(r"(?<=[.!?।])\s+|\n{2,}", clean_text)
-                        if len(s.strip()) > 12
+                        if len(s.strip()) > 12 or _is_math_equation_line(s)
                     ]
                     if not sentences:
                         sentences = [clean_text]
@@ -344,6 +485,8 @@ def load_or_parse_selected_pdf(
 
                 if page_tables:
                     chunks.extend(page_tables)
+                if page_equations:
+                    chunks.extend(page_equations)
         finally:
             pdf_doc.close()
     except Exception as exc:
@@ -373,9 +516,9 @@ def read_pdf_page_tool(pdf_path: Optional[str], page_number: int = 1) -> str:
 
 
 def extract_table_or_equations_tool(pdf_path: Optional[str], page_number: int = 1) -> str:
-    """Extracts structured tables and numerical rows from a specific PDF page using PyMuPDF find_tables()."""
+    """Extracts structured Markdown tables and mathematical equations from a specific PDF page."""
     if not pdf_path or not os.path.exists(str(pdf_path)):
-        return "Không có đường dẫn PDF hợp lệ để trích xuất bảng."
+        return "Không có đường dẫn PDF hợp lệ để trích xuất bảng hoặc công thức."
     try:
         import fitz
 
@@ -384,23 +527,36 @@ def extract_table_or_equations_tool(pdf_path: Optional[str], page_number: int = 
             if page_number < 1 or page_number > len(doc):
                 return f"Số trang {page_number} nằm ngoài phạm vi tài liệu (1..{len(doc)})."
             page = doc[page_number - 1]
-            markdown_tables: list[str] = []
+            sections: list[str] = []
             if hasattr(page, "find_tables"):
                 tabs = page.find_tables()
                 for idx, tab in enumerate(tabs.tables):
                     try:
                         md = tab.to_markdown()
                         if md and md.strip():
-                            markdown_tables.append(f"### Bảng {idx + 1} (Trang {page_number})\n{md.strip()}")
+                            sections.append(f"### Bảng {idx + 1} (Trang {page_number})\n{md.strip()}")
                     except Exception:
                         pass
-            if not markdown_tables:
-                return f"Không phát hiện bảng biểu trên trang {page_number}."
-            return "\n\n".join(markdown_tables)
+
+            raw_text = _reconstruct_broken_pdf_equations(_extract_page_text_layout_aware(page))
+            eq_chunks = _extract_page_equation_chunks(
+                raw_text,
+                doc_title=Path(str(pdf_path)).stem,
+                page_no=page_number,
+                resolved=str(pdf_path),
+                section_title="",
+            )
+            if eq_chunks:
+                eq_lines = [f"- **Công thức {idx}:** `{c['equation']}`\n  *Ngữ cảnh:* {c['text']}" for idx, c in enumerate(eq_chunks, start=1)]
+                sections.append(f"### Công thức / Biểu thức Toán học (Trang {page_number})\n" + "\n".join(eq_lines))
+
+            if not sections:
+                return f"Không phát hiện bảng biểu hoặc công thức toán học trên trang {page_number}."
+            return "\n\n".join(sections)
         finally:
             doc.close()
     except Exception as exc:
-        return f"Lỗi trích xuất bảng biểu: {exc}"
+        return f"Lỗi trích xuất bảng biểu/công thức: {exc}"
 
 
 def _safe_pow(base: float, exp: float) -> float:
@@ -431,7 +587,31 @@ _SAFE_OPS: dict[type, Callable[..., Any]] = {
 
 
 def safe_math_eval(expression: str) -> str:
-    """Safely evaluates mathematical expressions (sum, diff, percentage, ratio) without eval()."""
+    """
+    Safely evaluates mathematical & scientific expressions (sum, diff, percentage, ratio,
+    exponents, log/ln/exp/sqrt/trig, constants pi/e) without eval().
+    """
+    safe_constants = {
+        "pi": math.pi,
+        "e": math.e,
+    }
+    safe_funcs: dict[str, Callable[..., Any]] = {
+        "round": lambda val, ndigits=0: round(float(val), int(ndigits)),
+        "abs": abs,
+        "min": min,
+        "max": max,
+        "sqrt": math.sqrt,
+        "log": math.log,
+        "ln": math.log,
+        "log10": math.log10,
+        "log2": math.log2,
+        "exp": math.exp,
+        "sin": math.sin,
+        "cos": math.cos,
+        "tan": math.tan,
+        "pow": _safe_pow,
+    }
+
     def _eval_node(node: ast.AST) -> float:
         if isinstance(node, ast.Expression):
             return _eval_node(node.body)
@@ -439,6 +619,8 @@ def safe_math_eval(expression: str) -> str:
             return float(node.value)
         if isinstance(node, ast.Num):  # Python 3.7 compat
             return float(node.n)  # type: ignore[arg-type]
+        if isinstance(node, ast.Name) and node.id in safe_constants:
+            return float(safe_constants[node.id])
         if isinstance(node, ast.BinOp) and type(node.op) in _SAFE_OPS:
             return float(_SAFE_OPS[type(node.op)](_eval_node(node.left), _eval_node(node.right)))
         if isinstance(node, ast.UnaryOp) and type(node.op) in _SAFE_OPS:
@@ -446,19 +628,19 @@ def safe_math_eval(expression: str) -> str:
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
             fn_name = node.func.id
             args = [_eval_node(a) for a in node.args]
-            safe_funcs = {
-                "round": round,
-                "abs": abs,
-                "min": min,
-                "max": max,
-                "sqrt": math.sqrt,
-            }
             if fn_name in safe_funcs:
                 return float(safe_funcs[fn_name](*args))
         raise ValueError(f"Biểu thức không được phép: {ast.dump(node)}")
 
     try:
-        clean_expr = expression.strip().replace("%", "/100.0")
+        clean_expr = (
+            expression.strip()
+            .replace("−", "-")
+            .replace("×", "*")
+            .replace("⋅", "*")
+            .replace("^", "**")
+            .replace("%", "/100.0")
+        )
         tree = ast.parse(clean_expr, mode="eval")
         result = _eval_node(tree)
         return f"{result:.6g}"

@@ -3609,13 +3609,60 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!md) return "";
     let text = md.trim();
 
-    // 1. Pre-process code blocks
+    // 1. Pre-process code blocks and mathematical formula blocks ($$...$$, \[...\], $...$, \(...\))
     const codeBlocks = [];
     text = text.replace(/```([a-z0-9_-]*)\n([\s\S]*?)```/gim, (match, lang, code) => {
       const idx = codeBlocks.length;
       codeBlocks.push(`<pre class="code-block"><code class="language-${lang}">${escapeHtml(code.trim())}</code></pre>`);
       return `__CODE_BLOCK_${idx}__`;
     });
+
+    const mathBlocks = [];
+    const normalizeUnicodeMathForKatex = (input) => {
+      return (input || "")
+        .replace(/−/g, "-")
+        .replace(/×/g, " \\times ")
+        .replace(/⋅/g, " \\cdot ")
+        .replace(/≤/g, " \\le ")
+        .replace(/≥/g, " \\ge ")
+        .replace(/≠/g, " \\ne ")
+        .replace(/≈/g, " \\approx ")
+        .replace(/∈/g, " \\in ")
+        .replace(/∑/g, " \\sum ")
+        .replace(/∏/g, " \\prod ")
+        .replace(/∫/g, " \\int ")
+        .replace(/√\s*\(([^)]+)\)/g, "\\sqrt{$1}")
+        .replace(/√\s*([A-Za-z0-9_]+)/g, "\\sqrt{$1}")
+        .replace(/²/g, "^{2}")
+        .replace(/³/g, "^{3}")
+        .replace(/₁/g, "_{1}")
+        .replace(/₂/g, "_{2}");
+    };
+    const stashMath = (rawExpr, displayMode) => {
+      const idx = mathBlocks.length;
+      const expr = (rawExpr || "").trim();
+      const katexExpr = normalizeUnicodeMathForKatex(expr);
+      let rendered = "";
+      if (typeof window !== "undefined" && window.katex && typeof window.katex.renderToString === "function") {
+        try {
+          rendered = window.katex.renderToString(katexExpr, { displayMode, throwOnError: false });
+          rendered = displayMode
+            ? `<div class="math-block katex-block-wrap">${rendered}</div>`
+            : `<span class="math-inline">${rendered}</span>`;
+        } catch (_err) {
+          rendered = "";
+        }
+      }
+      if (!rendered) {
+        rendered = displayMode
+          ? `<div class="math-block">${escapeHtml(expr)}</div>`
+          : `<code class="mono-code math-inline">${escapeHtml(expr)}</code>`;
+      }
+      mathBlocks.push(rendered);
+      return `__MATH_BLOCK_${idx}__`;
+    };
+    text = text.replace(/\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]/g, (_m, d1, d2) => stashMath(d1 || d2, true));
+    text = text.replace(/(?<!\\)\$([^\$\n]+?)\$|\\\(([\s\S]+?)\\\)/g, (_m, i1, i2) => stashMath(i1 || i2, false));
 
     // 2. Escape HTML
     let html = escapeHtml(text);
@@ -3733,8 +3780,14 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     closeCurrentList();
 
+    // Restore protected math blocks after bold/italic/list parsing so '*' and '_' inside formulas are never mangled
+    let finalHtml = processedLines.join("\n");
+    mathBlocks.forEach((mb, idx) => {
+      finalHtml = finalHtml.replace(`__MATH_BLOCK_${idx}__`, mb);
+    });
+
     // Replace markers after Markdown rendering so citation metadata stays intact.
-    return processedLines.join("\n").replace(
+    return finalHtml.replace(
       /<code\b[^>]*>[\s\S]*?<\/code>|(\\?)\[(u?\d+(?:[ \t]*,[ \t]*u?\d+)*)\](?:[ \t]*(?:<em>)?\([ \t]*Trang[ \t]*(\d+)[ \t]*\)(?:<\/em>)?)?/gi,
       (match, escaped, markers, statedPage) => {
         if (!markers) return match;

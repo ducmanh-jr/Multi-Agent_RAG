@@ -58,8 +58,8 @@ def clean_vietnamese_text(text: str) -> str:
     s = re.sub(r"<br\s*/?>", " ", text, flags=re.I)
     s = re.sub(r"<[^>]+>", " ", s)
 
-    # 2. Fix markdown underscores in words (e.g. _Báo Thủ đô_ -> Báo Thủ đô), PRESERVING snake_case like proxy_pass
-    s = re.sub(r"(?<![A-Za-z0-9])_+|_+(?![A-Za-z0-9])", "", s)
+    # 2. Fix markdown underscores in words (e.g. _Báo Thủ đô_ -> Báo Thủ đô), PRESERVING snake_case and LaTeX subscripts like L_{total}
+    s = re.sub(r"(?<![A-Za-z0-9\\}])_+(?![{A-Za-z0-9])", "", s)
 
     # 3. Fix stuck lowercase-uppercase words (e.g. BáoThủ -> Báo Thủ) but PRESERVE camelCase code identifiers like generateHosts
     s = re.sub(r"([à-ỹ])([A-ZĐ])", r"\1 \2", s)
@@ -147,8 +147,10 @@ def extract_clean_sentences(text: str) -> list[str]:
         restored = part
         for idx, blk in enumerate(protected_blocks):
             restored = restored.replace(f"__BRACE_BLOCK_{idx}__", blk)
-        if len(restored.strip()) > 18:
-            raw_sentences.append(restored.strip())
+        r_strip = restored.strip()
+        is_eq = any(op in r_strip for op in ("=", "≈", "≤", "≥", "∑", "∫", "√", "softmax("))
+        if len(r_strip) > 18 or (is_eq and len(r_strip) >= 5):
+            raw_sentences.append(r_strip)
 
     sentences: list[str] = []
     dangling_words = {
@@ -166,8 +168,9 @@ def extract_clean_sentences(text: str) -> list[str]:
             s_clean,
         )
         s_clean = s_clean.strip()
+        is_eq_line = any(op in s_clean for op in ("=", "≈", "≤", "≥", "∑", "∫", "√", "softmax("))
 
-        if len(s_clean) < 20:
+        if len(s_clean) < 20 and not (is_eq_line and len(s_clean) >= 5):
             continue
         if s_clean.startswith("#") or s_clean.startswith("---"):
             continue
@@ -191,12 +194,16 @@ def extract_clean_sentences(text: str) -> list[str]:
             continue
         if re.search(r"\b(?:Journal of|Trường Đại học|Khoa Công nghệ|Tác giả liên hệ|Corresponding author|ISSN|ISBN)\b", s_clean, re.I):
             continue
-        # Allow technical lines, code blocks, semicolon configurations and standard punctuation
-        valid_endings = ('.', '!', '?', ':', ';', '}', '{', ')', ']', '"', '”', '`')
-        if s_clean[-1] not in valid_endings and not re.search(
-            r"\b(?:nginx|systemctl|curl|docker|openssl|certbot|server|upstream|proxy_pass)\b",
-            s_clean,
-            re.I,
+        # Allow technical lines, code blocks, mathematical equations, semicolon configurations and standard punctuation
+        valid_endings = ('.', '!', '?', ':', ';', '}', '{', ')', ']', '"', '”', '`', '$')
+        if (
+            not is_eq_line
+            and s_clean[-1] not in valid_endings
+            and not re.search(
+                r"\b(?:nginx|systemctl|curl|docker|openssl|certbot|server|upstream|proxy_pass)\b",
+                s_clean,
+                re.I,
+            )
         ):
             continue
 

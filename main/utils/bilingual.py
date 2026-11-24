@@ -12,6 +12,13 @@ from typing import Set
 BILINGUAL_PHRASE_MAP: dict[str, list[str]] = {
     # Deep Learning & NLP Concepts
     "cơ chế chú ý": ["attention", "mechanism"],
+    "công thức": ["equation", "formula", "expression", "defined", "computed", "softmax"],
+    "phương trình": ["equation", "formula", "expression"],
+    "biểu thức": ["expression", "formula", "equation"],
+    "hàm mất mát": ["loss", "function", "objective", "cross-entropy"],
+    "hàm mục tiêu": ["objective", "function", "loss"],
+    "đạo hàm": ["derivative", "gradient", "partial"],
+    "xác suất": ["probability", "distribution", "softmax"],
     "chú ý": ["attention"],
     "tự chú ý": ["self", "attention"],
     "đa đầu": ["multi", "head", "heads"],

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from typing import Any, Optional, Callable
 
 from core.schemas import SummarizerCriticOutput
@@ -95,18 +96,52 @@ _ENTITY_STOPWORDS = {
 }
 
 
+_SUPERSCRIPT_SUBSCRIPT_MAP = str.maketrans({
+    "⁰": "0", "¹": "1", "²": "2", "³": "3", "⁴": "4",
+    "⁵": "5", "⁶": "6", "⁷": "7", "⁸": "8", "⁹": "9",
+    "₀": "0", "₁": "1", "₂": "2", "₃": "3", "₄": "4",
+    "₅": "5", "₆": "6", "₇": "7", "₈": "8", "₉": "9",
+    "−": "-", "×": "*", "⋅": "*",
+})
+
+
+def _strip_latex_math_delimiters(text: str) -> str:
+    """
+    Strips LaTeX display ($$...$$) and inline ($...$) delimiters without stripping currency
+    like '$100', preventing trailing numbers inside '$x + 1$' from being parsed as '1 usd'.
+    """
+    out = re.sub(r"\$\$([\s\S]*?)\$\$", r" \1 ", text or "")
+    out = re.sub(r"(?<!\\)\$([^\$\n]+?)\$", lambda m: f" {m.group(1)} " if not re.match(r"^\s*\d+(?:[.,]\d+)?\s*$", m.group(1)) else m.group(0), out)
+    return out
+
+
+def _expand_unicode_math_digits(text: str) -> str:
+    """Expands Unicode superscript/subscript digits (e.g. x² -> x^2) so math exponents match consistently."""
+    cleaned = _strip_latex_math_delimiters(text or "")
+    return re.sub(
+        r"([⁰¹²³⁴⁵⁶⁷⁸⁹₀₁₂₃₄₅₆₇₈₉]+)",
+        lambda m: "^" + m.group(1).translate(_SUPERSCRIPT_SUBSCRIPT_MAP),
+        cleaned,
+    )
+
+
 def extract_numbers_and_years(text: str) -> list[str]:
     """
     Extracts significant numbers, percentages, decimals, 4-digit years, and quantified
     single-digit values (e.g., '3 layers', '2 GPUs', '5 days', 'top-3', '4 tầng').
-    Ignores citation brackets [1], [2], page/section/figure/table markers, list ordinals,
+    Ignores citation brackets [1], [2], page/section/figure/table/equation markers, list ordinals,
     and arXiv version tags.
     """
-    raw_text = text or ""
+    raw_text = _expand_unicode_math_digits(text or "")
     # Strip line-leading list ordinals like "1. " or "(2) "
     cleaned = re.sub(r"(?m)^\s*(?:\(\d{1,2}\)|\d{1,2}[.)])\s+", " ", raw_text)
     cleaned = re.sub(r"\[\d{1,3}\]", " ", cleaned)
-    cleaned = re.sub(r"(?i)\b(?:trang|page|mục|section|hình|figure|fig\.?|table|tab\.?|bảng)\s*\d+\b", " ", cleaned)
+    cleaned = re.sub(
+        r"(?i)\b(?:trang|page|mục|section|hình|figure|fig\.?|table|tab\.?|bảng|"
+        r"equation|eq\.?|formula|công\s+thức|phương\s+trình|biểu\s+thức)\s*\(?\d+(?:\.\d+)*\)?(?!\w)",
+        " ",
+        cleaned,
+    )
     cleaned = re.sub(r"\b\d{4}\.\d{4,5}(?:v\d+)?\b", " ", cleaned)
 
     normalized: list[str] = []
@@ -278,10 +313,15 @@ def _canonicalize_unit(raw_unit: Optional[str]) -> str:
 
 
 def _clean_claim_for_numeric_extraction(text: str) -> str:
-    raw_text = text or ""
+    raw_text = _expand_unicode_math_digits(text or "")
     cleaned = re.sub(r"(?m)^\s*(?:\(\d{1,2}\)|\d{1,2}[.)])\s+", " ", raw_text)
     cleaned = re.sub(r"\[\d{1,3}\]", " ", cleaned)
-    cleaned = re.sub(r"(?i)\b(?:trang|page|mục|section|hình|figure|fig\.?|table|tab\.?|bảng)\s*\d+\b", " ", cleaned)
+    cleaned = re.sub(
+        r"(?i)\b(?:trang|page|mục|section|hình|figure|fig\.?|table|tab\.?|bảng|"
+        r"equation|eq\.?|formula|công\s+thức|phương\s+trình|biểu\s+thức)\s*\(?\d+(?:\.\d+)*\)?(?!\w)",
+        " ",
+        cleaned,
+    )
     cleaned = re.sub(r"\b\d{4}\.\d{4,5}(?:v\d+)?\b", " ", cleaned)
     return cleaned
 
@@ -335,7 +375,7 @@ _WORD_NUM_PATTERN = re.compile(
 
 def _extract_context_matches(full_context_text: str) -> list[tuple[str, str, int]]:
     """Extracts all (normalized_number, canonical_unit, char_index) occurrences in context."""
-    ctx = full_context_text or ""
+    ctx = _expand_unicode_math_digits(full_context_text or "")
     out: list[tuple[str, str, int]] = []
     for m in _UNIT_PATTERN.finditer(ctx):
         norm_num = m.group(1).replace(",", ".")
@@ -402,6 +442,24 @@ def check_numerical_and_date_consistency(claim_text: str, full_context_text: str
                 elif not c_unit and claim_unit not in {"%", "km/h", "m/h", "m/s", "km/s", "km", "m", "cm", "mm", "ms", "s", "gb", "mb", "kb", "tb", "kg", "g", "mg", "usd", "vnd"}:
                     # Allow soft count words like "3 layers" when context writes bare "3" with non-conflicting unit
                     unit_matched_positions.append(c_pos)
+                elif not c_unit and claim_unit in {"m", "s", "g", "h"}:
+                    # Check if single-letter 'm', 's', 'g', 'h' is actually a mathematical variable (e.g., 2m + 1, 2 * m, h = 8)
+                    is_math_var_in_ctx = bool(
+                        re.search(
+                            rf"(?:\b{re.escape(claim_unit)}\s*=\s*{re.escape(norm_num)}\b"
+                            rf"|\b{re.escape(norm_num)}\s*[*×⋅]\s*{re.escape(claim_unit)}\b)",
+                            ctx_lower,
+                        )
+                    )
+                    is_math_expr_in_claim = bool(
+                        re.search(
+                            rf"\b{re.escape(norm_num)}{re.escape(claim_unit)}\s*(?:[+−\-*/=^]|$)",
+                            cleaned_lower,
+                        )
+                        and any(sym in cleaned_lower for sym in ("=", "+", "−", "^", "công thức", "phương trình", "biểu thức", "equation", "formula"))
+                    )
+                    if is_math_var_in_ctx or is_math_expr_in_claim:
+                        unit_matched_positions.append(c_pos)
             else:
                 if c_unit != "%":
                     unit_matched_positions.append(c_pos)
@@ -556,11 +614,24 @@ def split_answer_into_atomic_claims(
         if normalized_claims:
             return normalized_claims
 
-    # Split answer sentences
+    # Split answer sentences while protecting display math blocks ($$...$$) and academic abbreviations (Eq., Fig., Tab.)
     clean_ans = re.sub(r"<think>.*?</think>", "", answer or "", flags=re.DOTALL)
-    raw_sents = re.split(r"(?<=[.!?])\s+|\n+", clean_ans)
+    math_blocks: list[str] = []
+
+    def _stash_math(m: re.Match) -> str:
+        idx = len(math_blocks)
+        math_blocks.append(m.group(0))
+        return f"__MATH_BLOCK_{idx}__"
+
+    protected_ans = re.sub(r"\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]", _stash_math, clean_ans)
+    raw_sents = re.split(
+        r"(?<!\bEq\.)(?<!\bFig\.)(?<!\bTab\.)(?<!\bSec\.)(?<!\bal\.)(?<!\bvs\.)(?<!\be\.g\.)(?<!\bi\.e\.)(?<=[.!?])\s+|\n+",
+        protected_ans,
+    )
     claims_out: list[dict[str, Any]] = []
     for s in raw_sents:
+        for idx, mb in enumerate(math_blocks):
+            s = s.replace(f"__MATH_BLOCK_{idx}__", mb)
         s_clean = re.sub(r"^[#•\-\*\d.)\s]+", "", s).strip()
         if len(s_clean) < 25 or s_clean.startswith("```") or s_clean.endswith(":"):
             continue
@@ -657,8 +728,14 @@ def _normalized_quote(text: str) -> str:
     return " ".join(text.casefold().split()).strip(" .!?")
 
 
+def _math_norm_for_quote(text: str) -> str:
+    nfkc = unicodedata.normalize("NFKC", text or "").translate(_SUPERSCRIPT_SUBSCRIPT_MAP)
+    nfkc = re.sub(r"[\^_]\s*\{?(\d+)\}?", r"\1", nfkc)
+    return " ".join(nfkc.split())
+
+
 def _quote_in_source(quote: Any, source: str) -> bool:
-    """Match an NLI quote against source text, tolerating PDF line breaks and soft hyphens."""
+    """Match an NLI quote against source text, tolerating PDF line breaks, soft hyphens, and Unicode math symbols."""
     if not isinstance(quote, str) or not quote.strip() or not source:
         return False
     if quote in source:
@@ -670,6 +747,10 @@ def _quote_in_source(quote: Any, source: str) -> bool:
     for repl in ("", "-"):
         if re.sub(r"-\s+", repl, q_norm) in re.sub(r"-\s+", repl, s_norm):
             return True
+    q_math = _math_norm_for_quote(q_norm)
+    s_math = _math_norm_for_quote(s_norm)
+    if q_math and q_math in s_math:
+        return True
     return False
 
 
