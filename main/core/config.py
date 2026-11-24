@@ -163,7 +163,7 @@ class Settings(_AgentModeSettings):
         default_factory=lambda: os.getenv("GEMINI_DENSE_ENABLED", "false").strip().lower() == "true"
     )
     GEMINI_EMBEDDING_MODEL: str = field(
-        default_factory=lambda: os.getenv("GEMINI_EMBEDDING_MODEL", "text-embedding-004")
+        default_factory=lambda: os.getenv("GEMINI_EMBEDDING_MODEL", "gemini-embedding-001")
     )
     FALLBACK_EMBEDDING_MODEL: str = field(
         default_factory=lambda: os.getenv("FALLBACK_EMBEDDING_MODEL", "BAAI/bge-large-en-v1.5")

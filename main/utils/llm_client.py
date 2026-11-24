@@ -330,6 +330,10 @@ class UnifiedLLMClient:
         raw_candidates = [
             self.settings.DEFAULT_LLM_MODEL,
             self.settings.FALLBACK_LLM_MODEL,
+            "gemini-3.6-flash",
+            "gemini-3.5-flash",
+            "gemini-3.5-flash-lite",
+            "gemini-3-flash-preview",
             "gemini-flash-lite-latest",
         ]
         candidate_models = []
@@ -401,10 +405,18 @@ class UnifiedLLMClient:
                                 return parts[0]["text"]
                         logger.warning(f"Gemini response has no text parts: {data}")
                         break
+                    elif resp.status_code == 404:
+                        # Cache 404 retired model IDs (e.g. gemini-2.5-flash) for 1 hour so they are skipped immediately
+                        cooldowns[model] = time.monotonic() + 3600.0
+                        last_error = RuntimeError(f"Gemini HTTP 404 (model '{model}' not found)")
+                        logger.info(f"Gemini model '{model}' returned 404; caching skip and cascading to next model...")
+                        break
                     elif resp.status_code in (429, 503):
                         last_error = RuntimeError(f"Gemini HTTP {resp.status_code} on {model}")
                         if resp.status_code == 429 and "exceeded your current quota" in (resp.text or "").lower():
                             cooldowns[model] = time.monotonic() + 180.0
+                        elif resp.status_code == 503:
+                            cooldowns[model] = time.monotonic() + 60.0
                         retry_after = 0.0
                         try:
                             retry_after = min(2.0, max(0.0, float(resp.headers.get("Retry-After", "0"))))
