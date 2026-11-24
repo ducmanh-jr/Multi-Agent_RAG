@@ -115,3 +115,87 @@ def test_llm_client_uses_config_gemini_model_and_cascades_on_429(monkeypatch):
         assert any("gemini-3.1-flash-lite:generateContent" in u for u in requested_urls)
     finally:
         client.http_client.close()
+
+
+def test_hybrid_summarizer_cascades_to_kaggle_when_gemini_degrades_to_extractive(monkeypatch):
+    monkeypatch.setattr(settings, "HYBRID_PROVIDER_PROFILE", "gemini_first")
+    monkeypatch.setattr("modes.hybrid.summarizer.probe_all_capabilities", lambda: {
+        "gemini": {"online": True},
+        "gpu_finetune": {"online": True},
+    })
+
+    summarizer = HybridSummarizerAgent()
+    called = []
+
+    def degraded_gemini(state):
+        called.append("gemini")
+        return {
+            "answer": "Raw extractive fallback sentence.",
+            "generator_model_family": "cpu_min_extractive",
+            "critic_action": "rewrite",
+        }
+
+    def real_qwen(state):
+        called.append("gpu_finetune")
+        return {
+            "answer": "Câu trả lời tổng hợp đầy đủ từ Qwen3-8B [1].",
+            "generator_model_family": "qwen3_8b",
+            "critic_action": "approve",
+        }
+
+    monkeypatch.setattr(summarizer._gemini, "run", degraded_gemini)
+    monkeypatch.setattr(summarizer._gpu_finetune, "run", real_qwen)
+
+    out = summarizer.run({"query": "So sánh hàm phần thưởng", "complexity": "HIGH"})
+    assert called == ["gemini", "gpu_finetune"]
+    assert out["answer"] == "Câu trả lời tổng hợp đầy đủ từ Qwen3-8B [1]."
+    assert out["reasoning_trace"][-1]["details"]["selected_generator_backend"] == "gpu_finetune_dual_qlora"
+
+
+def test_focused_evidence_window_centers_around_late_page_formula():
+    from core.verifier import _extract_focused_evidence_window
+
+    long_prefix = ("Cooperative common-reward background paragraph. " * 30).strip()
+    late_formula = (
+        "Competitive Setting: Fully competitive setting in MARL is typically modeled as "
+        "zero-sum Markov games, namely, sum Ri(s, a, s') = 0 for any (s, a, s')."
+    )
+    full_page = f"{long_prefix}\n\n{late_formula}\n\nAdditional trailing remarks."
+    assert len(full_page) > 1400
+
+    window = _extract_focused_evidence_window(late_formula, full_page, max_chars=900)
+    assert len(window) <= 900
+    assert late_formula in window
+    assert window in full_page
+
+
+def test_remote_dense_retriever_deduplicates_concurrent_passage_embedding():
+    import concurrent.futures
+    import json
+    from agents.agent1_retrieval.tools.remote_dense import RemoteDenseRetriever
+
+    revision = "a" * 40
+    embed_calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        texts = json.loads(request.content)["texts"]
+        embed_calls.append(len(texts))
+        vecs = [[1.0] + [0.0] * 1023 for _ in texts]
+        return httpx.Response(200, json={"model": "BAAI/bge-m3", "revision": revision, "embeddings": vecs})
+
+    passages = [{"id": f"p{i}", "text": f"Passage content number {i} about MARL"} for i in range(10)]
+    retriever = RemoteDenseRetriever()
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        def _worker(q):
+            return retriever.rank(
+                q, passages, top_k=3, client=client,
+                url="https://worker.invalid", model="BAAI/bge-m3", timeout=10.0,
+            )
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+            results = list(pool.map(_worker, ["query 1", "query 2", "query 3"]))
+
+    assert len(results) == 3
+    # 3 query calls (len=1) + ONLY ONE passage batch call (len=10), never 3x10!
+    assert embed_calls.count(10) == 1
+    assert embed_calls.count(1) == 3

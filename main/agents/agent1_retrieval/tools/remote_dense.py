@@ -2,6 +2,7 @@
 
 from collections import OrderedDict
 import re
+import threading
 import time
 from typing import Any
 
@@ -30,6 +31,7 @@ class RemoteDenseRetriever:
     def __init__(self) -> None:
         self._identity: tuple[str, str, str] | None = None
         self._cache: OrderedDict[str, np.ndarray] = OrderedDict()
+        self._lock = threading.RLock()
 
     def _embed(
         self, client: httpx.Client, url: str, model: str, texts: list[str], deadline: float,
@@ -90,28 +92,31 @@ class RemoteDenseRetriever:
         url = url.rstrip("/")
         revision, query_vectors = self._embed(client, url, model, [query.strip()[:self.MAX_TEXT_LENGTH]], deadline)
         identity = (url, model, revision)
-        if self._identity != identity:
-            self._cache.clear()
-            self._identity = identity
 
         unique_texts = dict.fromkeys(text for _, text in candidates)
-        vectors = {text: self._cache[text] for text in unique_texts if text in self._cache}
-        missing_texts = [text for text in unique_texts if text not in vectors]
-        for start in range(0, len(missing_texts), self.BATCH_SIZE):
-            batch = missing_texts[start:start + self.BATCH_SIZE]
-            batch_revision, batch_vectors = self._embed(client, url, model, batch, deadline)
-            if batch_revision != revision:
-                raise DenseRetrievalError("embedding_revision_changed")
-            vectors.update(zip(batch, batch_vectors, strict=True))
+        # Serialize cache lookup + missing-passage embedding across parallel DAG branches so the same PDF
+        # is never embedded 3x concurrently over the remote Kaggle tunnel.
+        with self._lock:
+            if self._identity != identity:
+                self._cache.clear()
+                self._identity = identity
+            vectors = {text: self._cache[text] for text in unique_texts if text in self._cache}
+            missing_texts = [text for text in unique_texts if text not in vectors]
+            for start in range(0, len(missing_texts), self.BATCH_SIZE):
+                batch = missing_texts[start:start + self.BATCH_SIZE]
+                batch_revision, batch_vectors = self._embed(client, url, model, batch, deadline)
+                if batch_revision != revision:
+                    raise DenseRetrievalError("embedding_revision_changed")
+                vectors.update(zip(batch, batch_vectors, strict=True))
+            for text, vector in vectors.items():
+                self._cache[text] = vector
+                self._cache.move_to_end(text)
+            while len(self._cache) > self.CACHE_SIZE:
+                self._cache.popitem(last=False)
 
         matrix = np.stack([vectors[text] for _, text in candidates])
         scores = matrix @ query_vectors[0]
         if time.monotonic() >= deadline:
             raise DenseRetrievalError("embedding_timeout")
-        for text, vector in vectors.items():
-            self._cache[text] = vector
-            self._cache.move_to_end(text)
-        while len(self._cache) > self.CACHE_SIZE:
-            self._cache.popitem(last=False)
         order = np.argsort(-scores, kind="stable")[:top_k]
         return [passages[candidates[index][0]] for index in order], revision

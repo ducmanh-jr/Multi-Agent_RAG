@@ -3700,9 +3700,9 @@ document.addEventListener("DOMContentLoaded", () => {
       return `\n<div class="chat-table-wrapper"><table class="chat-table">${thead}${tbody}</table></div>\n`;
     });
 
-    // 5.6 Ensure numbered list items (e.g. 1. , 2. ) and bullet points (- , * ) start on fresh lines (never breaking headers like ## 1.)
-    html = html.replace(/([a-z0-9à-ỹ\.\)\]\>])[ \t]*([0-9]+\.\s+(?:\*\*|<strong>|[A-ZÀ-ỸĐ]))/gi, '$1\n\n$2');
-    html = html.replace(/([a-z0-9à-ỹ\.\)\]\>])[ \t]+([-\*•]\s+)/gi, '$1\n$2');
+    // 5.6 Ensure numbered list items (e.g. 1. , 2. ) and bullet points (- , * ) start on fresh lines (never breaking headers like <h2>2. ...</h2>)
+    html = html.replace(/([a-z0-9à-ỹ\.\)\]])[ \t]*([0-9]+\.\s+(?:\*\*|<strong>|[A-ZÀ-ỸĐ]))/gi, '$1\n\n$2');
+    html = html.replace(/([a-z0-9à-ỹ\.\)\]])[ \t]+([-\*•]\s+)/gi, '$1\n$2');
 
     // 6. Clean up extra whitespace before punctuation without destroying newlines
     html = html.replace(/[ \t]+([,\.])/g, '$1');
@@ -3763,7 +3763,9 @@ document.addEventListener("DOMContentLoaded", () => {
       } else if (olMatch) {
         if (currentListType !== 'ol') {
           closeCurrentList();
-          processedLines.push('<ol class="chat-number-list">');
+          const startNum = parseInt(olMatch[2], 10);
+          const startAttr = Number.isFinite(startNum) && startNum > 1 ? ` start="${startNum}"` : '';
+          processedLines.push(`<ol class="chat-number-list"${startAttr}>`);
           currentListType = 'ol';
         }
         processedLines.push(`<li>${olMatch[3]}</li>`);

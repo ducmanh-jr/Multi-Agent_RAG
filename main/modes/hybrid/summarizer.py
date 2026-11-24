@@ -45,8 +45,9 @@ class HybridSummarizerAgent(BaseAgent):
 
         selected_backend = "cpu_max"
         out: dict[str, Any] = {}
+        degraded_backup: tuple[str, dict[str, Any]] | None = None
 
-        for key in chain:
+        for idx, key in enumerate(chain):
             entry = backend_runners.get(key)
             if not entry:
                 continue
@@ -54,11 +55,29 @@ class HybridSummarizerAgent(BaseAgent):
             try:
                 candidate = runner.run_in_mode(state, inf_mode)
                 if candidate and candidate.get("answer"):
+                    fam = str(candidate.get("generator_model_family") or "").lower()
+                    is_degraded_extractive = (
+                        key in {"gemini", "gpu_finetune"}
+                        and any(tok in fam for tok in ("extractive", "cpu_fallback"))
+                    )
+                    has_downstream_llm = any(later in {"gpu_finetune", "gpu_max", "gemini"} for later in chain[idx + 1 :])
+                    if is_degraded_extractive and has_downstream_llm:
+                        if degraded_backup is None:
+                            degraded_backup = (f"{label}_extractive_backup", candidate)
+                        self.logger.warning(
+                            "[Hybrid Summarizer] Backend '%s' degraded to '%s'; cascading to next LLM in %s...",
+                            key, fam, chain[idx + 1 :],
+                        )
+                        continue
                     selected_backend = label
                     out = candidate
                     break
             except Exception as exc:
                 self.logger.warning(f"[Hybrid Summarizer] Backend '{key}' failed ({exc}), cascading...")
+
+        # Use degraded extractive backup if all downstream LLMs also failed
+        if not out.get("answer") and degraded_backup is not None:
+            selected_backend, out = degraded_backup
 
         # Emergency local fallback if every backend in chain failed
         if not out.get("answer"):

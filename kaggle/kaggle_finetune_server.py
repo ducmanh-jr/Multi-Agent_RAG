@@ -628,7 +628,10 @@ def factcheck_endpoint(req: FactCheckRequest, response: Response = None):
               for i, label in (model.config.id2label or {}).items() if str(i).isdecimal()}
     prompt_tokens = 0
     for c in req.claims:
-        inputs = tokenizer(req.context[:1800], c, truncation=True, max_length=512, return_tensors="pt").to(model.device)
+        try:
+            inputs = tokenizer(req.context[:1800], c, truncation="only_first", max_length=512, return_tensors="pt").to(model.device)
+        except Exception:
+            inputs = tokenizer(req.context[:1800], c, truncation=True, max_length=512, return_tensors="pt").to(model.device)
         if response is not None:
             prompt_tokens += len(inputs["input_ids"][0])
         with torch.no_grad():

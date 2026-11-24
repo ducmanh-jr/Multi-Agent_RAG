@@ -908,6 +908,51 @@ def specialist_nli(pairs, client, *, finetuned):
     return results
 
 
+def _extract_focused_evidence_window(claim_text: str, full_evidence: str, max_chars: int = 900) -> str:
+    """
+    Extracts a contiguous substring window (~900 chars, ~220 tokens) of `full_evidence` centered
+    around the best matching region for `claim_text`.
+    Prevents 512-token Cross-Encoder NLI models (e.g. mDeBERTa-v3 / BGE NLI) from truncating away
+    matching sentences that appear near the end of a long PDF page chunk.
+    """
+    text = str(full_evidence or "")
+    if len(text) <= max_chars:
+        return text
+    claim = str(claim_text or "").strip()
+    if not claim:
+        return text[:max_chars]
+
+    # 1. Exact or prefix substring match (case-insensitive)
+    lower_text = text.lower()
+    lower_claim = claim.lower()
+    pos = lower_text.find(lower_claim)
+    if pos < 0 and len(lower_claim) >= 30:
+        pos = lower_text.find(lower_claim[:40])
+    if pos < 0:
+        # Try matching normalized whitespace/hyphenation snippets
+        words = [w for w in re.findall(r"[a-zA-Z0-9À-ỹ]+", lower_claim) if len(w) >= 4]
+        if words:
+            best_pos = 0
+            best_score = -1
+            step = max(120, max_chars // 4)
+            for start in range(0, max(1, len(text) - max_chars + step), step):
+                window = lower_text[start:start + max_chars]
+                score = sum(1 for w in words if w in window)
+                if score > best_score:
+                    best_score = score
+                    best_pos = start
+            if best_score > 0:
+                return text[best_pos:best_pos + max_chars]
+        return text[:max_chars]
+
+    match_len = min(len(lower_claim), max_chars)
+    pad = max(0, (max_chars - match_len) // 2)
+    start = max(0, pos - pad)
+    end = min(len(text), start + max_chars)
+    start = max(0, end - max_chars)
+    return text[start:end]
+
+
 def review_claims(state, reviewer: Optional[Callable] = None):
     """Evaluate every claim once. A malformed provider verdict cannot certify a claim."""
     abstention = review_abstention(state)
@@ -941,8 +986,16 @@ def review_claims(state, reviewer: Optional[Callable] = None):
             elif best_premise is None and units:
                 best_premise = find_best_supporting_unit(c["text"], units, min_overlap=0.05)
             premises.append(best_premise)
-        pairs = [{"claim_id": c["id"], "claim": c["text"], "evidence": str(u.get("text") or u.get("content") or "")[:1800]}
-                 for c, u in zip(batch, premises) if u]
+        pairs = [
+            {
+                "claim_id": c["id"],
+                "claim": c["text"],
+                "evidence": _extract_focused_evidence_window(
+                    c["text"], str(u.get("text") or u.get("content") or ""), max_chars=900
+                ),
+            }
+            for c, u in zip(batch, premises) if u
+        ]
         rows = None
         if reviewer and pairs:
             try:
