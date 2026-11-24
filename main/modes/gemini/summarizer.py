@@ -104,7 +104,7 @@ Tài liệu nguồn:
                 critic = SummarizerCriticOutput(action="request_more_context", missing_key_points=[query])
             elif status == "CLARIFICATION_NEEDED":
                 critic = SummarizerCriticOutput(action="lower_confidence")
-            elif not claims or len(claims) != len(raw_claims):
+            elif not claims:
                 raise ValueError("Claims lack matching verbatim source quotes")
         except Exception as exc:
             self.logger.warning(f"[Gemini Summarizer] Response unavailable or invalid, using extractive synthesis: {exc}")

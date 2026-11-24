@@ -26,7 +26,7 @@ from utils.local_vulkan_setup import probe_ollama_models
 from utils.logger import logger
 
 
-_REMOTE_MODES = {"model", "kaggle", "kaggle_fn", "kaggle_max", "kaggle_gpu", "gpu_max", "gpu_finetune", "gpu_ft"}
+_REMOTE_MODES = {"model", "kaggle", "kaggle_max", "kaggle_gpu", "gpu_max", "gpu_finetune"}
 
 
 class UnifiedLLMClient:
@@ -336,6 +336,14 @@ class UnifiedLLMClient:
         for m in raw_candidates:
             if m and m not in candidate_models:
                 candidate_models.append(m)
+        cooldowns = getattr(self, "_quota_cooldown_until", None)
+        if cooldowns is None:
+            cooldowns = {}
+            self._quota_cooldown_until = cooldowns
+        now_mono = time.monotonic()
+        active_models = [m for m in candidate_models if cooldowns.get(m, 0.0) <= now_mono]
+        if active_models:
+            candidate_models = active_models
         last_error: Optional[Exception] = None
 
         for model in candidate_models:
@@ -382,12 +390,21 @@ class UnifiedLLMClient:
                         if cands:
                             content = cands[0].get("content", {})
                             parts = content.get("parts", [])
+                            non_thought = [
+                                p["text"]
+                                for p in parts
+                                if isinstance(p, dict) and isinstance(p.get("text"), str) and not p.get("thought")
+                            ]
+                            if non_thought:
+                                return non_thought[-1]
                             if parts and "text" in parts[0]:
                                 return parts[0]["text"]
                         logger.warning(f"Gemini response has no text parts: {data}")
                         break
                     elif resp.status_code in (429, 503):
                         last_error = RuntimeError(f"Gemini HTTP {resp.status_code} on {model}")
+                        if resp.status_code == 429 and "exceeded your current quota" in (resp.text or "").lower():
+                            cooldowns[model] = time.monotonic() + 180.0
                         retry_after = 0.0
                         try:
                             retry_after = min(2.0, max(0.0, float(resp.headers.get("Retry-After", "0"))))

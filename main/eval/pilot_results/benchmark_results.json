@@ -1,0 +1,112 @@
+{
+  "config": {
+    "dataset": "benchmark_pilot.json",
+    "dataset_sha256": "4e22fcef918e85355c841873b76761d795134e1fe0f8f805f99c1e5e7ce8bc42",
+    "document_sha256": {
+      "orchard-trial.pdf": "46fadefc4a2fcc1f734150580439a22133c30fd82fe5095385ab2a8459bbf7bd",
+      "greenhouse-trial.pdf": "636d998422d1043e1a5325870cf462650c41c072a9b9ca8ed5dd7382f3300656"
+    },
+    "modes": [
+      "cpu_min"
+    ],
+    "software": {
+      "python": "3.11.9",
+      "pymupdf": "1.27.2.3"
+    },
+    "limit_per_category": 2,
+    "live": false,
+    "retrieval_limit": 10,
+    "max_reflection_loops": 3
+  },
+  "summaries": [
+    {
+      "mode": "cpu_min",
+      "num_questions": 4,
+      "scored_questions": 4,
+      "groundedness": 0.5,
+      "retrieval_recall": 0.6667,
+      "citation_f1": 0.3333,
+      "numeric_exactness": 0.3333,
+      "abstention_accuracy": 0.75,
+      "p50_latency_s": 0.334,
+      "p95_latency_s": 0.369,
+      "avg_retries": 0.5,
+      "records": [
+        {
+          "id": "pilot-single-vi",
+          "category": "single_hop",
+          "language": "vi",
+          "selected_doc": "",
+          "documents": [
+            "orchard-trial.pdf"
+          ],
+          "groundedness": 0.0,
+          "citation_f1": 0.0,
+          "retrieval_recall": 0.0,
+          "numeric_exactness": 0.0,
+          "abstention_accuracy": 0.0,
+          "latency_sec": 0.369,
+          "retry_count": 1,
+          "critic_loops": 0,
+          "answer_preview": "Chưa đủ bằng chứng trong tài liệu đã chọn để xác nhận câu trả lời."
+        },
+        {
+          "id": "pilot-multi-en",
+          "category": "multi_hop",
+          "language": "en",
+          "selected_doc": "",
+          "documents": [
+            "orchard-trial.pdf",
+            "greenhouse-trial.pdf"
+          ],
+          "groundedness": 1.0,
+          "citation_f1": 1.0,
+          "retrieval_recall": 1.0,
+          "numeric_exactness": 1.0,
+          "abstention_accuracy": 1.0,
+          "latency_sec": 0.312,
+          "retry_count": 0,
+          "critic_loops": 0,
+          "answer_preview": "Greenhouse irrigation trial The greenhouse trial ran for 35 days. [1]\n\nOrchard irrigation trial The orchard trial ran for 21 days. [2]"
+        },
+        {
+          "id": "pilot-table-en",
+          "category": "table_comparison",
+          "language": "en",
+          "selected_doc": "",
+          "documents": [
+            "orchard-trial.pdf"
+          ],
+          "groundedness": 1.0,
+          "citation_f1": 0.0,
+          "retrieval_recall": 1.0,
+          "numeric_exactness": 0.0,
+          "abstention_accuracy": 1.0,
+          "latency_sec": 0.237,
+          "retry_count": 0,
+          "critic_loops": 0,
+          "answer_preview": "Orchard irrigation trial The orchard trial ran for 21 days. [1]"
+        },
+        {
+          "id": "pilot-unanswerable-vi",
+          "category": "adversarial_trap",
+          "language": "vi",
+          "selected_doc": "",
+          "documents": [
+            "greenhouse-trial.pdf"
+          ],
+          "groundedness": 0.0,
+          "citation_f1": null,
+          "retrieval_recall": null,
+          "numeric_exactness": null,
+          "abstention_accuracy": 1.0,
+          "latency_sec": 0.355,
+          "retry_count": 1,
+          "critic_loops": 0,
+          "answer_preview": "Chưa đủ bằng chứng trong tài liệu đã chọn để xác nhận câu trả lời."
+        }
+      ],
+      "errors": []
+    }
+  ]
+}

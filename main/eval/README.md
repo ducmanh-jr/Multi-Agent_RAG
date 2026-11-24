@@ -24,6 +24,8 @@ Thư mục `main/eval/` chứa bộ khung đánh giá định lượng toàn di�
 
 ## ▶️ Cách Chạy Đánh Giá
 
+[Benchmark truy hồi 48 câu](retrieval_benchmark/README.md) có tập dev và holdout tách theo PDF, nhãn bằng chứng theo trang và lệnh tái lập mốc sparse cho Research V2.
+
 ```bash
 # Chạy kiểm thử nhanh (4 câu đại diện cho 4 nhóm trên cả 6 chế độ)
 py -3.10 -X utf8 main/eval/run_benchmark.py --limit-per-cat 1

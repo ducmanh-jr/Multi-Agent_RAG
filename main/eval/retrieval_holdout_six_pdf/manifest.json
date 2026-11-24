@@ -1,0 +1,52 @@
+{
+  "name": "academic-retrieval-six-pdf-holdout-v1",
+  "version": 1,
+  "splits": [
+    "holdout"
+  ],
+  "min_questions_per_category": 4,
+  "documents": {
+    "dpr-2004.04906v3.pdf": {
+      "title": "Dense Passage Retrieval for Open-Domain Question Answering",
+      "url": "https://arxiv.org/pdf/2004.04906v3",
+      "sha256": "3e67fc1a9977715acf722d85f0b7d124b03715e975f6310a4d6c12094190912f",
+      "pages": 13,
+      "split": "holdout"
+    },
+    "colbert-2004.12832v2.pdf": {
+      "title": "ColBERT: Efficient and Effective Passage Search via Contextualized Late Interaction over BERT",
+      "url": "https://arxiv.org/pdf/2004.12832v2",
+      "sha256": "2e487d9b96e3c2e5e286d843e98a066adc0442faa3a6e8ddbd1771221bf9ae14",
+      "pages": 10,
+      "split": "holdout"
+    },
+    "realm-2002.08909v1.pdf": {
+      "title": "REALM: Retrieval-Augmented Language Model Pre-Training",
+      "url": "https://arxiv.org/pdf/2002.08909v1",
+      "sha256": "0ec1a7ab3de5514c6d3baa8af0322816d4ee7cd4c14b9f2c450cbc9da9e6b363",
+      "pages": 12,
+      "split": "holdout"
+    },
+    "rag-2005.11401v4.pdf": {
+      "title": "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+      "url": "https://arxiv.org/pdf/2005.11401v4",
+      "sha256": "23e3249e9a1e75418d82efecab0ea8c4d033b89c93742f63208d47ce01f21233",
+      "pages": 19,
+      "split": "holdout"
+    },
+    "fid-2007.01282v1.pdf": {
+      "title": "Leveraging Passage Retrieval with Generative Models for Open Domain Question Answering",
+      "url": "https://arxiv.org/pdf/2007.01282v1",
+      "sha256": "5a28f8564317e773387a497c8d2978279e2ee5bccfec7c53dbfac4b826b33b99",
+      "pages": 6,
+      "split": "holdout"
+    },
+    "contriever-2112.09118v2.pdf": {
+      "title": "Unsupervised Dense Information Retrieval with Contrastive Learning",
+      "url": "https://arxiv.org/pdf/2112.09118v2",
+      "sha256": "e64f7daa44398efe7dc95efe8b06114bfff86776d1d84695cbcd81ff20c2f652",
+      "pages": 21,
+      "split": "holdout"
+    }
+  }
+}

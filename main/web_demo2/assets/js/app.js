@@ -50,10 +50,9 @@ document.addEventListener("DOMContentLoaded", () => {
     gemini: "Gemini API",
     cpu_min: "CPU Min",
     cpu_max: "CPU Max",
-    gpu_ft: "GPU FT",
     gpu_finetune: "GPU Finetune",
     gpu_max: "GPU Max",
-    kaggle_fn: "GPU FT",
+    kaggle_fn: "GPU Finetune",
     kaggle_max: "GPU Max",
     hybrid: "Hybrid",
   };
@@ -1174,7 +1173,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // ==================== 5. POLLING STATUS ====================
   function pollRunStatus(runId, messageCard, query, startTime, timerInterval) {
-    const maxPolls = 300;
+    const maxPolls = 900;
     let polls = 0;
     let consecutiveErrors = 0;
     let isStopped = false;
@@ -2729,7 +2728,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (isOllamaOnline !== undefined) state.isOllamaOnline = Boolean(isOllamaOnline);
 
     // 1. Cập nhật các nút Quick Select (Mờ xám nhạt và chặn chọn khi Offline)
-    const gpuButtons = document.querySelectorAll('.quick-select-btn[data-mode="gpu_ft"], .quick-select-btn[data-mode="gpu_finetune"], .quick-select-btn[data-mode="gpu_max"], .quick-select-btn[data-mode="hybrid"]');
+    const gpuButtons = document.querySelectorAll('.quick-select-btn[data-mode="gpu_finetune"], .quick-select-btn[data-mode="gpu_max"], .quick-select-btn[data-mode="hybrid"]');
     gpuButtons.forEach(btn => {
       if (!state.isKaggleOnline) {
         btn.classList.add("mode-offline-dimmed");
@@ -3028,6 +3027,9 @@ document.addEventListener("DOMContentLoaded", () => {
             document.querySelectorAll(".agent-model-select").forEach(select => {
               const key = select.dataset.agent;
               let val = parsed[key];
+              if (val === "gpu_ft" || val === "kaggle_fn" || val === "fn" || val === "ft") {
+                val = "gpu_finetune";
+              }
               if (val === "gpu_max" && !isGpuMaxActive) {
                 val = state.isKaggleOnline ? "gpu_finetune" : "hybrid";
               }
@@ -3047,6 +3049,9 @@ document.addEventListener("DOMContentLoaded", () => {
       } catch (_) {}
       if (!restoredCustom) {
         let savedMode = localStorage.getItem("rag_preferred_mode") || "hybrid";
+        if (savedMode === "gpu_ft" || savedMode === "kaggle_fn" || savedMode === "fn" || savedMode === "ft") {
+          savedMode = "gpu_finetune";
+        }
         if (savedMode === "gpu_max" && !isGpuMaxActive) {
           savedMode = state.isKaggleOnline ? "gpu_finetune" : "hybrid";
         }
@@ -3220,7 +3225,7 @@ document.addEventListener("DOMContentLoaded", () => {
             let targetMode = data.agent_modes[agentKey];
             if (targetMode === "cpu") targetMode = "cpu_min";
             if (targetMode === "model" || targetMode === "kaggle" || targetMode === "kaggle_max") targetMode = "gpu_max";
-            if (targetMode === "kaggle_fn" || targetMode === "fn") targetMode = "gpu_ft";
+            if (targetMode === "kaggle_fn" || targetMode === "fn" || targetMode === "gpu_ft") targetMode = "gpu_finetune";
             if (targetMode === "api") targetMode = "gemini";
             if (targetMode) {
               const opt = Array.from(select.options).find(o => o.value === targetMode);
@@ -3258,7 +3263,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   async function setAllAgentsMode(mode) {
     let canonMode = mode;
-    if (canonMode === "kaggle_fn" || canonMode === "fn") canonMode = "gpu_finetune";
+    if (canonMode === "kaggle_fn" || canonMode === "fn" || canonMode === "gpu_ft" || canonMode === "ft") canonMode = "gpu_finetune";
     try {
       localStorage.setItem("rag_preferred_mode", canonMode);
       localStorage.removeItem("rag_custom_agent_modes");
@@ -3297,39 +3302,30 @@ document.addEventListener("DOMContentLoaded", () => {
   function updateGpuMutualExclusionUI(is32b) {
     isGpuMaxActive = Boolean(is32b);
     const hotSwapBanner = document.getElementById("hotSwapBanner");
-    const gpuFtBtn = document.querySelector('.quick-select-btn[data-mode="gpu_ft"]');
     const gpuFnBtn = document.querySelector('.quick-select-btn[data-mode="gpu_finetune"]');
 
     if (isGpuMaxActive) {
       if (hotSwapBanner) hotSwapBanner.classList.add("show");
-      if (gpuFtBtn) {
-        gpuFtBtn.classList.add("vram-locked-dimmed");
-        gpuFtBtn.title = "⚠️ Đang khóa: Toàn bộ 32GB VRAM đang được GPU Max 32B độc chiếm.";
-      }
       if (gpuFnBtn) {
         gpuFnBtn.classList.add("vram-locked-dimmed");
         gpuFnBtn.title = "⚠️ Đang khóa: Toàn bộ 32GB VRAM đang được GPU Max 32B độc chiếm.";
       }
       document.querySelectorAll(".agent-model-select").forEach(sel => {
         Array.from(sel.options).forEach(opt => {
-          if (opt.value === "gpu_ft" || opt.value === "gpu_finetune") {
+          if (opt.value === "gpu_finetune") {
             opt.disabled = true;
           }
         });
       });
     } else {
       if (hotSwapBanner) hotSwapBanner.classList.remove("show");
-      if (gpuFtBtn) {
-        gpuFtBtn.classList.remove("vram-locked-dimmed");
-        gpuFtBtn.title = "Áp dụng GPU FT cho toàn bộ 5 Agent";
-      }
       if (gpuFnBtn) {
         gpuFnBtn.classList.remove("vram-locked-dimmed");
         gpuFnBtn.title = "Áp dụng GPU Finetune (Cụm 7 Mô Hình SOTA) cho toàn bộ 5 Agent";
       }
       document.querySelectorAll(".agent-model-select").forEach(sel => {
         Array.from(sel.options).forEach(opt => {
-          if (opt.value === "gpu_ft" || opt.value === "gpu_finetune") {
+          if (opt.value === "gpu_finetune") {
             opt.disabled = false;
           }
         });

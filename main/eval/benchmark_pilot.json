@@ -1,0 +1,68 @@
+{
+  "documents": {
+    "orchard-trial.pdf": [
+      [
+        "Orchard irrigation trial",
+        "The orchard trial ran for 21 days.",
+        "The trial measured soil moisture at sunrise."
+      ],
+      [
+        "Table A. Water used during the orchard trial",
+        "Treatment          Water (liters)",
+        "Drip irrigation    42 liters",
+        "Sprinkler          57 liters"
+      ]
+    ],
+    "greenhouse-trial.pdf": [
+      [
+        "Greenhouse irrigation trial",
+        "The greenhouse trial ran for 35 days.",
+        "The trial measured soil moisture at noon."
+      ]
+    ]
+  },
+  "questions": [
+    {
+      "id": "pilot-single-vi",
+      "category": "single_hop",
+      "language": "vi",
+      "documents": ["orchard-trial.pdf"],
+      "question": "Thí nghiệm tưới nước trong vườn cây kéo dài bao nhiêu ngày?",
+      "gold_numbers": ["21"],
+      "gold_sources": [
+        {"document": "orchard-trial.pdf", "page": 1, "passage": "The orchard trial ran for 21 days."}
+      ]
+    },
+    {
+      "id": "pilot-multi-en",
+      "category": "multi_hop",
+      "language": "en",
+      "documents": ["orchard-trial.pdf", "greenhouse-trial.pdf"],
+      "question": "Compare how long the orchard trial and the greenhouse trial ran.",
+      "gold_numbers": ["21", "35"],
+      "gold_sources": [
+        {"document": "orchard-trial.pdf", "page": 1, "passage": "The orchard trial ran for 21 days."},
+        {"document": "greenhouse-trial.pdf", "page": 1, "passage": "The greenhouse trial ran for 35 days."}
+      ]
+    },
+    {
+      "id": "pilot-table-en",
+      "category": "table_comparison",
+      "language": "en",
+      "documents": ["orchard-trial.pdf"],
+      "question": "How many liters did drip irrigation use in the orchard trial?",
+      "gold_numbers": ["42"],
+      "gold_sources": [
+        {"document": "orchard-trial.pdf", "page": 2, "passage": "Drip irrigation 42 liters"}
+      ]
+    },
+    {
+      "id": "pilot-unanswerable-vi",
+      "category": "adversarial_trap",
+      "language": "vi",
+      "documents": ["greenhouse-trial.pdf"],
+      "question": "Thí nghiệm trong nhà kính đo nồng độ nitrat trong đất là bao nhiêu?",
+      "is_unanswerable": true
+    }
+  ]
+}

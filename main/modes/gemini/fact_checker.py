@@ -5,6 +5,7 @@ from typing import Any
 from core.base_agent import BaseAgent
 from core.state import AgentState
 import json
+import re
 
 from core.verifier import nli_prompt, review_claims
 from utils.llm_client import llm_client
@@ -16,11 +17,15 @@ class GeminiFactCheckerAgent(BaseAgent):
 
     def _review(self, pairs):
         raw = llm_client._call_gemini(prompt=nli_prompt(pairs), temperature=0.1, max_tokens=2048, json_mode=True)
+        clean = re.sub(r"^```(?:json)?\s*|\s*```$", "", (raw or "").strip(), flags=re.I)
         try:
-            data = json.loads(raw)
+            data = json.loads(clean)
         except (TypeError, ValueError):
             return []
-        return data.get("results") if isinstance(data, dict) else []
+        if isinstance(data, dict):
+            res = data.get("results")
+            return res if isinstance(res, list) else []
+        return data if isinstance(data, list) else []
 
     def run(self, state: AgentState) -> dict[str, Any]:
         result = review_claims(state, self._review)

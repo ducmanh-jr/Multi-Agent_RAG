@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "name": "academic-retrieval-v1",
+  "min_questions_per_category": 3,
+  "documents": {
+    "e5-2212.03533v2.pdf": {
+      "title": "Text Embeddings by Weakly-Supervised Contrastive Pre-training",
+      "url": "https://arxiv.org/pdf/2212.03533v2",
+      "sha256": "2963a8af050d983f287edef210a525a69b7071847978451399ccaa3ac584be70",
+      "split": "dev",
+      "pages": 17
+    },
+    "bge-m3-2402.03216v5.pdf": {
+      "title": "M3-Embedding: Multi-Linguality, Multi-Functionality, Multi-Granularity Text Embeddings Through Self-Knowledge Distillation",
+      "url": "https://arxiv.org/pdf/2402.03216v5",
+      "sha256": "eb38e53565da260dc1f3d49708f45441936447a7f3c7d7ef025ff62ea3e1e575",
+      "split": "dev",
+      "pages": 18
+    },
+    "beir-2104.08663v4.pdf": {
+      "title": "BEIR: A Heterogeneous Benchmark for Zero-shot Evaluation of Information Retrieval Models",
+      "url": "https://arxiv.org/pdf/2104.08663v4",
+      "sha256": "1925755aeb627123d1a63c66f02e5aa2432f7e92751a02bea7c8c3b6bbb6ec33",
+      "split": "holdout",
+      "pages": 24
+    },
+    "sbert-1908.10084v1.pdf": {
+      "title": "Sentence-BERT: Sentence Embeddings using Siamese BERT-Networks",
+      "url": "https://arxiv.org/pdf/1908.10084v1",
+      "sha256": "92366d22fc0521350d6cbe0ad72bcee754f90e88181d7b4a8e2adb1e7e594fec",
+      "split": "holdout",
+      "pages": 11
+    }
+  }
+}

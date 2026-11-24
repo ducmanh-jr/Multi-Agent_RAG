@@ -1,0 +1,389 @@
+{
+  "name": "qasper-rerank-pdf-holdout-v1",
+  "version": 1,
+  "splits": [
+    "holdout"
+  ],
+  "categories": [
+    "single_document",
+    "multi_hop"
+  ],
+  "min_questions_per_category": 1,
+  "source": {
+    "dataset": "allenai/qasper",
+    "split": "test",
+    "revision": "06806e4608976fc2fac0a090ac425d5b2b29caf4",
+    "parquet_sha256": "206d05a86672dc330a47de4ff95eb0042d5ce0c74a84885bc3d15c36ae67b86e",
+    "license": "CC-BY-4.0",
+    "seed": "research-v2-qasper-reranker-v1",
+    "paper_question_limit": 4,
+    "considered_arxiv_ids": [
+      "1909.04242",
+      "1609.02075",
+      "1907.00937",
+      "1803.08614",
+      "1604.02038",
+      "1811.00051",
+      "2001.04346",
+      "1612.09535",
+      "1910.13793",
+      "1905.00840",
+      "2004.00809",
+      "1909.04387",
+      "1805.06648",
+      "1902.10246",
+      "1611.06322",
+      "1612.07486",
+      "1804.05306",
+      "1908.05908",
+      "1911.09753",
+      "1910.02001",
+      "1904.02306",
+      "1908.06024",
+      "1708.07690",
+      "1803.06745",
+      "1912.11585",
+      "1910.07154",
+      "1911.12559",
+      "1902.04094",
+      "2002.04326",
+      "1806.07042",
+      "2003.10564",
+      "1910.07973",
+      "1905.08067",
+      "1912.03010",
+      "1707.05589",
+      "1611.04887",
+      "1906.08584",
+      "1603.01547",
+      "1908.05925",
+      "2003.11687",
+      "1907.01339",
+      "2003.03131",
+      "1809.00129",
+      "1804.09692",
+      "1901.05389",
+      "1711.01567",
+      "1805.00195",
+      "1808.07733",
+      "1907.10676",
+      "1702.02584",
+      "1905.09439",
+      "1911.12237",
+      "1908.05758",
+      "2002.08902",
+      "1612.04118",
+      "1912.10162",
+      "1704.06851",
+      "1910.02677",
+      "1910.10670",
+      "1808.09180",
+      "2004.04478",
+      "1809.08899",
+      "1909.01860",
+      "1908.07721",
+      "1804.08000",
+      "1911.06815",
+      "1908.10090",
+      "2003.03728",
+      "1908.10001",
+      "1802.09233",
+      "1909.13184",
+      "1608.01972",
+      "1908.06493",
+      "1904.09131",
+      "1812.05813",
+      "2002.06851",
+      "2004.01970",
+      "2003.12139",
+      "1704.03279",
+      "1908.05803",
+      "1810.13414",
+      "1612.03762",
+      "1707.06875",
+      "2003.13016",
+      "2004.03090",
+      "1912.04979",
+      "1911.00202",
+      "2004.01820",
+      "1908.06259",
+      "1909.00369",
+      "1711.04964",
+      "1903.10318",
+      "1612.00866",
+      "1712.02555",
+      "1906.04236",
+      "1907.08540",
+      "1908.09283",
+      "1911.11899",
+      "1903.00384",
+      "1703.05320",
+      "1603.09381",
+      "1912.00239",
+      "1911.09241",
+      "1903.10548",
+      "1806.04387",
+      "1804.00982",
+      "1911.02747",
+      "1809.06083",
+      "1711.11118",
+      "1808.04122",
+      "1607.00167",
+      "2002.04374",
+      "1801.05617",
+      "1909.08357",
+      "1901.10619",
+      "2002.04745",
+      "1603.03876",
+      "1709.09749",
+      "1910.14589"
+    ]
+  },
+  "documents": {
+    "qasper-1609.02075v1.pdf": {
+      "title": "The Social Dynamics of Language Change in Online Networks",
+      "url": "https://arxiv.org/pdf/1609.02075v1",
+      "sha256": "728e41dff65ade41fd710847072091347af2e06da64efe2597f7e406ba435d9b",
+      "pages": 19,
+      "split": "holdout"
+    },
+    "qasper-1907.00937v1.pdf": {
+      "title": "Semantic Product Search",
+      "url": "https://arxiv.org/pdf/1907.00937v1",
+      "sha256": "99841dde79da19c468795cdf9b942d6507956cd2165bfe2e202782e10e2818da",
+      "pages": 10,
+      "split": "holdout"
+    },
+    "qasper-1811.00051v1.pdf": {
+      "title": "Generating Texts with Integer Linear Programming",
+      "url": "https://arxiv.org/pdf/1811.00051v1",
+      "sha256": "6301aa9912e856dae651b6c1d9457662f7b35ec91f9c882041da08a60280f696",
+      "pages": 42,
+      "split": "holdout"
+    },
+    "qasper-1612.09535v1.pdf": {
+      "title": "PAMPO: using pattern matching and pos-tagging for effective Named Entities recognition in Portuguese",
+      "url": "https://arxiv.org/pdf/1612.09535v1",
+      "sha256": "d5ac53a02be91ffc589cccc76ff994eff2b254a20642205198079b6d467e55bc",
+      "pages": 17,
+      "split": "holdout"
+    },
+    "qasper-1910.13793v1.pdf": {
+      "title": "Time to Take Emoji Seriously: They Vastly Improve Casual Conversational Models",
+      "url": "https://arxiv.org/pdf/1910.13793v1",
+      "sha256": "738c6c51fa4e4106f46a99b463f47f7ec3f1224ba75150f55539a1854d09ac03",
+      "pages": 11,
+      "split": "holdout"
+    },
+    "qasper-2004.00809v1.pdf": {
+      "title": "Mapping Languages and Demographics with Georeferenced Corpora",
+      "url": "https://arxiv.org/pdf/2004.00809v1",
+      "sha256": "1978f51345706aba3be6beec10d13ac5ccb9f02668c501060caa0531eaf416aa",
+      "pages": 16,
+      "split": "holdout"
+    },
+    "qasper-1908.05908v1.pdf": {
+      "title": "BERT-Based Multi-Head Selection for Joint Entity-Relation Extraction",
+      "url": "https://arxiv.org/pdf/1908.05908v1",
+      "sha256": "f4bbc360122b9c68900d9eebf70222b80032209b07aeab63cf9acfe4b95887e6",
+      "pages": 12,
+      "split": "holdout"
+    },
+    "qasper-1910.02001v1.pdf": {
+      "title": "Predicting the Role of Political Trolls in Social Media",
+      "url": "https://arxiv.org/pdf/1910.02001v1",
+      "sha256": "7ed47817013abc68550c8e8968d03b10a988eecdde21b4063d53323cb1242298",
+      "pages": 12,
+      "split": "holdout"
+    },
+    "qasper-1908.06024v1.pdf": {
+      "title": "Tackling Online Abuse: A Survey of Automated Abuse Detection Methods",
+      "url": "https://arxiv.org/pdf/1908.06024v1",
+      "sha256": "bf645fa57139a562f50f80f9c238ff727af079774d4fca332f15b9b8c199f8ea",
+      "pages": 13,
+      "split": "holdout"
+    },
+    "qasper-1803.06745v1.pdf": {
+      "title": "Sentiment Analysis of Code-Mixed Indian Languages: An Overview of SAIL_Code-Mixed Shared Task @ICON-2017",
+      "url": "https://arxiv.org/pdf/1803.06745v1",
+      "sha256": "ad44098687d693f3d144be1783570de2415760fbd5aa4bc99329c2d27aad0725",
+      "pages": 10,
+      "split": "holdout"
+    },
+    "qasper-2002.04326v1.pdf": {
+      "title": "ReClor: A Reading Comprehension Dataset Requiring Logical Reasoning",
+      "url": "https://arxiv.org/pdf/2002.04326v1",
+      "sha256": "7585b07264a287f3d1d0c6b0d565a419fcb11dcfdac65fa56e44567d11c72725",
+      "pages": 26,
+      "split": "holdout"
+    },
+    "qasper-1806.07042v1.pdf": {
+      "title": "Response Generation by Context-aware Prototype Editing",
+      "url": "https://arxiv.org/pdf/1806.07042v1",
+      "sha256": "416938408ba030922aae74cafb73e6018393af3710a8824c5e246dc81dd70fce",
+      "pages": 10,
+      "split": "holdout"
+    },
+    "qasper-1804.09692v1.pdf": {
+      "title": "Factors Influencing the Surprising Instability of Word Embeddings",
+      "url": "https://arxiv.org/pdf/1804.09692v1",
+      "sha256": "b2de2707f04bafeb5d08c18c59304092625e6a3271450fb727528f3cd0165dcb",
+      "pages": 11,
+      "split": "holdout"
+    },
+    "qasper-1805.00195v1.pdf": {
+      "title": "An Annotated Corpus for Machine Reading of Instructions in Wet Lab Protocols",
+      "url": "https://arxiv.org/pdf/1805.00195v1",
+      "sha256": "84518f1cb71b97cf83c2bbf13ea838fee8daa2e494c38a9182be6cf5d4339592",
+      "pages": 10,
+      "split": "holdout"
+    },
+    "qasper-1911.12237v1.pdf": {
+      "title": "SAMSum Corpus: A Human-annotated Dialogue Dataset for Abstractive Summarization",
+      "url": "https://arxiv.org/pdf/1911.12237v1",
+      "sha256": "7b04ac5e6fd837198b271e88ba898597d21a3f0bd13e3a6772573fde57b7f402",
+      "pages": 10,
+      "split": "holdout"
+    },
+    "qasper-1910.02677v1.pdf": {
+      "title": "Controllable Sentence Simplification",
+      "url": "https://arxiv.org/pdf/1910.02677v1",
+      "sha256": "d839ffff6818da34471e424366cb09dc98a5559aa7aa9abd087fb5ae55ab0a82",
+      "pages": 10,
+      "split": "holdout"
+    },
+    "qasper-1808.09180v1.pdf": {
+      "title": "What do character-level models learn about morphology? The case of dependency parsing",
+      "url": "https://arxiv.org/pdf/1808.09180v1",
+      "sha256": "2cf9d89cb7baa51d08a36f9aa05c0eaaf53ff4e59b47574f5d1132e5ffdc514b",
+      "pages": 12,
+      "split": "holdout"
+    },
+    "qasper-1812.05813v1.pdf": {
+      "title": "A corpus of precise natural textual entailment problems",
+      "url": "https://arxiv.org/pdf/1812.05813v1",
+      "sha256": "42583ddc03fa6cf89884a226b771a098fc759d38fb15bc346eaf4b026b38343d",
+      "pages": 34,
+      "split": "holdout"
+    },
+    "qasper-2003.12139v1.pdf": {
+      "title": "Integrating Crowdsourcing and Active Learning for Classification of Work-Life Events from Tweets",
+      "url": "https://arxiv.org/pdf/2003.12139v1",
+      "sha256": "aac5bdcbad02b06128e7597b743e4119c707a704b4b7c94bc1f49f966d1c3492",
+      "pages": 12,
+      "split": "holdout"
+    },
+    "qasper-1704.03279v1.pdf": {
+      "title": "Unfolding and Shrinking Neural Machine Translation Ensembles",
+      "url": "https://arxiv.org/pdf/1704.03279v1",
+      "sha256": "ce7af2d15bcf5580095befd0e4813bf4bdbcff86d5b04e7b444d1f50ee2dd2fa",
+      "pages": 10,
+      "split": "holdout"
+    },
+    "qasper-1810.13414v1.pdf": {
+      "title": "Extracting Linguistic Resources from the Web for Concept-to-Text Generation",
+      "url": "https://arxiv.org/pdf/1810.13414v1",
+      "sha256": "7060f6a7fdb8dd2c24ea23df63cc809142c10cc9d9af09699a0cc96d4f7badc8",
+      "pages": 43,
+      "split": "holdout"
+    },
+    "qasper-1612.03762v1.pdf": {
+      "title": "From narrative descriptions to MedDRA: automagically encoding adverse drug reactions",
+      "url": "https://arxiv.org/pdf/1612.03762v1",
+      "sha256": "3b065d7bf9b3f2d0907cec236ae0c8f69b7acbf52e460ff90220b826ceb37f1d",
+      "pages": 30,
+      "split": "holdout"
+    },
+    "qasper-1707.06875v1.pdf": {
+      "title": "Why We Need New Evaluation Metrics for NLG",
+      "url": "https://arxiv.org/pdf/1707.06875v1",
+      "sha256": "003a2687d74e3a938ea841f1885c18661055ef53cc34cd37f2ea8d23350784f1",
+      "pages": 17,
+      "split": "holdout"
+    },
+    "qasper-2004.03090v1.pdf": {
+      "title": "Interview: A Large-Scale Open-Source Corpus of Media Dialog",
+      "url": "https://arxiv.org/pdf/2004.03090v1",
+      "sha256": "2229632059a3f442dd4a3c0a685e68b6ce9871b8dab50b17167b1cf83b47770d",
+      "pages": 10,
+      "split": "holdout"
+    },
+    "qasper-2004.01820v1.pdf": {
+      "title": "Aggressive, Repetitive, Intentional, Visible, and Imbalanced: Refining Representations for Cyberbullying Classification",
+      "url": "https://arxiv.org/pdf/2004.01820v1",
+      "sha256": "9b81d0c0ac39bdfe7855892fc3dc26a163fb1f7390042647b8246bd36c3b3b11",
+      "pages": 12,
+      "split": "holdout"
+    },
+    "qasper-1909.00369v1.pdf": {
+      "title": "One Model to Learn Both: Zero Pronoun Prediction and Translation",
+      "url": "https://arxiv.org/pdf/1909.00369v1",
+      "sha256": "30cc7c0215b2373aca220e9aae69b3f40f6a28b157bd7e95a8cdf71bde7cc80b",
+      "pages": 10,
+      "split": "holdout"
+    },
+    "qasper-1612.00866v1.pdf": {
+      "title": "Creating a Real-Time, Reproducible Event Dataset",
+      "url": "https://arxiv.org/pdf/1612.00866v1",
+      "sha256": "dae55f69ee4460ed56fcc5c7bd4935b339f1bfd8a22f858bac6f2309eba96786",
+      "pages": 55,
+      "split": "holdout"
+    },
+    "qasper-1906.04236v1.pdf": {
+      "title": "Identifying Visible Actions in Lifestyle Vlogs",
+      "url": "https://arxiv.org/pdf/1906.04236v1",
+      "sha256": "afe68244ca596ccf2e05c6684f5381b21adede1a2aacc8d45181bd7b6d31bab8",
+      "pages": 12,
+      "split": "holdout"
+    },
+    "qasper-1907.08540v1.pdf": {
+      "title": "Predicting Human Activities from User-Generated Content",
+      "url": "https://arxiv.org/pdf/1907.08540v1",
+      "sha256": "def8001ff6b20d828292dab33c686c721c6af7272238eec1d7608a51aca3e374",
+      "pages": 11,
+      "split": "holdout"
+    },
+    "qasper-1703.05320v1.pdf": {
+      "title": "Legal Question Answering using Ranking SVM and Deep Convolutional Neural Network",
+      "url": "https://arxiv.org/pdf/1703.05320v1",
+      "sha256": "26744b6758edf14667529c2007eada67c6fd0010c9191329d51b0d4e50ca9584",
+      "pages": 15,
+      "split": "holdout"
+    },
+    "qasper-1911.09241v1.pdf": {
+      "title": "Assessing the Benchmarking Capacity of Machine Reading Comprehension Datasets",
+      "url": "https://arxiv.org/pdf/1911.09241v1",
+      "sha256": "ed2de1acbee146a40ba5f501bcb4db4c5560876a3d227acb47a2df682db55bab",
+      "pages": 11,
+      "split": "holdout"
+    },
+    "qasper-2002.04374v1.pdf": {
+      "title": "Convolutional Neural Networks and a Transfer Learning Strategy to Classify Parkinson's Disease from Speech in Three Different Languages",
+      "url": "https://arxiv.org/pdf/2002.04374v1",
+      "sha256": "cd51a155e8db5152db044a5382fdbedebe7306dfcd0547f4f3a76d03ad01f773",
+      "pages": 10,
+      "split": "holdout"
+    },
+    "qasper-1801.05617v1.pdf": {
+      "title": "Automatic Detection of Cyberbullying in Social Media Text",
+      "url": "https://arxiv.org/pdf/1801.05617v1",
+      "sha256": "33fd3c0aef5da3e5cb9fc87256094d983ce894a53a82617ca915de63b51beaf9",
+      "pages": 21,
+      "split": "holdout"
+    },
+    "qasper-2002.04745v1.pdf": {
+      "title": "On Layer Normalization in the Transformer Architecture",
+      "url": "https://arxiv.org/pdf/2002.04745v1",
+      "sha256": "af4234e423f7e89acc075fee9edf45a9317689524baac1071da30100d8a26bb8",
+      "pages": 17,
+      "split": "holdout"
+    },
+    "qasper-1910.14589v1.pdf": {
+      "title": "Machine Translation of Restaurant Reviews: New Corpus for Domain Adaptation and Robustness",
+      "url": "https://arxiv.org/pdf/1910.14589v1",
+      "sha256": "5a2379933d04cdd91d339477eabd4f4caf25a27ca912ca36ecd6d51743b40d63",
+      "pages": 13,
+      "split": "holdout"
+    }
+  }
+}

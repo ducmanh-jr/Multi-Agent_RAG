@@ -201,11 +201,6 @@ def probe_all_capabilities(force_refresh: bool = False) -> dict[str, Any]:
             "url": kaggle_info["url"],
             "adapters": kaggle_info["adapters"],
         },
-        "gpu_ft": {
-            "online": kaggle_info["online"],
-            "url": kaggle_info["url"],
-            "adapters": kaggle_info["adapters"],
-        },
         "kaggle_max": {
             "online": kaggle_info["online"],
             "url": kaggle_info["url"],

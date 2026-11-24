@@ -108,14 +108,44 @@ def build_academic_report(
     }
     linked_spans = [
         span for span in (evidence_spans or [])
-        if isinstance(span, dict) and isinstance(span.get("id"), str) and span["id"] in linked_ids
+        if isinstance(span, dict) and (
+            (isinstance(span.get("id"), str) and span["id"] in linked_ids)
+            or (isinstance(span.get("unit_id"), str) and span["unit_id"] in linked_ids)
+            or (isinstance(span.get("source_unit_id"), str) and span["source_unit_id"] in linked_ids)
+        )
     ]
-    span_id_counts = Counter(span["id"] for span in linked_spans)
-    spans_by_id = {
-        span["id"]: span for span in linked_spans
-        if span_id_counts[span["id"]] == 1 and evidence_quote(span).strip() and citation_location(span)
-    }
-    citation_references = build_citation_references(list(spans_by_id.values()))
+    span_id_counts = Counter(span["id"] for span in linked_spans if isinstance(span.get("id"), str))
+    valid_spans = [
+        span for span in linked_spans
+        if span_id_counts.get(span.get("id"), 0) == 1 and evidence_quote(span).strip() and citation_location(span)
+    ]
+    spans_by_id = {}
+    for span in valid_spans:
+        sid = span.get("id")
+        if sid and sid not in spans_by_id:
+            spans_by_id[sid] = span
+        uid = span.get("unit_id") or span.get("source_unit_id")
+        if uid and uid not in spans_by_id:
+            spans_by_id[uid] = span
+
+    for u in sources_to_process:
+        if not isinstance(u, dict):
+            continue
+        uid = u.get("id") or u.get("chunk_id") or u.get("unit_id")
+        if uid and uid in linked_ids and uid not in spans_by_id and (u.get("text") or u.get("content")):
+            loc = citation_location(u)
+            if loc:
+                spans_by_id[uid] = {
+                    "id": uid,
+                    "unit_id": uid,
+                    "source_unit_id": uid,
+                    "doc_id": loc[0],
+                    "page_no": loc[1],
+                    "quote": (u.get("text") or u.get("content") or "").strip()[:500],
+                }
+
+    unique_spans = list({id(s): s for s in spans_by_id.values()}.values())
+    citation_references = build_citation_references(unique_spans)
     refs_by_page = {(ref["document_id"], ref["page"]): ref["ref_id"] for ref in citation_references}
 
     doc_title_lookup = {}
@@ -128,7 +158,9 @@ def build_academic_report(
     references = []
     for ref in citation_references:
         document_id = ref["document_id"]
-        span = spans_by_id[ref["evidence_id"]]
+        span = spans_by_id.get(ref["evidence_id"])
+        if not span:
+            continue
         references.append({
             "ref_id": ref["ref_id"],
             "title": doc_title_lookup.get(document_id, document_id),
@@ -145,7 +177,7 @@ def build_academic_report(
     for claim in verified_claims:
         text = get_claim_text(claim).strip()
         refs = sorted({refs_by_page[citation_location(spans_by_id[eid])]
-                       for eid in _claim_evidence_ids(claim) if eid in spans_by_id})
+                       for eid in _claim_evidence_ids(claim) if eid in spans_by_id and citation_location(spans_by_id[eid]) in refs_by_page})
         if not refs:
             unlinked.append(claim)
             continue

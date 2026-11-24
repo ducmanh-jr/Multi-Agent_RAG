@@ -1,12 +1,12 @@
 """
 Unified Hybrid Provider Router & Policy Engine (PR-03).
 Cleanly separates:
-  - ExecutionMode: cpu_min | cpu_max | gpu_finetune | gpu_max | hybrid (and legacy gemini / gpu_ft)
+  - ExecutionMode: cpu_min | cpu_max | gpu_finetune | gpu_max | hybrid | gemini
   - ModelProvider: gemini | kaggle | local
   - AgentRole: planner | retrieval | embedding | reranker | reader | generator | critic | fact_checker | writer | citation_audit
 
 Guarantees:
-  1. Single-mode isolation: cpu_min, cpu_max, gpu_finetune, gpu_max, gpu_ft NEVER silently call Gemini.
+  1. Single-mode isolation: cpu_min, cpu_max, gpu_finetune, gpu_max NEVER silently call Gemini.
   2. Hybrid routing: supports Gemini 3.8 Flash as primary LLM reasoning provider for complex/multi-doc
      tasks (or when HYBRID_PROVIDER_PROFILE=gemini_first), with Kaggle Qwen 7B as fast-path/fallback.
   3. Grounding invariants: embedding (BGE-M3), reranker (Guarded MiniLM), fact_checker (Local BGE NLI),
@@ -22,7 +22,7 @@ from core.config import get_run_settings
 from utils.logger import logger
 
 
-ExecutionMode = Literal["cpu_min", "cpu_max", "gpu_finetune", "gpu_max", "hybrid", "gemini", "gpu_ft"]
+ExecutionMode = Literal["cpu_min", "cpu_max", "gpu_finetune", "gpu_max", "hybrid", "gemini"]
 ModelProvider = Literal["gemini", "kaggle", "local"]
 AgentRole = Literal[
     "planner", "retrieval", "embedding", "reranker", "reader",
@@ -62,7 +62,7 @@ def is_provider_allowed(provider: str, execution_mode: Optional[str]) -> bool:
     if prov == "gemini":
         return mode in GEMINI_ALLOWED_EXECUTION_MODES
     if prov == "kaggle":
-        return mode in {"gpu_finetune", "gpu_max", "gpu_ft", "kaggle_fn", "kaggle_max", "kaggle", "hybrid", "auto", "optimal"}
+        return mode in {"gpu_finetune", "gpu_max", "kaggle_max", "kaggle", "hybrid", "auto", "optimal"}
     if prov == "local":
         return True
     return False
@@ -166,7 +166,7 @@ class HybridProviderRouter:
         policy = load_hybrid_provider_policy(policy_overrides)
 
         gemini_online = bool(caps.get("gemini", {}).get("online"))
-        gpu_ft_online = bool(caps.get("gpu_finetune", {}).get("online") or caps.get("gpu_ft", {}).get("online"))
+        gpu_ft_online = bool(caps.get("gpu_finetune", {}).get("online"))
         gpu_max_online = bool(caps.get("kaggle_max", {}).get("online") and caps.get("kaggle_max", {}).get("has_vllm_32b"))
 
         if role_key == "fact_checker":

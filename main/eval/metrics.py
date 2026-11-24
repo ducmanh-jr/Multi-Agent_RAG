@@ -11,8 +11,14 @@ Measures:
 """
 
 import re
+from pathlib import PurePosixPath
 from typing import Dict, Any, List
-from core.verifier import check_numerical_and_date_consistency, deterministic_verify_claims
+from core.citation_audit import get_citation_audit
+from core.verifier import (
+    check_numerical_and_date_consistency,
+    deterministic_verify_claims,
+    verify_evidence_span_provenance,
+)
 
 
 _ABSTENTION_PATTERNS = [
@@ -21,6 +27,7 @@ _ABSTENTION_PATTERNS = [
     r"không có thông tin",
     r"không đủ bằng chứng",
     r"không được nêu",
+    r"không được đề cập",
     r"chưa có dữ liệu",
     r"insufficient evidence",
     r"not mentioned",
@@ -42,40 +49,130 @@ def is_abstention_response(answer: str) -> bool:
     return False
 
 
-def compute_citation_f1(answer: str, evidence_list: List[Dict[str, Any]], gold_keywords: List[str]) -> float:
-    """
-    Compute Citation F1:
-    - Checks whether inline [n] citations exist in the answer
-    - Checks whether the cited [n] evidence blocks actually contain the relevant keywords/facts
-    """
-    cited_indices = [int(m) for m in re.findall(r"\[(\d+)\]", answer or "")]
-    if not evidence_list:
-        return 1.0 if not cited_indices else 0.0
+def _document_key(value: Any) -> str:
+    name = PurePosixPath(str(value or "").replace("\\", "/")).name.casefold()
+    return name.removesuffix(".pdf")
 
-    relevant_indices = set()
-    for idx, ev in enumerate(evidence_list, 1):
-        txt = (ev.get("text") or ev.get("content") or "").lower()
-        if any(kw.lower() in txt for kw in gold_keywords if kw):
-            relevant_indices.add(idx)
-    if not relevant_indices:
-        relevant_indices = {1}
 
-    if not cited_indices:
+def _location(item: Dict[str, Any]) -> tuple[str, str]:
+    document = item.get("doc_id") or item.get("document_id") or item.get("filename")
+    return _document_key(document), str(item.get("page_no") or item.get("page") or "")
+
+
+def _normalized_text(value: str) -> str:
+    return " ".join(value.split())
+
+
+def _matches_target(item: Dict[str, Any], target: Dict[str, Any], *, citation: bool = False) -> bool:
+    document, page = _location(item)
+    if document != _document_key(target["document"]) or page != str(target["page"]):
+        return False
+    text = (item.get("quote") if citation else item.get("text")) or item.get("text") or item.get("content") or ""
+    passage = target.get("passage")
+    if passage:
+        return _normalized_text(passage) in _normalized_text(text)
+    keywords = (target.get("keywords") or target.get("anchors") or []) if citation else []
+    return not keywords or any(keyword.casefold() in text.casefold() for keyword in keywords if keyword)
+
+
+def _answer_citation_numbers(report: str) -> set[int]:
+    # Report reference definitions and the verification ledger are outside the answer body.
+    body = re.split(
+        r"<!-- DUAL_REPORT_SPLIT -->|^\s*#{1,6}\s+(?:\d+\.\s*)?(?:Danh mục Tài liệu Trích dẫn|Evidence References|References|Sources)\b",
+        report, maxsplit=1, flags=re.IGNORECASE | re.MULTILINE,
+    )[0]
+    body = re.sub(r"^\s*```[^\n]*\n.*?^\s*```[^\n]*", "", body, flags=re.MULTILINE | re.DOTALL)
+    body = re.sub(r"^\s*#{1,6}\s+[^\n]*|`[^`\n]*`", "", body, flags=re.MULTILINE)
+    return {int(marker) for marker in re.findall(r"(?<!\\)\[(\d+)\]", body)}
+
+
+def _score_citations(
+    result_state: Dict[str, Any], report: str, targets: List[Dict[str, Any]],
+) -> float | None:
+    if not targets:
+        return None
+    cited_numbers = _answer_citation_numbers(report)
+    if not cited_numbers:
         return 0.0
 
-    cited_set = set(i for i in cited_indices if 1 <= i <= len(evidence_list))
-    if not cited_set:
-        return 0.0
+    spans = result_state.get("evidence_spans") or []
+    audit = get_citation_audit(result_state.get("reasoning_trace") or [])
+    report_data = result_state.get("written_report_data") or {}
+    references = audit.get("references", []) if audit else report_data.get("references", [])
+    if audit:
+        spans_by_id = {span.get("id"): span for span in spans if span.get("id")}
+        candidates = {
+            str(ref["ref_id"]): [span]
+            for ref in references
+            if ref.get("ref_id") is not None
+            and (span := spans_by_id.get(ref.get("evidence_id"))) and _location(span) == _location(ref)
+        }
+    else:
+        # The legacy Writer emitted the preview of the evidence span it assigned the ref to.
+        candidates = {}
+        for ref in references:
+            preview = _normalized_text(ref.get("preview") or "")
+            if not preview or ref.get("ref_id") is None:
+                continue
+            matching = [
+                span for span in spans
+                if _location(span) == _location(ref)
+                and _normalized_text(span.get("quote") or span.get("text") or "").startswith(preview)
+            ]
+            if len(matching) == 1:
+                candidates[str(ref["ref_id"])] = matching
 
-    tp = len(cited_set & relevant_indices)
-    if tp == 0 and cited_set:
-        tp = 0.85 * len(cited_set)
-
-    precision = min(1.0, tp / max(1, len(cited_set)))
-    recall = min(1.0, tp / max(1, min(len(relevant_indices), 2)))
-    if precision + recall == 0:
+    correct_numbers = 0
+    covered_targets = set()
+    for number in cited_numbers:
+        matched = {
+            index for index, target in enumerate(targets)
+            if any(_matches_target(span, target, citation=True) for span in candidates.get(str(number), []))
+        }
+        if matched:
+            correct_numbers += 1
+            covered_targets.update(matched)
+    if not correct_numbers:
         return 0.0
+    precision = correct_numbers / len(cited_numbers)
+    recall = len(covered_targets) / len(targets)
     return round(2 * precision * recall / (precision + recall), 4)
+
+
+def _audit_citations_and_provenance(
+    result_state: Dict[str, Any],
+    report: str,
+    evidence: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Audit inline [n] citation markers and verify evidence span provenance against SourceUnits."""
+    spans = [s for s in (result_state.get("evidence_spans") or []) if isinstance(s, dict)]
+    audit = get_citation_audit(result_state.get("reasoning_trace") or [])
+    report_data = result_state.get("written_report_data") or {}
+    references = audit.get("references", []) if audit else report_data.get("references", [])
+
+    # 1. Verify evidence span provenance using PR-02 verifier (supports PR-01 merged provenance).
+    provenance_rate: float | None = None
+    if spans and evidence:
+        valid_spans = sum(1 for span in spans if verify_evidence_span_provenance(span, evidence)[0])
+        provenance_rate = round(valid_spans / len(spans), 4)
+
+    # 2. Detect orphan/fabricated inline [n] markers in the answer body.
+    cited_numbers = _answer_citation_numbers(report)
+    known_ref_ids = {
+        int(ref["ref_id"])
+        for ref in references
+        if isinstance(ref, dict) and ref.get("ref_id") is not None and str(ref.get("ref_id")).isdigit()
+    }
+    orphan_markers = sorted(n for n in cited_numbers if n not in known_ref_ids)
+    valid_citation_ratio: float | None = None
+    if cited_numbers:
+        valid_citation_ratio = round((len(cited_numbers) - len(orphan_markers)) / len(cited_numbers), 4)
+
+    return {
+        "citation_provenance_rate": provenance_rate,
+        "orphan_citation_count": len(orphan_markers),
+        "valid_citation_ratio": valid_citation_ratio,
+    }
 
 
 def evaluate_single_prediction(
@@ -85,16 +182,36 @@ def evaluate_single_prediction(
 ) -> Dict[str, Any]:
     """Evaluate a single benchmark prediction against ground-truth metadata."""
     category = question_item.get("category", "single_hop")
-    is_unanswerable = bool(question_item.get("is_unanswerable", False)) or category == "adversarial_trap"
-    gold_numbers = question_item.get("gold_numbers", [])
-    gold_keywords = question_item.get("gold_keywords", [])
+    is_unanswerable = bool(question_item.get("is_unanswerable", False)) or category in {
+        "adversarial_trap",
+        "insufficient_evidence",
+    }
+    gold_numbers = list(question_item.get("gold_numbers") or [])
+    if not gold_numbers and question_item.get("gold_values"):
+        gold_numbers = [
+            str(item["value"])
+            for item in question_item.get("gold_values", [])
+            if isinstance(item, dict) and item.get("value") is not None
+        ]
+    selected_doc = question_item.get("selected_doc", "")
+    targets = [] if is_unanswerable else question_item.get("gold_sources", [])
+    if not targets and not is_unanswerable and question_item.get("gold_page") and selected_doc:
+        targets = [{
+            "document": selected_doc,
+            "page": question_item["gold_page"],
+            "keywords": question_item.get("gold_keywords", []),
+        }]
 
+    report_data = result_state.get("written_report_data") or {}
     answer = (
-        result_state.get("answer")
-        or result_state.get("final_report")
+        report_data.get("answer")
+        or result_state.get("answer")
         or result_state.get("final_response")
         or ""
     )
+    status = result_state.get("answer_status") or report_data.get("status")
+    abstained = status == "NOT_FOUND_IN_DOCUMENT" if status else bool(answer and is_abstention_response(answer))
+    abstention_acc = float(bool(answer or abstained) and abstained == is_unanswerable)
     evidence = (
         result_state.get("source_units")
         or result_state.get("retrieved_docs")
@@ -107,50 +224,76 @@ def evaluate_single_prediction(
         for u in evidence
     )
 
-    # 1. Groundedness
+    # 1. Groundedness & Hallucination Rate
     state_claims = result_state.get("claims") or []
-    if not state_claims and answer:
+    if not state_claims and answer and not abstained:
         sents = [s.strip() for s in re.split(r"(?<=[.!?])\s+|\n+", answer) if len(s.strip()) > 25]
         state_claims = [{"id": f"c_{i+1}", "claim": s} for i, s in enumerate(sents[:6])]
 
-    if state_claims and evidence:
+    verified_c = 0
+    rejected_c = 0
+    total_c = 0
+    if abstained:
+        # An explicit abstention makes no factual claim (false refusals are penalized via abstention_accuracy).
+        groundedness = 1.0
+        hallucination_rate = 0.0
+    elif state_claims and evidence:
         verified, rejected, _ = deterministic_verify_claims(state_claims, evidence)
-        total_c = len(verified) + len(rejected)
-        groundedness = len(verified) / total_c if total_c > 0 else 1.0
+        verified_c = len(verified)
+        rejected_c = len(rejected)
+        total_c = verified_c + rejected_c
+        groundedness = verified_c / total_c if total_c > 0 else 1.0
+        hallucination_rate = rejected_c / total_c if total_c > 0 else 0.0
+        if is_unanswerable:
+            # Answering an unanswerable trap instead of abstaining is a hallucination.
+            hallucination_rate = 1.0
+            groundedness = 0.0
+    elif is_unanswerable:
+        groundedness = 0.0
+        hallucination_rate = 1.0
     else:
         groundedness = 1.0 if result_state.get("fact_check_label") == "support" else 0.5
+        hallucination_rate = round(1.0 - groundedness, 4)
 
-    # 2. Numeric/Date Exactness
-    num_ok, date_ok, _ = check_numerical_and_date_consistency(answer, full_context)
-    is_consistent = bool(num_ok and date_ok)
-    numeric_exactness = 1.0 if is_consistent else 0.0
-    if gold_numbers and not is_unanswerable:
-        ans_clean = answer.replace(",", "")
-        matched_gold = sum(1 for gn in gold_numbers if str(gn).replace(",", "") in ans_clean)
-        if matched_gold == 0 and len(gold_numbers) > 0:
-            numeric_exactness = 0.90 if is_consistent else 0.0
+    # 2. Numeric/Date & Compound-Unit Exactness
+    num_ok, date_ok, consistency_issues = check_numerical_and_date_consistency(answer, full_context)
+    numeric_answer = re.sub(r"\[\d+\]|\b(?:trang|page)\s+\d+\b", " ", answer, flags=re.IGNORECASE)
+    numeric_answer = numeric_answer.replace(",", ".")
+    gold_present = all(
+        re.search(r"(?<!\d)(?<!\d[.,])" + re.escape(str(number).replace(",", ".")) + r"(?!\d|[.,]\d)",
+                  numeric_answer)
+        for number in gold_numbers
+    )
+    correct_numbers = bool(answer and not abstained and num_ok and date_ok and gold_present)
+    numeric_exactness = None if is_unanswerable else float(correct_numbers)
 
-    # 3. Citation F1
-    citation_f1 = compute_citation_f1(answer, evidence, gold_keywords)
-
-    # 4. Abstention Accuracy (for adversarial trap questions)
-    abstained = is_abstention_response(answer)
-    if is_unanswerable:
-        trap_terms = [t.lower() for t in question_item.get("trap_entities", []) if t]
-        # True abstention or grounded answer that never fabricates the fake trap metric
-        fabricated_trap = any(t in answer.lower() and not abstained for t in trap_terms) and not is_consistent
-        abstention_acc = 1.0 if (abstained or not fabricated_trap) else 0.0
-    else:
-        abstention_acc = 1.0 if not abstained else 0.0
+    # 3. Retrieval, Citation F1, and Citation Provenance Audit
+    retrieved = result_state.get("seen_chunks") or result_state.get("retrieved_docs") or []
+    retrieval_recall = (
+        sum(any(_matches_target(chunk, target) for chunk in retrieved) for target in targets) / len(targets)
+        if targets else None
+    )
+    rendered_report = result_state.get("final_report") or answer
+    citation_f1 = _score_citations(result_state, rendered_report, targets)
+    citation_audit_metrics = _audit_citations_and_provenance(result_state, rendered_report, evidence)
 
     return {
         "id": question_item.get("id"),
         "category": category,
         "language": question_item.get("language", "vi"),
-        "selected_doc": question_item.get("selected_doc", ""),
+        "selected_doc": selected_doc,
+        "documents": question_item.get("documents") or ([selected_doc] if selected_doc else []),
         "groundedness": round(groundedness, 4),
-        "citation_f1": round(citation_f1, 4),
-        "numeric_exactness": round(numeric_exactness, 4),
+        "hallucination_rate": round(hallucination_rate, 4),
+        "unsupported_claim_count": rejected_c,
+        "total_claim_count": total_c,
+        "citation_f1": citation_f1,
+        "citation_provenance_rate": citation_audit_metrics["citation_provenance_rate"],
+        "orphan_citation_count": citation_audit_metrics["orphan_citation_count"],
+        "valid_citation_ratio": citation_audit_metrics["valid_citation_ratio"],
+        "unit_mismatch_count": len(consistency_issues),
+        "retrieval_recall": round(retrieval_recall, 4) if retrieval_recall is not None else None,
+        "numeric_exactness": numeric_exactness,
         "abstention_accuracy": round(abstention_acc, 4),
         "latency_sec": round(latency_sec, 3),
         "retry_count": int(result_state.get("retry_count", 0)),

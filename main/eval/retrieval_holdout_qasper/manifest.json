@@ -1,0 +1,255 @@
+{
+  "name": "qasper-test-pdf-holdout-v1",
+  "version": 1,
+  "splits": [
+    "holdout"
+  ],
+  "categories": [
+    "single_document",
+    "multi_hop"
+  ],
+  "min_questions_per_category": 1,
+  "source": {
+    "dataset": "allenai/qasper",
+    "split": "test",
+    "revision": "06806e4608976fc2fac0a090ac425d5b2b29caf4",
+    "parquet_sha256": "206d05a86672dc330a47de4ff95eb0042d5ce0c74a84885bc3d15c36ae67b86e",
+    "license": "CC-BY-4.0",
+    "seed": "research-v2-qasper-test-v1",
+    "paper_question_limit": 4,
+    "considered_arxiv_ids": [
+      "1908.06893",
+      "1612.05202",
+      "1912.03010",
+      "1608.01972",
+      "1709.06365",
+      "1908.09892",
+      "2003.13028",
+      "1906.01010",
+      "1603.01547",
+      "1911.09753",
+      "1908.09919",
+      "1907.00168",
+      "1803.08614",
+      "1909.08211",
+      "1811.01183",
+      "1910.07973",
+      "1909.07873",
+      "1908.11664",
+      "1901.05415",
+      "1707.05589",
+      "1911.12722",
+      "1910.03355",
+      "1906.00424",
+      "1803.05160",
+      "1904.02954",
+      "1709.05700",
+      "1708.01065",
+      "1709.06136",
+      "1911.02747",
+      "1611.01884",
+      "1911.03324",
+      "1802.09233",
+      "1712.00733",
+      "2002.00175",
+      "1810.02268",
+      "1808.07733",
+      "1605.05156",
+      "1704.08390",
+      "1708.03699",
+      "1711.03759",
+      "2003.11687",
+      "1908.08788",
+      "1909.12208",
+      "1707.02892",
+      "1811.00127",
+      "2001.04346",
+      "1605.05195",
+      "1910.01340",
+      "1911.09709",
+      "1802.06053",
+      "1809.03680",
+      "1909.04387",
+      "1908.07721",
+      "1908.10090",
+      "2003.09244",
+      "1602.03483",
+      "1901.09381",
+      "1911.05652",
+      "2004.01970",
+      "1705.02023",
+      "1908.06259",
+      "2004.04478",
+      "1707.07568",
+      "1908.05803",
+      "1912.00342",
+      "1708.07252",
+      "1912.06203",
+      "1911.11899",
+      "1611.04887",
+      "1910.09942",
+      "1808.10006",
+      "2003.13016",
+      "1905.01347",
+      "1806.09652",
+      "1903.02930",
+      "1708.05482"
+    ]
+  },
+  "documents": {
+    "qasper-1709.06365v1.pdf": {
+      "title": "MetaLDA: a Topic Model that Efficiently Incorporates Meta information",
+      "url": "https://arxiv.org/pdf/1709.06365v1",
+      "sha256": "4ba30fb077bdcbe1045f6487c518d6e5a18fc03b09f93675cd0aa631ccea12f8",
+      "pages": 10,
+      "split": "holdout"
+    },
+    "qasper-1906.01010v1.pdf": {
+      "title": "A computational linguistic study of personal recovery in bipolar disorder",
+      "url": "https://arxiv.org/pdf/1906.01010v1",
+      "sha256": "88258e084c7f51a7061d3bc174bddfa6f6ff8e09ec4933c5b42de923addd83ae",
+      "pages": 10,
+      "split": "holdout"
+    },
+    "qasper-1909.08211v1.pdf": {
+      "title": "Modeling Conversation Structure and Temporal Dynamics for Jointly Predicting Rumor Stance and Veracity",
+      "url": "https://arxiv.org/pdf/1909.08211v1",
+      "sha256": "3bfba34e39465575cc93f69ce355b841265fa309cd094bc83151d73bfb7b6a54",
+      "pages": 12,
+      "split": "holdout"
+    },
+    "qasper-1811.01183v1.pdf": {
+      "title": "Unsupervised Identification of Study Descriptors in Toxicology Research: An Experimental Study",
+      "url": "https://arxiv.org/pdf/1811.01183v1",
+      "sha256": "8e18b12c82d37f490bf7f5d30b094e0a0aa54baf239d755b3069ff42b751623e",
+      "pages": 12,
+      "split": "holdout"
+    },
+    "qasper-1909.07873v1.pdf": {
+      "title": "Generating Black-Box Adversarial Examples for Text Classifiers Using a Deep Reinforced Model",
+      "url": "https://arxiv.org/pdf/1909.07873v1",
+      "sha256": "657f92a5ac662f1acd6e212c4cdfaaa7f10a0f4360fda9bcf795508ca096e508",
+      "pages": 16,
+      "split": "holdout"
+    },
+    "qasper-1908.11664v1.pdf": {
+      "title": "Exploring Domain Shift in Extractive Text Summarization",
+      "url": "https://arxiv.org/pdf/1908.11664v1",
+      "sha256": "23e7226a824505164ee8acc6f8a5b340c7ce388bd7797d1b3f00ac0088f113b3",
+      "pages": 11,
+      "split": "holdout"
+    },
+    "qasper-1901.05415v1.pdf": {
+      "title": "Learning from Dialogue after Deployment: Feed Yourself, Chatbot!",
+      "url": "https://arxiv.org/pdf/1901.05415v1",
+      "sha256": "d37b51fed8f5dba8759a7b9e0fc36c6bdb0ff4eb0a5627022bf6d9864c105f96",
+      "pages": 19,
+      "split": "holdout"
+    },
+    "qasper-1910.03355v1.pdf": {
+      "title": "An Interactive Machine Translation Framework for Modernizing Historical Documents",
+      "url": "https://arxiv.org/pdf/1910.03355v1",
+      "sha256": "3b107c08c395e360dc4f9a093d85757af7b8451952cbd141e7a19950c2b6a11b",
+      "pages": 12,
+      "split": "holdout"
+    },
+    "qasper-1906.00424v1.pdf": {
+      "title": "Plain English Summarization of Contracts",
+      "url": "https://arxiv.org/pdf/1906.00424v1",
+      "sha256": "b6e4fcca98b6ed776988485f100d50361b9f39f910c26af885131f4b4c4b3bac",
+      "pages": 11,
+      "split": "holdout"
+    },
+    "qasper-1803.05160v1.pdf": {
+      "title": "How to evaluate sentiment classifiers for Twitter time-ordered data?",
+      "url": "https://arxiv.org/pdf/1803.05160v1",
+      "sha256": "34ff495d8a20840048dd5b7bc48bceca0b6649fb165734dfaef641457882e89a",
+      "pages": 22,
+      "split": "holdout"
+    },
+    "qasper-1911.03324v1.pdf": {
+      "title": "Transforming Wikipedia into Augmented Data for Query-Focused Summarization",
+      "url": "https://arxiv.org/pdf/1911.03324v1",
+      "sha256": "d6f2d6ac3f2993d50b176306e07ee8098e9fd54683a1c3351e5e359694f7ac1f",
+      "pages": 10,
+      "split": "holdout"
+    },
+    "qasper-1712.00733v1.pdf": {
+      "title": "Incorporating External Knowledge to Answer Open-Domain Visual Questions with Dynamic Memory Networks",
+      "url": "https://arxiv.org/pdf/1712.00733v1",
+      "sha256": "612b177257ff1d0863696d8595b28cd90abd716d80010e59e9243e838ef40f25",
+      "pages": 11,
+      "split": "holdout"
+    },
+    "qasper-2002.00175v1.pdf": {
+      "title": "UIT-ViIC: A Dataset for the First Evaluation on Vietnamese Image Captioning",
+      "url": "https://arxiv.org/pdf/2002.00175v1",
+      "sha256": "a5e663e5a319149b141a37fcca27b1218e0c89c2d9020e3a15a2230aa3ccf477",
+      "pages": 12,
+      "split": "holdout"
+    },
+    "qasper-1810.02268v1.pdf": {
+      "title": "A Large-Scale Test Set for the Evaluation of Context-Aware Pronoun Translation in Neural Machine Translation",
+      "url": "https://arxiv.org/pdf/1810.02268v1",
+      "sha256": "64a80e349de39f1f6d3dbe317d6b308523f80202a21017717bd28eac8355c7c8",
+      "pages": 12,
+      "split": "holdout"
+    },
+    "qasper-1605.05195v1.pdf": {
+      "title": "Enhanced Twitter Sentiment Classification Using Contextual Information",
+      "url": "https://arxiv.org/pdf/1605.05195v1",
+      "sha256": "acdde103234a8f71baaae70ca18bdf5c9e9b934238614ab72c3b87eb2ad40fd8",
+      "pages": 10,
+      "split": "holdout"
+    },
+    "qasper-1910.01340v1.pdf": {
+      "title": "TexTrolls: Identifying Russian Trolls on Twitter from a Textual Perspective",
+      "url": "https://arxiv.org/pdf/1910.01340v1",
+      "sha256": "7d21b28e93a889570d09cd780af6f9b030cfa360d1809563cab23f1168c2d1e8",
+      "pages": 15,
+      "split": "holdout"
+    },
+    "qasper-1911.09709v1.pdf": {
+      "title": "Automatically Neutralizing Subjective Bias in Text",
+      "url": "https://arxiv.org/pdf/1911.09709v1",
+      "sha256": "bc6ceb6299e275aa531e91a6002d407073fa086ead9a60e70f0e26694dbfd78f",
+      "pages": 10,
+      "split": "holdout"
+    },
+    "qasper-1602.03483v1.pdf": {
+      "title": "Learning Distributed Representations of Sentences from Unlabelled Data",
+      "url": "https://arxiv.org/pdf/1602.03483v1",
+      "sha256": "07544501924c1489aa13f696fd9dacc4a3173f77fb0c58bd91da15864b96cff8",
+      "pages": 11,
+      "split": "holdout"
+    },
+    "qasper-1911.05652v1.pdf": {
+      "title": "Relative contributions of Shakespeare and Fletcher in Henry VIII: An Analysis Based on Most Frequent Words and Most Frequent Rhythmic Patterns",
+      "url": "https://arxiv.org/pdf/1911.05652v1",
+      "sha256": "32e6c8f61b11a412a246742cd11de1f6a60a6e331f53e3ac42f1ac6ef5fd12e0",
+      "pages": 11,
+      "split": "holdout"
+    },
+    "qasper-1708.07252v1.pdf": {
+      "title": "A Study on Neural Network Language Modeling",
+      "url": "https://arxiv.org/pdf/1708.07252v1",
+      "sha256": "555495a543ac14c795558091feba8eaa08a2ab591d56efd446de85b4ec9ebaa0",
+      "pages": 20,
+      "split": "holdout"
+    },
+    "qasper-1808.10006v1.pdf": {
+      "title": "Correcting Length Bias in Neural Machine Translation",
+      "url": "https://arxiv.org/pdf/1808.10006v1",
+      "sha256": "6bf8498a681b035321530c714a681bb42bcc609232d37fb933e5e749c4ef8299",
+      "pages": 11,
+      "split": "holdout"
+    },
+    "qasper-1708.05482v1.pdf": {
+      "title": "A Question Answering Approach to Emotion Cause Extraction",
+      "url": "https://arxiv.org/pdf/1708.05482v1",
+      "sha256": "e95261bf0200ac59a6e26a299500e732525ec79ccffe0f5e07b0f4b50cab0108",
+      "pages": 10,
+      "split": "holdout"
+    }
+  }
+}

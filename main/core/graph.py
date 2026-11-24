@@ -485,12 +485,23 @@ def build_research_rag_graph(
                     }
                     return run_agents["retrieval"](branch_state)
 
-                dag_update, dag_trace = execute_retrieval_dag(
-                    sub_queries,
-                    _run_branch,
-                    top_k=int(inputs.get("top_k") or 10),
-                    round_index=int(state.get("retry_count") or 0),
-                )
+                try:
+                    dag_update, dag_trace = execute_retrieval_dag(
+                        sub_queries,
+                        _run_branch,
+                        top_k=int(inputs.get("top_k") or 10),
+                        round_index=int(state.get("retry_count") or 0),
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        f"[ResearchDAG] Parallel retrieval DAG fell back to single-pass retrieval: {exc}"
+                    )
+                    dag_update, dag_trace = {}, {
+                        "agent": "task_scheduler",
+                        "action": "research_dag_fallback",
+                        "status": "fallback",
+                        "reason": str(exc),
+                    }
                 if dag_update.get("retrieved_docs"):
                     update = {
                         **dag_update,

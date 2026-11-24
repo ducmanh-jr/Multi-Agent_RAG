@@ -59,8 +59,8 @@ INFERENCE_TOKEN = (
 )
 PUBLIC_TUNNEL = os.environ.get("PUBLIC_TUNNEL", "false").strip().lower() in ("true", "1", "yes")
 
-# Cloudflare-aware per-IP sliding window rate limiter (default: 60 req/60s; <=0 disables)
-RATE_LIMIT_REQUESTS = int(os.environ.get("RATE_LIMIT_REQUESTS", "60"))
+# Cloudflare-aware per-IP sliding window rate limiter (default: 240 req/60s; <=0 disables)
+RATE_LIMIT_REQUESTS = int(os.environ.get("RATE_LIMIT_REQUESTS", "240"))
 RATE_LIMIT_WINDOW = float(os.environ.get("RATE_LIMIT_WINDOW", "60.0"))
 _rate_limit_lock = asyncio.Lock()
 _client_request_history: dict[str, list[float]] = defaultdict(list)

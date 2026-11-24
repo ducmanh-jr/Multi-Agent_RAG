@@ -1,6 +1,6 @@
 """
 Mode Registry & Dynamic Agent Factory for Multi-Agent Research RAG.
-Maps the 6 distinct execution modes (CPU Min, CPU Max, Gemini API, GPU FT, GPU Max, Hybrid)
+Maps the 6 distinct execution modes (CPU Min, CPU Max, Gemini API, GPU Finetune, GPU Max, Hybrid)
 to their independent 5-agent implementations.
 """
 
@@ -16,12 +16,10 @@ MODE_MAP = {
     "gemini": "modes.gemini",
     "cpu_min": "modes.cpu_min",
     "cpu_max": "modes.cpu_max",
-    "gpu_ft": "modes.gpu_ft",
     "gpu_finetune": "modes.gpu_finetune",
     "gpu_max": "modes.gpu_max",
     "hybrid": "modes.hybrid",
     # Backward-compatible aliases
-    "kaggle_fn": "modes.gpu_ft",
     "kaggle_max": "modes.gpu_max",
 }
 
@@ -35,11 +33,11 @@ MODE_ALIASES = {
     "kaggle_max": "gpu_max",
     "gpumax": "gpu_max",
     "gpu_max": "gpu_max",
-    "kaggle_fn": "gpu_ft",
-    "fn": "gpu_ft",
-    "gpuft": "gpu_ft",
-    "gpu_ft": "gpu_ft",
-    "ft": "gpu_ft",
+    "kaggle_fn": "gpu_finetune",
+    "fn": "gpu_finetune",
+    "gpuft": "gpu_finetune",
+    "gpu_ft": "gpu_finetune",
+    "ft": "gpu_finetune",
     "gpu_finetune": "gpu_finetune",
     "finetune": "gpu_finetune",
     "gpufinetune": "gpu_finetune",
@@ -79,15 +77,6 @@ def get_agent_class(agent_name: str, mode: str):
             "summarizer": m.GeminiSummarizerAgent,
             "factchecker": m.GeminiFactCheckerAgent,
             "writer": m.GeminiWriterAgent,
-        }
-    elif canon_mode in ("gpu_ft", "kaggle_fn"):
-        import modes.gpu_ft as m
-        mapping = {
-            "retrieval": m.GPUFTRetrievalAgent,
-            "reader": m.GPUFTReaderAgent,
-            "summarizer": m.GPUFTSummarizerAgent,
-            "factchecker": m.GPUFTFactCheckerAgent,
-            "writer": m.GPUFTWriterAgent,
         }
     elif canon_mode == "gpu_finetune":
         import modes.gpu_finetune as m

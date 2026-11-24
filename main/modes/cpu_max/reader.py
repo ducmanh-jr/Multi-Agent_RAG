@@ -72,9 +72,18 @@ class CPUMaxReaderAgent(BaseAgent):
         )
 
         failed_pdfs: list[dict[str, str]] = []
-        if not ordered_units and pdf_paths:
+        covered_stems = {
+            os.path.splitext(os.path.basename(str(u.doc_id or "")))[0].lower()
+            for u in ordered_units
+            if u.doc_id
+        }
+        uncovered_pdfs = [
+            p for p in pdf_paths
+            if os.path.splitext(os.path.basename(str(p)))[0].lower() not in covered_stems
+        ]
+        if uncovered_pdfs:
             failed_pdfs, extra_merged, curr_offset = ingest_pdf_fallbacks(
-                pdf_paths,
+                uncovered_pdfs,
                 ordered_units=ordered_units,
                 units_by_content_hash=by_hash,
                 pages_covered=pages_covered,

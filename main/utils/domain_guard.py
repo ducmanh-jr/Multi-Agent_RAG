@@ -6,6 +6,7 @@ and accent-aware boundary checking to achieve 100% precision on in-domain vs out
 
 from __future__ import annotations
 
+import os
 import re
 import unicodedata
 from typing import Any, Tuple
@@ -52,7 +53,13 @@ VN_ASCII_WORDS = {
     "cung", "chay", "cach", "theo", "bang", "thuc", "hien", "dung", "de", "khong",
     "phan", "biet", "nguoi", "nhom", "truong", "buoc", "dong", "them", "sua",
     "con", "chi", "gia", "ban", "moi", "muc", "kem", "neu", "bai", "co",
-    "mang", "tinh", "loi", "ich", "cao", "san", "sang", "giup", "biet", "ve"
+    "mang", "tinh", "loi", "ich", "cao", "san", "sang", "giup", "biet", "ve",
+    "tuy", "sau", "xem", "ngay", "hay", "chia", "tach", "ghep", "chon", "nhin",
+    "luon", "xoay", "gom", "dinh", "hinh", "kieu", "loai", "mien", "ngon", "ngu",
+    "quy", "tac", "tap", "toan", "tong", "truy", "vung", "xac", "xet", "yeu",
+    "dau", "cuoi", "giua", "tren", "duoi", "ngoai", "ben", "phia", "huong", "vong",
+    "luot", "lan", "cap", "tang", "lop", "nhanh", "cay", "luoi", "diem", "cuc",
+    "bien", "khoang", "nhung", "minh", "hoa", "phan", "tich", "doi", "chieu",
 }
 
 
@@ -73,6 +80,51 @@ def _has_phrase(phrase: str, doc_lower: str, doc_unaccented: str, query_has_acce
         pat2 = r"(?<!\w)" + p_u + r"(?!\w)"
         if re.search(pat2, doc_unaccented):
             return True
+    return False
+
+
+def _has_phrase_in_sources_or_docs(
+    phrase: str,
+    source_units: list[dict[str, Any]],
+    doc_lower: str,
+    doc_unaccented: str,
+    query_has_accents: bool,
+) -> bool:
+    """Matches a phrase or token in retrieved source units, doc metadata/titles, or cached PDF text."""
+    if not phrase:
+        return False
+    # 1. First check the active source_units text (fast path)
+    if _has_phrase(phrase, doc_lower, doc_unaccented, query_has_accents):
+        return True
+
+    # 2. Check document titles, filenames, and IDs (e.g. user quoting paper title or filename)
+    p_norm = re.sub(r"[^a-zA-Z0-9]+", " ", phrase).strip().lower()
+    for u in source_units:
+        for attr in ("title", "filename", "doc_name", "doc_id"):
+            val = str(getattr(u, attr, None) or (u.get(attr, "") if isinstance(u, dict) else "")).strip()
+            if val:
+                val_clean = re.sub(r"^(?:doc_)?[0-9a-f]{8}_", "", val)
+                val_clean = re.sub(r"\.pdf$", "", val_clean, flags=re.I)
+                val_norm = re.sub(r"[^a-zA-Z0-9]+", " ", val_clean).strip().lower()
+                if p_norm and (p_norm == val_norm or p_norm in val_norm or val_norm in p_norm):
+                    return True
+        sp = str(getattr(u, "source_path", None) or (u.get("source_path", "") if isinstance(u, dict) else "")).strip()
+        if sp:
+            stem = re.sub(r"^(?:doc_)?[0-9a-f]{8}_", "", os.path.splitext(os.path.basename(sp))[0]).lower()
+            stem_norm = re.sub(r"[^a-zA-Z0-9]+", " ", stem).strip()
+            if p_norm and (p_norm == stem_norm or p_norm in stem_norm or stem_norm in p_norm):
+                return True
+
+    # 3. Check full document text from cached chunks if available
+    try:
+        from core.tools import _PDF_CHUNK_CACHE
+        for key, chunks in _PDF_CHUNK_CACHE.items():
+            full_txt = " ".join(str(c.get("text", "")) for c in chunks).lower()
+            if _has_phrase(phrase, full_txt, strip_accents(full_txt), query_has_accents):
+                return True
+    except Exception:
+        pass
+
     return False
 
 
@@ -130,12 +182,30 @@ def check_out_of_domain(query: str, source_units: list[dict[str, Any]]) -> Tuple
     doc_l = re.sub(r"\s+", " ", raw_doc_text.lower())
     doc_unaccent = strip_accents(doc_l)
     query_has_accents = bool(re.search(r"[à-ỹÀ-Ỹ]", clean_q))
+    # Distinguish actual Vietnamese documents from English PDFs containing occasional
+    # European accented author names or synthetic Vietnamese status notes by using a ratio threshold.
+    vn_specific_pat = r"[ăâđêôơưạảấầẩẫậắằẳẵặẹẻẽếềểễệỉịọỏốồổỗộớờởỡợụủứừửữựỳỵỷỹ]"
+    query_is_vietnamese = bool(re.search(vn_specific_pat, clean_q.lower()))
+    vn_doc_chars = len(re.findall(vn_specific_pat, doc_l))
+    alpha_doc_chars = max(1, len(re.findall(r"[a-zA-Zà-ỹÀ-Ỹ]", doc_l)))
+    doc_is_vietnamese = (vn_doc_chars >= 15) and ((vn_doc_chars / alpha_doc_chars) >= 0.02)
 
     # 1. Check quoted entities FIRST: if user explicitly probes quoted entities absent from document
     quotes = re.findall(r"[\"\'\`“](.*?)[\"\'\`”]", clean_q)
     substantive_quotes = [q.strip() for q in quotes if len(q.strip()) >= 3]
+    if not doc_is_vietnamese:
+        # On an English document, a Vietnamese translated concept in quotes (e.g. 'tính điển hình', 'tinh thần đồng đội')
+        # cannot appear verbatim in English text; only check non-Vietnamese quoted entities verbatim.
+        substantive_quotes = [
+            q for q in substantive_quotes
+            if not re.search(vn_specific_pat, q.lower())
+            and not set(re.findall(r"\w+", q.lower())).issubset(VN_ASCII_WORDS | GENERIC_COMMON_WORDS)
+        ]
     if substantive_quotes:
-        matched_quotes = [q for q in substantive_quotes if _has_phrase(q, doc_l, doc_unaccent, query_has_accents)]
+        matched_quotes = [
+            q for q in substantive_quotes
+            if _has_phrase_in_sources_or_docs(q, source_units, doc_l, doc_unaccent, query_has_accents)
+        ]
         if not matched_quotes:
             return True, f"quoted_entities_absent: {substantive_quotes}"
     # 2. Summary / Overview / Comparison commands are always in-domain (meta-document queries)
@@ -166,22 +236,34 @@ def check_out_of_domain(query: str, source_units: list[dict[str, Any]]) -> Tuple
         and t.lower() not in doc_id_tokens
     ]
     words_in_q = clean_q.split()
-    first_word = words_in_q[0] if words_in_q else ""
+    sentence_initials = set(
+        re.findall(r"(?:^|[.?!:;\n(\[\"\'\`“]\s*)([A-Za-z0-9_-]{3,})\b", clean_q)
+    )
+    if words_in_q:
+        sentence_initials.add(words_in_q[0].strip("(\"'`“"))
     tech_named = []
     for t in foreign_terms:
-        if t == first_word:
+        if t in sentence_initials:
             # Sentence-initial capitalization: only count as named tech if acronym, camelCase or identifier
             if t.isupper() or '_' in t or '-' in t or any(c.isupper() for c in t[1:]):
                 tech_named.append(t)
         elif t[0].isupper() or any(c.isupper() for c in t[1:]) or '_' in t or '-' in t:
             tech_named.append(t)
     if tech_named:
-        missing_tech = [t for t in tech_named if not _has_phrase(t, doc_l, doc_unaccent, query_has_accents)]
+        missing_tech = [
+            t for t in tech_named
+            if not _has_phrase_in_sources_or_docs(t, source_units, doc_l, doc_unaccent, query_has_accents)
+        ]
         if len(missing_tech) >= max(1, int(len(tech_named) * 0.5)):
             # All named technical identifiers asked in query are absent from document
             return True, f"foreign_term_absent: {missing_tech}"
 
     # 4. Check core subject phrases & compound n-grams
+    # Skip verbatim lexical n-gram gating for cross-lingual queries (Vietnamese query on English PDF),
+    # because Vietnamese phrases cannot appear verbatim in English text; Steps 1 & 3 + NLI handle OOD.
+    if query_is_vietnamese and not doc_is_vietnamese:
+        return False, "cross_lingual_in_domain"
+
     phrases = extract_core_subject_phrases(clean_q)
     matched_phrases = [p for p in phrases if _has_phrase(p, doc_l, doc_unaccent, query_has_accents)]
     substantive_matches = [

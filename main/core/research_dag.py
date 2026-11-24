@@ -27,11 +27,11 @@ class ResearchDAGBudget:
     """Bounded resource limits for one dynamic research DAG execution."""
 
     max_tasks: int = 12
-    max_parallel_subqueries: int = 4
-    max_concurrency: int = 3
-    task_timeout_seconds: float = 35.0
-    run_timeout_seconds: float = 120.0
-    max_task_retries: int = 1
+    max_parallel_subqueries: int = 3
+    max_concurrency: int = 2
+    task_timeout_seconds: float = 75.0
+    run_timeout_seconds: float = 180.0
+    max_task_retries: int = 0
 
 
 @dataclass(frozen=True)

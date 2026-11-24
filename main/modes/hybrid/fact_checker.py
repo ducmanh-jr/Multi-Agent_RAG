@@ -51,9 +51,17 @@ class HybridFactCheckerAgent(BaseAgent):
         selected_verifier = "cpu_max_minicheck"
         out: dict[str, Any] = {}
 
-        for key in chain:
+        for idx, key in enumerate(chain):
             entry = fc_runners.get(key)
             if not entry:
+                continue
+            # Do not stop at cpu_max verbatim-only fallback if no local NLI model is loaded
+            # and a downstream LLM/NLI verifier (gpu_max or gemini) is available in the chain.
+            if (
+                key == "cpu_max"
+                and getattr(self._cpu_max_fc.judge, "classifier", None) is None
+                and any(later in {"gpu_max", "gemini"} for later in chain[idx + 1 :])
+            ):
                 continue
             label, runner, inf_mode = entry
             try:

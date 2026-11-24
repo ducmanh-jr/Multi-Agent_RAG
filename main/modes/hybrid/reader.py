@@ -30,7 +30,7 @@ class HybridReaderAgent(BaseAgent):
         caps = probe_all_capabilities()
 
         # Priority 1: GPU Finetune LayoutLMv3 Base if online
-        if caps.get("gpu_finetune", {}).get("online") or caps.get("gpu_ft", {}).get("online"):
+        if caps.get("gpu_finetune", {}).get("online"):
             try:
                 res = self._gpu_finetune_reader.run_in_mode(state, "gpu_finetune")
                 if res.get("source_units"):

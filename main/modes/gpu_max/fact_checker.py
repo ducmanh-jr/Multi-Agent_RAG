@@ -16,7 +16,10 @@ class GPUMaxFactCheckerAgent(BaseAgent):
         response = llm_client.call_gpu_max_32b(
             prompt=nli_prompt(pairs), enable_thinking=False, temperature=0.1, max_tokens=2048, json_mode=True)
         data = response.get("parsed") if isinstance(response, dict) else None
-        return data.get("results") if isinstance(data, dict) else []
+        if isinstance(data, dict):
+            res = data.get("results")
+            return res if isinstance(res, list) else []
+        return data if isinstance(data, list) else []
 
     def run(self, state: AgentState) -> dict[str, Any]:
         result = review_claims(state, self._review if self.settings.REMOTE_INFERENCE_URL else None)

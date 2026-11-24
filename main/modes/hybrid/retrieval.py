@@ -111,7 +111,7 @@ class HybridRetrievalAgent(BaseAgent):
         from core.provider_router import provider_router
 
         planner_chain = provider_router.resolve_chain("planner", state=state, caps=caps)
-        is_gpu_online = caps.get("gpu_finetune", {}).get("online") or caps.get("gpu_ft", {}).get("online")
+        is_gpu_online = caps.get("gpu_finetune", {}).get("online")
 
         # Execute planner backends strictly in ProviderRouter policy order
         if retry_count == 0:

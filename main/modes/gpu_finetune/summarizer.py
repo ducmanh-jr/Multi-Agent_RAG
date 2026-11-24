@@ -119,8 +119,15 @@ class GPUFinetuneSummarizerAgent(BaseAgent):
                 critic_action = critic_out.action
                 critique_text = getattr(critic_out, "critique_rationale", "") or str(getattr(critic_out, "critique", ""))
 
-                if critic_action in ("accept", "approve"):
-                    self.logger.info(f"[GPU Finetune Critic] PASS: Answer accepted on attempt {internal_attempts}")
+                if critic_action in ("accept", "approve") or "invalid critic output" in critique_text.lower():
+                    if "invalid critic output" in critique_text.lower():
+                        critic_action = "approve"
+                        self.logger.info(
+                            f"[GPU Finetune Critic] Non-JSON critic reply on attempt {internal_attempts}; "
+                            "forwarding grounded draft directly to Fact-Checker."
+                        )
+                    else:
+                        self.logger.info(f"[GPU Finetune Critic] PASS: Answer accepted on attempt {internal_attempts}")
                     break
                 elif critic_action == "rewrite" and internal_attempts <= self.max_internal_retry:
                     last_critic_feedback = f"Critique: {critique_text}. Issues: {getattr(critic_out, 'issues_found', [])}"

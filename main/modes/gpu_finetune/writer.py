@@ -45,7 +45,20 @@ class GPUFinetuneWriterAgent(BaseAgent):
         # Let the model choose the presentation order. Citation numbering and claim text
         # remain under the same renderer used for local reports and older workers.
         engine = "local_report_builder"
-        spans = {s["id"]: s for s in evidence_spans if isinstance(s, dict) and s.get("id")}
+        spans: dict[str, dict[str, Any]] = {}
+        for s in evidence_spans:
+            if not isinstance(s, dict):
+                continue
+            for key_name in ("id", "unit_id", "source_unit_id"):
+                k_val = s.get(key_name)
+                if isinstance(k_val, str) and k_val and k_val not in spans:
+                    spans[k_val] = s
+        for u in (state.get("source_units") or []) + retrieved_docs:
+            if not isinstance(u, dict):
+                continue
+            uid = u.get("id") or u.get("chunk_id") or u.get("unit_id")
+            if isinstance(uid, str) and uid and uid not in spans:
+                spans[uid] = u
         candidates = []
         for index, claim in enumerate(verified_claims):
             if not isinstance(claim, dict):

@@ -139,9 +139,9 @@ def extract_salient_entities(text: str) -> list[str]:
     clean = re.sub(r"\[\d{1,3}\]", " ", text or "")
     candidates: list[str] = []
 
-    # 1. Explicit "Model/Method/System/Group/Variant + Identifier" pairs (e.g. "Model A", "Group B", "Config D")
+    # 1. Explicit "Model/Method/System/Group/Variant + short label Identifier" pairs (e.g. "Model A", "Group B", "Config D", "Mô hình A")
     for m in re.finditer(
-        r"\b(?:Model|Method|System|Group|Config|Variant|Baseline|Dataset|Agent|Worker|Nhóm|Mô hình)\s+[A-Z0-9][A-Za-z0-9._-]*\b",
+        r"\b(?:Model|Method|System|Group|Config|Variant|Baseline|Dataset|Agent|Worker|Nhóm|Mô hình)\s+(?:[A-Z0-9]{1,2}|\d+)\b",
         clean,
     ):
         phrase = " ".join(m.group(0).split())
@@ -195,8 +195,13 @@ def check_entity_value_binding(claim_text: str, evidence_text: str) -> tuple[boo
 
     missing = []
     for ent in entities:
-        pat = r"(?<!\w)" + re.escape(ent.lower()) + r"(?!\w)"
-        if not re.search(pat, ev_lower):
+        ent_l = ent.lower()
+        variants = [ent_l]
+        if ent_l.startswith("mô hình "):
+            variants.append("model " + ent_l[len("mô hình "):])
+        elif ent_l.startswith("nhóm "):
+            variants.append("group " + ent_l[len("nhóm "):])
+        if not any(re.search(r"(?<!\w)" + re.escape(v) + r"(?!\w)", ev_lower) for v in variants):
             missing.append(ent)
 
     # Reject if NONE of the claimed entities appear in the evidence passage, OR if an explicit
@@ -316,6 +321,18 @@ def extract_numbers_with_units(text: str) -> list[tuple[str, str, int]]:
     return results
 
 
+_WORD_TO_DIGIT_MAP: dict[str, str] = {
+    "one": "1", "two": "2", "three": "3", "four": "4", "five": "5",
+    "six": "6", "seven": "7", "eight": "8", "nine": "9", "ten": "10",
+    "một": "1", "hai": "2", "ba": "3", "bốn": "4", "năm": "5",
+    "sáu": "6", "bảy": "7", "tám": "8", "chín": "9", "mười": "10",
+}
+_WORD_NUM_PATTERN = re.compile(
+    r"\b(one|two|three|four|five|six|seven|eight|nine|ten|một|hai|ba|bốn|năm|sáu|bảy|tám|chín|mười)\b",
+    re.IGNORECASE,
+)
+
+
 def _extract_context_matches(full_context_text: str) -> list[tuple[str, str, int]]:
     """Extracts all (normalized_number, canonical_unit, char_index) occurrences in context."""
     ctx = full_context_text or ""
@@ -324,6 +341,10 @@ def _extract_context_matches(full_context_text: str) -> list[tuple[str, str, int
         norm_num = m.group(1).replace(",", ".")
         canon_unit = _canonicalize_unit(m.group(2))
         out.append((norm_num, canon_unit, m.start()))
+    for wm in _WORD_NUM_PATTERN.finditer(ctx):
+        digit = _WORD_TO_DIGIT_MAP.get(wm.group(1).lower())
+        if digit:
+            out.append((digit, "", wm.start()))
     return out
 
 
@@ -453,7 +474,7 @@ def verify_evidence_span_provenance(
             continue
         u_text = str(unit.get("text") or unit.get("content") or "")
         norm_u_text = re.sub(r"\s+", " ", u_text).lower()
-        if norm_quote not in norm_u_text:
+        if not _quote_in_source(norm_quote, norm_u_text):
             continue
 
         prov_list = [p for p in (unit.get("provenance") or []) if isinstance(p, dict)]
@@ -529,7 +550,7 @@ def split_answer_into_atomic_claims(
                         id=claim_id,
                         text=txt,
                         evidence_ids=ev_ids,
-                        unit_id=ev_ids[0] if ev_ids else None,
+                        unit_id=uid or (ev_ids[0] if ev_ids else None),
                     ).to_dict()
                 )
         if normalized_claims:
@@ -634,6 +655,22 @@ def find_best_supporting_unit(
 
 def _normalized_quote(text: str) -> str:
     return " ".join(text.casefold().split()).strip(" .!?")
+
+
+def _quote_in_source(quote: Any, source: str) -> bool:
+    """Match an NLI quote against source text, tolerating PDF line breaks and soft hyphens."""
+    if not isinstance(quote, str) or not quote.strip() or not source:
+        return False
+    if quote in source:
+        return True
+    q_norm = " ".join(quote.split())
+    s_norm = " ".join(source.split())
+    if q_norm in s_norm:
+        return True
+    for repl in ("", "-"):
+        if re.sub(r"-\s+", repl, q_norm) in re.sub(r"-\s+", repl, s_norm):
+            return True
+    return False
 
 
 def _verbatim(text: str, source: str) -> bool:
@@ -812,9 +849,17 @@ def review_claims(state, reviewer: Optional[Callable] = None):
         batch = claims[begin:begin + 4]
         premises = []
         for c in batch:
-            linked = [units_by_id[uid] for eid in c.get("evidence_ids", [])
+            candidate_ids = list(c.get("evidence_ids") or [])
+            if c.get("unit_id") and c["unit_id"] not in candidate_ids:
+                candidate_ids.append(c["unit_id"])
+            linked = [units_by_id[uid] for eid in candidate_ids
                       if (uid := spans.get(eid, eid)) in units_by_id]
-            premises.append(find_best_supporting_unit(c["text"], linked or units))
+            best_premise = find_best_supporting_unit(c["text"], linked or units)
+            if best_premise is None and linked:
+                best_premise = linked[0]
+            elif best_premise is None and units:
+                best_premise = find_best_supporting_unit(c["text"], units, min_overlap=0.05)
+            premises.append(best_premise)
         pairs = [{"claim_id": c["id"], "claim": c["text"], "evidence": str(u.get("text") or u.get("content") or "")[:1800]}
                  for c, u in zip(batch, premises) if u]
         rows = None
@@ -839,7 +884,7 @@ def review_claims(state, reviewer: Optional[Callable] = None):
                 quote = row.get("quote")
                 source = next((p["evidence"] for p in pairs if p["claim_id"] == claim["id"]), "")
                 if (not isinstance(status, str) or status not in {"SUPPORT", "CONTRADICT"}
-                        or not isinstance(quote, str) or not quote.strip() or quote not in source):
+                        or not _quote_in_source(quote, source)):
                     status = "NOT_ENOUGH_INFO"
                 if status == "SUPPORT":
                     if not all(check_numerical_and_date_consistency(claim["text"], quote)[:2]):

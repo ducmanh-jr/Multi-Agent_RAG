@@ -56,6 +56,24 @@ def pack_context_by_token_budget(
     return "".join(context_parts), included_units
 
 
+def _quote_matches_unit_text(normalized_quote: str, unit_text: str) -> bool:
+    """Match a quote against unit text, accounting for PDF soft line-break hyphenation."""
+    if not normalized_quote or not unit_text:
+        return False
+    u_norm = " ".join(unit_text.split())
+    prefix = r"(?<!\w)" if normalized_quote[0].isalnum() else ""
+    suffix = r"(?!\w)" if normalized_quote[-1].isalnum() else ""
+    if re.search(prefix + re.escape(normalized_quote) + suffix, u_norm):
+        return True
+    # Handle PDF soft line-break hyphens (e.g. 'Syntac- tics' -> 'Syntactics', 'bag-of- words' -> 'bag-of-words')
+    for repl in ("", "-"):
+        q_de = re.sub(r"-\s+", repl, normalized_quote)
+        u_de = re.sub(r"-\s+", repl, u_norm)
+        if re.search(prefix + re.escape(q_de) + suffix, u_de):
+            return True
+    return False
+
+
 def bind_evidence_spans(raw_spans: list, units: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Bind verbatim quotes to Reader metadata, including legacy quotes without IDs."""
     if not isinstance(raw_spans, list):
@@ -71,15 +89,12 @@ def bind_evidence_spans(raw_spans: list, units: list[dict[str, Any]]) -> list[di
             continue
         unit_id = item.get("source_unit_id") or item.get("unit_id")
         normalized = " ".join(quote.split())
-        prefix = r"(?<!\w)" if normalized[0].isalnum() else ""
-        suffix = r"(?!\w)" if normalized[-1].isalnum() else ""
-        pattern = re.compile(prefix + re.escape(normalized) + suffix)
         matches = [
             unit for unit in units
             if unit.get("id") and (not unit_id or unit_id == unit["id"])
             and (not item.get("doc_id") or item["doc_id"] == unit.get("doc_id"))
             and (item.get("page_no") is None or str(item["page_no"]) == str(unit.get("page_no")))
-            and pattern.search(" ".join((unit.get("text") or "").split()))
+            and _quote_matches_unit_text(normalized, unit.get("text") or "")
         ]
         if len(matches) != 1:
             continue
