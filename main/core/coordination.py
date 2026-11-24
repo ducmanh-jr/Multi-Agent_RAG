@@ -1,16 +1,67 @@
-"""Bounded handoffs requested by the Summarizer's critic and the Fact Checker."""
+"""
+Bounded handoffs and Supervised Agent Autonomy (AgentDecision contract - M3).
+Agents propose structured next actions via `AgentDecision`; the Research Supervisor
+validates policy permissions, reflection/retry budget, DAG task budget, and anti-loop
+signatures before dispatching any handoff.
+"""
 
-from dataclasses import dataclass
+from __future__ import annotations
+
+from dataclasses import dataclass, field
 from hashlib import sha256
 import json
-from typing import Any, Iterable, Literal
+from typing import Any, Iterable, Literal, Mapping
 
 from core.config import get_run_settings
 from core.state import AgentState
 
 
-Sender = Literal["summarizer", "fact_checker"]
+Sender = Literal["summarizer", "fact_checker", "reader", "retrieval"]
 Recipient = Literal["retrieval", "reader", "summarizer", "scout"]
+DecisionAction = Literal[
+    "request_more_evidence",
+    "request_unread_chunks",
+    "revise_draft",
+    "revise_rejected_claims",
+    "discover_additional_literature",
+    "proceed",
+]
+
+# Policy matrix: which target agents each source agent is allowed to propose
+ALLOWED_HANDOFF_TARGETS: dict[str, set[str]] = {
+    "summarizer": {"retrieval", "reader", "summarizer"},
+    "fact_checker": {"retrieval", "reader", "summarizer", "scout"},
+    "reader": {"retrieval", "reader", "scout"},
+    "retrieval": {"scout"},
+}
+
+ACTION_TO_HANDOFF_REASON: dict[str, str] = {
+    "request_more_evidence": "missing_evidence",
+    "request_unread_chunks": "unread_chunks",
+    "revise_draft": "revise_draft",
+    "revise_rejected_claims": "revise_rejected_claims",
+    "discover_additional_literature": "discover_additional_literature",
+}
+
+
+def _compute_handoff_signature(
+    sender: str,
+    recipient: str,
+    reason: str,
+    focus: Iterable[str],
+    source_ids: Iterable[str] = (),
+) -> str:
+    identity = json.dumps(
+        [
+            sender,
+            recipient,
+            reason,
+            sorted(str(item).casefold() for item in focus),
+            sorted(str(sid) for sid in source_ids),
+        ],
+        ensure_ascii=False,
+    )
+    return sha256(identity.encode("utf-8")).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -23,10 +74,9 @@ class Handoff:
 
     def as_trace(self) -> dict[str, Any]:
         # Ordering of independent gaps or chunks is immaterial when detecting a repeated request.
-        identity = json.dumps([
-            self.sender, self.recipient, self.reason,
-            sorted(item.casefold() for item in self.focus), sorted(self.source_ids),
-        ], ensure_ascii=False)
+        sig = _compute_handoff_signature(
+            self.sender, self.recipient, self.reason, self.focus, self.source_ids
+        )
         return {
             "action": "agent_handoff",
             "node": self.sender,
@@ -35,7 +85,112 @@ class Handoff:
             "reason": self.reason,
             "focus": list(self.focus),
             "source_ids": list(self.source_ids),
-            "signature": sha256(identity.encode("utf-8")).hexdigest(),
+            "signature": sig,
+        }
+
+
+class AgentDecision:
+    """
+    Structured proposal emitted by a specialist agent under Supervised Agent Autonomy.
+    Supports both canonical M3 fields (`decision_id`, `source_agent`, `action`, `reason`,
+    `evidence_refs`, `parameters`, `signature`, `round_index`) and directional aliases
+    (`status`, `next_action`, `target_agent`, `evidence_ids`, `suggested_queries`).
+    """
+
+    def __init__(
+        self,
+        *,
+        source_agent: Sender = "fact_checker",
+        action: DecisionAction | str | None = None,
+        next_action: DecisionAction | str | None = None,
+        target_agent: Recipient | str | None = None,
+        reason: str = "",
+        evidence_refs: Iterable[str] | None = None,
+        evidence_ids: Iterable[str] | None = None,
+        parameters: Mapping[str, Any] | None = None,
+        suggested_queries: Iterable[str] | None = None,
+        focus: Iterable[str] | None = None,
+        round_index: int = 0,
+        status: str = "completed",
+        decision_id: str | None = None,
+        signature: str | None = None,
+    ):
+        self.source_agent: Sender = source_agent
+        self.status = str(status or "completed")
+        resolved_action = str(action or next_action or "proceed").strip()
+        self.action = resolved_action
+        self.next_action = resolved_action
+        self.reason = str(reason or "").strip()
+        self.round_index = max(0, int(round_index or 0))
+
+        refs = list(evidence_refs if evidence_refs is not None else (evidence_ids or []))
+        self.evidence_refs: tuple[str, ...] = tuple(str(r) for r in refs if str(r).strip())
+        self.evidence_ids: list[str] = list(self.evidence_refs)
+
+        params = dict(parameters or {})
+        if suggested_queries is not None:
+            params["suggested_queries"] = [str(q).strip() for q in suggested_queries if str(q).strip()]
+        if focus is not None:
+            params["focus"] = [str(f).strip() for f in focus if str(f).strip()]
+        if target_agent is not None:
+            params["target_agent"] = str(target_agent).strip()
+
+        resolved_target = str(target_agent or params.get("target_agent") or "").strip() or None
+        if resolved_target is None and resolved_action != "proceed":
+            if resolved_action == "request_unread_chunks":
+                resolved_target = "reader"
+            elif resolved_action in {"revise_draft", "revise_rejected_claims"}:
+                resolved_target = "summarizer"
+            elif resolved_action == "discover_additional_literature":
+                resolved_target = "scout"
+            else:
+                resolved_target = "retrieval"
+        self.target_agent: str | None = resolved_target
+        if resolved_target:
+            params["target_agent"] = resolved_target
+
+        focus_items = params.get("focus") or params.get("suggested_queries") or ([self.reason] if self.reason else [])
+        self.focus: tuple[str, ...] = _focus(focus_items, self.reason or "follow_up")
+        params["focus"] = list(self.focus)
+        self.parameters: dict[str, Any] = params
+
+        handoff_reason = ACTION_TO_HANDOFF_REASON.get(resolved_action, self.reason or resolved_action)
+        source_ids = self.evidence_refs if resolved_target == "reader" else ()
+        self.handoff_reason = handoff_reason
+        self.signature = signature or _compute_handoff_signature(
+            self.source_agent,
+            self.target_agent or "none",
+            handoff_reason,
+            self.focus,
+            source_ids,
+        )
+        self.decision_id = decision_id or f"dec_{self.signature[:12]}"
+
+    def to_handoff(self) -> Handoff | None:
+        if self.action == "proceed" or not self.target_agent:
+            return None
+        source_ids = self.evidence_refs if self.target_agent == "reader" else ()
+        return Handoff(
+            sender=self.source_agent,
+            recipient=self.target_agent,  # type: ignore[arg-type]
+            reason=self.handoff_reason,
+            focus=self.focus,
+            source_ids=source_ids,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "decision_id": self.decision_id,
+            "source_agent": self.source_agent,
+            "status": self.status,
+            "action": self.action,
+            "next_action": self.next_action,
+            "target_agent": self.target_agent,
+            "reason": self.reason,
+            "evidence_refs": list(self.evidence_refs),
+            "parameters": dict(self.parameters),
+            "signature": self.signature,
+            "round_index": self.round_index,
         }
 
 
@@ -84,10 +239,10 @@ def _context_request(sender: Sender, state: AgentState, focus: tuple[str, ...]) 
     if unread:
         return Handoff(sender, "reader", "unread_chunks", focus, unread)
     if state.get("no_new_evidence"):
-        # When local documents are exhausted and auto_scout is enabled, Fact Checker can ask Scout
-        # to discover additional literature on the specific evidence gap (strictly bounded).
-        if sender == "fact_checker" and state.get("allow_scout_handoff"):
-            return Handoff("fact_checker", "scout", "discover_additional_literature", focus)
+        # When local documents are exhausted and auto_scout is enabled, Fact Checker (or Reader/Retrieval)
+        # can propose asking Scout to discover additional literature on the specific evidence gap.
+        if sender in {"fact_checker", "reader", "retrieval"} and state.get("allow_scout_handoff"):
+            return Handoff(sender, "scout", "discover_additional_literature", focus)
         return None
     return Handoff(sender, "retrieval", "missing_evidence", focus)
 
@@ -134,15 +289,128 @@ def _checker_request(state: AgentState) -> Handoff | None:
     return _context_request("fact_checker", state, _focus(gaps, state.get("query", "")))
 
 
-def decide_handoff(sender: Sender, state: AgentState) -> Handoff | None:
-    if (state.get("retry_count") or 0) >= reflection_limit(state):
-        return None
-    request = _summarizer_request(state) if sender == "summarizer" else _checker_request(state)
-    if request is None:
-        return None
-    signature = request.as_trace()["signature"]
-    repeated = any(
-        isinstance(event, dict) and event.get("action") == "agent_handoff" and event.get("signature") == signature
-        for event in state.get("reasoning_trace") or []
+def _coerce_explicit_decision(sender: Sender, raw: Any, state: AgentState) -> AgentDecision | None:
+    if isinstance(raw, AgentDecision):
+        return raw
+    if isinstance(raw, Mapping):
+        return AgentDecision(
+            source_agent=sender,
+            action=raw.get("action") or raw.get("next_action") or "proceed",
+            target_agent=raw.get("target_agent") or raw.get("recipient"),
+            reason=str(raw.get("reason") or ""),
+            evidence_refs=raw.get("evidence_refs") or raw.get("evidence_ids") or (),
+            parameters=raw.get("parameters") if isinstance(raw.get("parameters"), Mapping) else {},
+            suggested_queries=raw.get("suggested_queries"),
+            focus=raw.get("focus"),
+            round_index=int(raw.get("round_index", state.get("retry_count") or 0)),
+            status=str(raw.get("status") or "completed"),
+            decision_id=raw.get("decision_id"),
+            signature=raw.get("signature"),
+        )
+    return None
+
+
+def _handoff_to_decision(handoff: Handoff, state: AgentState) -> AgentDecision:
+    reason_to_action: dict[str, DecisionAction] = {
+        "missing_evidence": "request_more_evidence",
+        "unread_chunks": "request_unread_chunks",
+        "revise_draft": "revise_draft",
+        "revise_rejected_claims": "revise_rejected_claims",
+        "discover_additional_literature": "discover_additional_literature",
+    }
+    action = reason_to_action.get(handoff.reason, "request_more_evidence")
+    return AgentDecision(
+        source_agent=handoff.sender,
+        action=action,
+        target_agent=handoff.recipient,
+        reason=handoff.reason,
+        evidence_refs=handoff.source_ids,
+        focus=handoff.focus,
+        round_index=int(state.get("retry_count") or 0),
+        signature=handoff.as_trace()["signature"],
     )
-    return None if repeated else request
+
+
+def propose_agent_decision(sender: Sender, state: AgentState) -> AgentDecision | None:
+    """
+    Constructs a structured `AgentDecision` proposal from the agent's output state.
+    Supports both explicit `state["agent_decision"]` proposals (from Reader, Retrieval,
+    Summarizer, or Fact Checker) and built-in critic/verifier handoff heuristics.
+    """
+    explicit = _coerce_explicit_decision(sender, state.get("agent_decision"), state)
+    if explicit is not None:
+        return None if explicit.action == "proceed" else explicit
+
+    if sender == "summarizer":
+        handoff = _summarizer_request(state)
+        return _handoff_to_decision(handoff, state) if handoff else None
+    if sender == "fact_checker":
+        handoff = _checker_request(state)
+        return _handoff_to_decision(handoff, state) if handoff else None
+    return None
+
+
+def supervisor_evaluate_decision(
+    decision: AgentDecision | None,
+    state: AgentState,
+) -> tuple[Handoff | None, dict[str, Any] | None]:
+    """
+    Research Supervisor gatekeeper for Supervised Agent Autonomy:
+    Validates policy permissions, reflection budget, DAG task budget, and anti-loop signatures
+    before approving an `AgentDecision` into an executable `Handoff`.
+    """
+    if decision is None or decision.action == "proceed":
+        return None, None
+
+    current_round = int(state.get("retry_count") or 0)
+    limit = reflection_limit(state)
+    allowed_targets = ALLOWED_HANDOFF_TARGETS.get(decision.source_agent, set())
+    target = decision.target_agent or ""
+
+    rejection_reason: str | None = None
+    if current_round >= limit:
+        rejection_reason = "reflection_budget_exhausted"
+    elif target not in allowed_targets:
+        rejection_reason = f"policy_target_not_permitted:{decision.source_agent}->{target}"
+    elif target == "scout" and not state.get("allow_scout_handoff"):
+        rejection_reason = "scout_handoff_disabled"
+    elif target == "retrieval" and state.get("no_new_evidence") and not state.get("allow_scout_handoff"):
+        rejection_reason = "no_new_evidence_in_corpus"
+    else:
+        schema = state.get("document_schema")
+        dag_info = schema.get("research_dag") if isinstance(schema, Mapping) else None
+        if isinstance(dag_info, Mapping) and dag_info.get("budget_exhausted") and target in {"retrieval", "scout"}:
+            rejection_reason = "dag_task_budget_exhausted"
+
+    if rejection_reason is None:
+        repeated = any(
+            isinstance(event, dict)
+            and event.get("action") == "agent_handoff"
+            and event.get("signature") == decision.signature
+            for event in state.get("reasoning_trace") or []
+        )
+        if repeated:
+            rejection_reason = "duplicate_handoff_signature"
+
+    audit_event = {
+        "action": "supervisor_decision_evaluated",
+        "node": "SupervisorGatekeeper",
+        "decision_id": decision.decision_id,
+        "source_agent": decision.source_agent,
+        "proposed_action": decision.action,
+        "target_agent": decision.target_agent,
+        "round_index": current_round,
+        "approved": rejection_reason is None,
+        "rejection_reason": rejection_reason,
+        "signature": decision.signature,
+    }
+    if rejection_reason is not None:
+        return None, audit_event
+    return decision.to_handoff(), audit_event
+
+
+def decide_handoff(sender: Sender, state: AgentState) -> Handoff | None:
+    """Evaluates whether `sender`'s proposal is approved by the Supervisor for handoff."""
+    decision = propose_agent_decision(sender, state)
+    approved_handoff, _ = supervisor_evaluate_decision(decision, state)
+    return approved_handoff

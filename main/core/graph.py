@@ -39,6 +39,7 @@ def orchestrator_router_node(
     state: AgentState,
     *,
     planner_llm_fn: Optional[Callable[[str], Any]] = None,
+    execution_mode: Optional[str] = None,
 ) -> dict[str, Any]:
     """
     Agentic Supervisor Router Node (L3-L4):
@@ -72,7 +73,8 @@ def orchestrator_router_node(
     else:
         run_settings = get_run_settings()
         active_mode = (
-            run_settings.get_inference_mode("retrieval")
+            execution_mode
+            or run_settings.get_inference_mode("retrieval")
             or run_settings.EXECUTION_MODE
             or "cpu_min"
         )
@@ -253,6 +255,11 @@ def route_after_scout(state: AgentState) -> str:
     return "retrieval_node"
 
 
+def route_after_reader(state: AgentState) -> str:
+    request = _handoff_for(state, "reader", "sender")
+    return f"{request['recipient']}_node" if request else "summarizer_node"
+
+
 def route_after_summarizer(state: AgentState) -> str:
     request = _handoff_for(state, "summarizer", "sender")
     return f"{request['recipient']}_node" if request else "fact_checker_node"
@@ -292,7 +299,7 @@ def resolve_next_node_after_checkpoint(
             schedule = comparison_schedule(state.get("reasoning_trace") or [])
             if schedule is not None:
                 return "comparison_review_node" if schedule["status"] == "COMPLETED" else END
-        return "summarizer_node"
+        return route_after_reader(state)
     if node == "summarizer_node":
         return route_after_summarizer(state)
     if node == "fact_checker_node":
@@ -485,12 +492,16 @@ def build_research_rag_graph(
                     }
                     return run_agents["retrieval"](branch_state)
 
+                current_round = int(state.get("retry_count") or 0)
+                prev_seen = inputs.get("seen_chunks") or state.get("seen_chunks") or []
                 try:
                     dag_update, dag_trace = execute_retrieval_dag(
                         sub_queries,
                         _run_branch,
                         top_k=int(inputs.get("top_k") or 10),
-                        round_index=int(state.get("retry_count") or 0),
+                        round_index=current_round,
+                        dag_manifest=dag_manifest,
+                        previous_seen_chunks=prev_seen,
                     )
                 except Exception as exc:
                     logger.warning(
@@ -502,13 +513,17 @@ def build_research_rag_graph(
                         "status": "fallback",
                         "reason": str(exc),
                     }
-                if dag_update.get("retrieved_docs"):
+                if dag_trace.get("status") != "fallback" and dag_update:
                     update = {
                         **dag_update,
                         "reasoning_trace": [dag_trace],
                     }
                 else:
-                    update = run_agents[role](inputs)
+                    fallback_update = run_agents[role](inputs)
+                    fallback_trace = list(fallback_update.get("reasoning_trace") or [])
+                    if dag_trace:
+                        fallback_trace.insert(0, dag_trace)
+                    update = {**fallback_update, "reasoning_trace": fallback_trace}
             else:
                 update = run_agents[role](inputs)
         else:
@@ -520,6 +535,7 @@ def build_research_rag_graph(
                 dag_manifest,
                 dag_trace,
                 retrieved_count=len(update.get("retrieved_docs") or []),
+                round_index=int(state.get("retry_count") or 0),
             )
             update = {**update, "document_schema": schema}
 
@@ -550,6 +566,11 @@ def build_research_rag_graph(
                 "retry_count": request["retry_count"],
             })
 
+        if role == "reader":
+            schema = dict(update.get("document_schema") or state.get("document_schema") or {})
+            schema["evidence_store"] = EvidenceStore.from_state({**state, **update}).to_dict()
+            update = {**update, "document_schema": schema}
+
         if role == "summarizer" and state.get("retry_count", 0) > 0:
             # Judgements and citations from the previous draft cannot certify its replacement.
             update = {
@@ -563,17 +584,23 @@ def build_research_rag_graph(
 
         if role == "summarizer":
             schema = dict(update.get("document_schema") or state.get("document_schema") or {})
+            schema["evidence_store"] = EvidenceStore.from_state({**state, **update}).to_dict()
             if isinstance(schema.get("research_dag"), dict):
                 has_answer = bool((update.get("answer") or state.get("answer") or "").strip())
                 schema["research_dag"] = mark_dag_stage_status(
                     schema.get("research_dag"),
                     "synthesize",
                     TaskStatus.COMPLETED if has_answer else TaskStatus.FAILED,
+                    round_index=int(state.get("retry_count") or 0),
                     metadata_update={"claims_count": len(update.get("claims") or [])},
                 )
-                update = {**update, "document_schema": schema}
+            update = {**update, "document_schema": schema}
 
-        if not visual and role in {"summarizer", "fact_checker"}:
+        should_evaluate_decision = not visual and (
+            role in {"summarizer", "fact_checker"}
+            or (role in {"reader", "retrieval"} and update.get("agent_decision") is not None)
+        )
+        if should_evaluate_decision:
             reviewed = {
                 **state,
                 **update,
@@ -586,10 +613,22 @@ def build_research_rag_graph(
                 store = EvidenceStore.from_state(reviewed)
                 schema["evidence_store"] = store.to_dict()
                 if isinstance(schema.get("research_dag"), dict):
+                    if fact_check_accepted(reviewed):
+                        verify_outcome = "PASSED"
+                    else:
+                        label = str(reviewed.get("fact_check_label") or "").lower()
+                        rejected = reviewed.get("rejected_claims") or []
+                        has_contradiction = label in {"contradict", "contradicted", "refuted"} or any(
+                            str(item.get("status", "")).lower() in {"contradict", "contradicted", "refuted"}
+                            for item in rejected if isinstance(item, dict)
+                        )
+                        verify_outcome = "CONTRADICTED" if has_contradiction else "NEEDS_MORE_EVIDENCE"
                     schema["research_dag"] = mark_dag_stage_status(
                         schema.get("research_dag"),
                         "verify",
                         TaskStatus.COMPLETED,
+                        round_index=int(state.get("retry_count") or 0),
+                        review_outcome=verify_outcome,
                         metadata_update={
                             "fact_check_label": reviewed.get("fact_check_label"),
                             "verified_count": len(reviewed.get("verified_claims") or []),
@@ -623,6 +662,7 @@ def build_research_rag_graph(
                 schema.get("research_dag"),
                 "write",
                 TaskStatus.COMPLETED,
+                round_index=int(state.get("retry_count") or 0),
                 metadata_update={"confidence": result.get("confidence")},
             )
             result = {**result, "document_schema": schema}
@@ -668,13 +708,17 @@ def build_research_rag_graph(
     def _after_reader(state: AgentState) -> str:
         schedule = comparison_schedule(state.get("reasoning_trace") or [])
         if schedule is None:
-            return "summarizer_node"
+            return route_after_reader(state)
         return "comparison_review_node" if schedule["status"] == "COMPLETED" else END
 
     workflow = StateGraph(AgentState)
 
     # Bind the snapshot at the node boundary, including when LangGraph runs in an executor.
-    router_fn = partial(orchestrator_router_node, planner_llm_fn=planner_llm_fn) if planner_llm_fn else orchestrator_router_node
+    router_fn = (
+        partial(orchestrator_router_node, planner_llm_fn=planner_llm_fn, execution_mode=mode)
+        if (planner_llm_fn or mode)
+        else orchestrator_router_node
+    )
     workflow.add_node("orchestrator_router", use_run_config(run_config)(router_fn))
     workflow.add_node("scout_node", use_run_config(run_config)(agent_inference_mode(scout_mode)(_run_scout)))
     for role in ("retrieval", "reader", "summarizer", "fact_checker"):
@@ -708,14 +752,22 @@ def build_research_rag_graph(
     if comparison_enabled:
         workflow.add_node("comparison_review_node", use_run_config(run_config)(_comparison_review))
         workflow.add_conditional_edges("retrieval_node", _after_retrieval, ["reader_node", "comparison_review_node", END])
-        workflow.add_conditional_edges("reader_node", _after_reader, ["summarizer_node", "comparison_review_node", END])
+        workflow.add_conditional_edges(
+            "reader_node",
+            _after_reader,
+            ["summarizer_node", "retrieval_node", "reader_node", "scout_node", "comparison_review_node", END],
+        )
         workflow.add_conditional_edges(
             "comparison_review_node", _after_comparison_review,
             ["retrieval_node", "reader_node", "comparison_review_node", "scout_node", END],
         )
     else:
         workflow.add_edge("retrieval_node", "reader_node")
-        workflow.add_edge("reader_node", "summarizer_node")
+        workflow.add_conditional_edges(
+            "reader_node",
+            route_after_reader,
+            ["summarizer_node", "retrieval_node", "reader_node", "scout_node"],
+        )
 
     correction_targets = ["retrieval_node", "reader_node", "summarizer_node"]
     workflow.add_conditional_edges(
