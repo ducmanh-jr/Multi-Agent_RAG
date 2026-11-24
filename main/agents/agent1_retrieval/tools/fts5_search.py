@@ -8,126 +8,165 @@ from __future__ import annotations
 
 import re
 import sqlite3
+import threading
 from typing import Any
 from utils.logger import logger
 
 
 class SQLiteFTS5Searcher:
-    """FTS5-powered Okapi BM25 search engine with disk or in-memory backing."""
+    """Thread-safe FTS5-powered Okapi BM25 search engine with disk or in-memory backing."""
 
     def __init__(self, db_path: str = ":memory:"):
         self.db_path = db_path
-        self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        self._connection_lock = threading.RLock()
+        self._closed = False
+        self.conn = sqlite3.connect(self.db_path, timeout=30.0, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
+        if self.db_path != ":memory:":
+            try:
+                with self._connection_lock:
+                    self.conn.execute("PRAGMA journal_mode=WAL;")
+                    self.conn.execute("PRAGMA busy_timeout=30000;")
+            except Exception:
+                pass
         self._init_fts()
         self._total_docs = 0
 
     def _init_fts(self):
-        cursor = self.conn.cursor()
-        try:
-            cursor.execute("""
-                CREATE VIRTUAL TABLE IF NOT EXISTS corpus_fts USING fts5(
-                    id UNINDEXED,
-                    doc_id UNINDEXED,
-                    title,
-                    text,
-                    page_no UNINDEXED,
-                    tokenize='unicode61 remove_diacritics 2'
-                );
-            """)
-            self.conn.commit()
-        finally:
-            cursor.close()
+        with self._connection_lock:
+            cursor = self.conn.cursor()
+            try:
+                cursor.execute("""
+                    CREATE VIRTUAL TABLE IF NOT EXISTS corpus_fts USING fts5(
+                        id UNINDEXED,
+                        doc_id UNINDEXED,
+                        title,
+                        text,
+                        page_no UNINDEXED,
+                        tokenize='unicode61 remove_diacritics 2'
+                    );
+                """)
+                self.conn.commit()
+            finally:
+                cursor.close()
 
     def fit(self, docs: list[dict[str, Any]], overwrite: bool = True):
-        """Indexes an array of document dictionaries."""
-        cursor = self.conn.cursor()
-        try:
-            if overwrite:
-                cursor.execute("DELETE FROM corpus_fts;")
+        """Indexes an array of document dictionaries under instance connection lock."""
+        with self._connection_lock:
+            if self._closed:
+                return
+            cursor = self.conn.cursor()
+            try:
+                if overwrite:
+                    cursor.execute("DELETE FROM corpus_fts;")
 
-            records = []
-            for i, doc in enumerate(docs):
-                d_id = doc.get("id") or f"doc_{i}"
-                doc_id = doc.get("doc_id", d_id)
-                title = doc.get("title", "")
-                text = doc.get("text", "")
-                page_no = str(doc.get("page_no", 1))
-                records.append((d_id, doc_id, title, text, page_no))
+                records = []
+                for i, doc in enumerate(docs):
+                    d_id = doc.get("id") or f"doc_{i}"
+                    doc_id = doc.get("doc_id", d_id)
+                    title = doc.get("title", "")
+                    text = doc.get("text", "")
+                    page_no = str(doc.get("page_no", 1))
+                    records.append((d_id, doc_id, title, text, page_no))
 
-            cursor.executemany("""
-                INSERT INTO corpus_fts(id, doc_id, title, text, page_no)
-                VALUES (?, ?, ?, ?, ?);
-            """, records)
+                cursor.executemany("""
+                    INSERT INTO corpus_fts(id, doc_id, title, text, page_no)
+                    VALUES (?, ?, ?, ?, ?);
+                """, records)
 
-            self.conn.commit()
-            if overwrite:
-                self._total_docs = len(docs)
-            else:
-                self._total_docs += len(docs)
-            logger.info(f"SQLite FTS5: Indexed {len(docs)} documents into C-Engine (total={self._total_docs}).")
-        finally:
-            cursor.close()
+                self.conn.commit()
+                if overwrite:
+                    self._total_docs = len(docs)
+                else:
+                    self._total_docs += len(docs)
+                logger.info(f"SQLite FTS5: Indexed {len(docs)} documents into C-Engine (total={self._total_docs}).")
+            finally:
+                cursor.close()
 
     def add_documents(self, docs: list[dict[str, Any]]):
         """Incrementally adds documents without clearing existing corpus."""
-        return self.fit(docs, overwrite=False)
+        with self._connection_lock:
+            return self.fit(docs, overwrite=False)
 
     def search(self, query: str, top_k: int = 5) -> list[dict[str, Any]]:
-        """Executes BM25 search using SQLite's native C function."""
-        if self._total_docs == 0:
-            return []
+        """Executes BM25 search using SQLite's native C function under connection lock."""
+        with self._connection_lock:
+            if self._closed or self._total_docs == 0:
+                return []
 
-        # Sanitize query tokens for FTS5, filtering non-discriminative stop words
-        raw_tokens = re.findall(r"\w+", query)
-        if not raw_tokens:
-            return []
+            # Sanitize query tokens for FTS5, filtering non-discriminative stop words
+            raw_tokens = re.findall(r"\w+", query)
+            if not raw_tokens:
+                return []
 
-        stop_words = {
-            "là", "gì", "và", "của", "cho", "với", "như", "thế", "nào", "được", "khi",
-            "ở", "đâu", "các", "những", "này", "đó", "ra", "vào", "từ", "về", "trong",
-            "để", "có", "hãy", "biết", "ai", "mấy", "bao_nhiêu"
-        }
-        content_tokens = [t for t in raw_tokens if len(t) > 1 and t.lower() not in stop_words]
-        tokens = content_tokens if content_tokens else raw_tokens
+            stop_words = {
+                "là", "gì", "và", "của", "cho", "với", "như", "thế", "nào", "được", "khi",
+                "ở", "đâu", "các", "những", "này", "đó", "ra", "vào", "từ", "về", "trong",
+                "để", "có", "hãy", "biết", "ai", "mấy", "bao_nhiêu"
+            }
+            single_char_stopwords = {"a", "i", "o", "u", "e", "ở", "à", "ừ", "ý", "ô"}
+            is_math_query = bool(
+                re.search(
+                    r"(?:công\s+thức|phương\s+trình|biểu\s+thức|hàm\s+mất\s+mát|equation|formula|[=≈≤≥≠∑∏∫√^]|[\u0391-\u03c9])",
+                    query,
+                    re.IGNORECASE,
+                )
+            )
+            content_tokens = [
+                t
+                for t in raw_tokens
+                if t.lower() not in stop_words
+                and (
+                    len(t) > 1
+                    or (
+                        t.lower() not in single_char_stopwords
+                        and (t.isupper() or "\u0391" <= t <= "\u03c9" or is_math_query)
+                    )
+                )
+            ]
+            tokens = content_tokens if content_tokens else raw_tokens
 
-        # Formulate query: token1 OR token2 OR token3
-        fts_query = " OR ".join([f'"{t}"' for t in tokens])
+            # Formulate query: token1 OR token2 OR token3
+            fts_query = " OR ".join([f'"{t}"' for t in tokens])
 
-        cursor = self.conn.cursor()
-        try:
-            # bm25() returns negative values where lower (more negative) is better rank
-            cursor.execute("""
-                SELECT id, doc_id, title, text, page_no, bm25(corpus_fts) as rank_score
-                FROM corpus_fts
-                WHERE corpus_fts MATCH ?
-                ORDER BY rank_score ASC
-                LIMIT ?;
-            """, (fts_query, top_k))
+            cursor = self.conn.cursor()
+            try:
+                # bm25() returns negative values where lower (more negative) is better rank
+                cursor.execute("""
+                    SELECT id, doc_id, title, text, page_no, bm25(corpus_fts) as rank_score
+                    FROM corpus_fts
+                    WHERE corpus_fts MATCH ?
+                    ORDER BY rank_score ASC
+                    LIMIT ?;
+                """, (fts_query, top_k))
 
-            rows = cursor.fetchall()
-            results = []
-            for row in rows:
-                doc = {
-                    "id": row["id"],
-                    "doc_id": row["doc_id"],
-                    "title": row["title"],
-                    "text": row["text"],
-                    "page_no": int(row["page_no"] or 1),
-                    # Normalize bm25 negative rank into positive score
-                    "bm25_score": round(abs(float(row["rank_score"])), 4),
-                }
-                results.append(doc)
-            return results
-        except sqlite3.OperationalError as e:
-            logger.warning(f"FTS5 match syntax error ({e}), falling back to prefix token search.")
-            return []
-        finally:
-            cursor.close()
+                rows = cursor.fetchall()
+                results = []
+                for row in rows:
+                    doc = {
+                        "id": row["id"],
+                        "doc_id": row["doc_id"],
+                        "title": row["title"],
+                        "text": row["text"],
+                        "page_no": int(row["page_no"] or 1),
+                        # Normalize bm25 negative rank into positive score
+                        "bm25_score": round(abs(float(row["rank_score"])), 4),
+                    }
+                    results.append(doc)
+                return results
+            except sqlite3.OperationalError as e:
+                logger.warning(f"FTS5 match syntax error ({e}), falling back to prefix token search.")
+                return []
+            finally:
+                cursor.close()
 
     def close(self):
-        """Closes the underlying SQLite connection cleanly."""
-        try:
-            self.conn.close()
-        except Exception:
-            pass
+        """Closes the underlying SQLite connection cleanly under connection lock."""
+        with self._connection_lock:
+            if self._closed:
+                return
+            self._closed = True
+            try:
+                self.conn.close()
+            except Exception:
+                pass

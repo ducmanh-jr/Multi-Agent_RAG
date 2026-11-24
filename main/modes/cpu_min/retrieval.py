@@ -13,6 +13,7 @@ import asyncio
 import json
 import os
 import re
+import threading
 from typing import Any
 
 from agents.agent1_retrieval.tools.bm25 import SimpleBM25
@@ -38,6 +39,7 @@ class CPUMinRetrievalAgent(BaseAgent):
         self.fts5_searcher = SQLiteFTS5Searcher()
         self.bm25_fallback = SimpleBM25()
         self.corpus_docs: list[dict[str, Any]] = []
+        self._cache_lock = threading.RLock()
         self._doc_index_cache: dict[str, tuple[SQLiteFTS5Searcher, SimpleBM25, list[dict[str, Any]]]] = {}
         self._load_corpus()
 
@@ -210,17 +212,24 @@ class CPUMinRetrievalAgent(BaseAgent):
         if pdf_chunks:
             # Cache active index by chunk bounds to avoid rebuilding FTS5/BM25 on every retry loop
             cache_key = f"{len(pdf_chunks)}::{pdf_chunks[0].get('id')}::{pdf_chunks[-1].get('id')}"
-            if cache_key in self._doc_index_cache:
-                active_fts, active_bm25, active_pool = self._doc_index_cache[cache_key]
+            with self._cache_lock:
+                cached_entry = self._doc_index_cache.get(cache_key)
+            if cached_entry is not None:
+                active_fts, active_bm25, active_pool = cached_entry
             else:
-                active_fts = SQLiteFTS5Searcher()
-                active_bm25 = SimpleBM25()
-                active_fts.fit(pdf_chunks)
-                active_bm25.fit(pdf_chunks)
-                active_pool = pdf_chunks
-                if len(self._doc_index_cache) >= 8:
-                    self._doc_index_cache.pop(next(iter(self._doc_index_cache)))
-                self._doc_index_cache[cache_key] = (active_fts, active_bm25, active_pool)
+                built_fts = SQLiteFTS5Searcher()
+                built_bm25 = SimpleBM25()
+                built_fts.fit(pdf_chunks)
+                built_bm25.fit(pdf_chunks)
+                with self._cache_lock:
+                    if cache_key in self._doc_index_cache:
+                        active_fts, active_bm25, active_pool = self._doc_index_cache[cache_key]
+                        built_fts.close()
+                    else:
+                        if len(self._doc_index_cache) >= 8:
+                            self._doc_index_cache.pop(next(iter(self._doc_index_cache)))
+                        self._doc_index_cache[cache_key] = (built_fts, built_bm25, pdf_chunks)
+                        active_fts, active_bm25, active_pool = built_fts, built_bm25, pdf_chunks
         else:
             active_fts = self.fts5_searcher
             active_bm25 = self.bm25_fallback

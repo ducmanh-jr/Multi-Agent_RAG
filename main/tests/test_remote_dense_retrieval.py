@@ -100,7 +100,9 @@ def test_page_diversity_fills_from_deeper_candidates_and_preserves_sparse_fallba
     state = {"query": "calibration", "pdf_paths": list(sources), "top_k": 10}
     with httpx.Client(transport=endpoint) as client, use_run_config(config):
         monkeypatch.setattr(llm_client, "http_client", client)
-        control = retrieval.GPUFinetuneRetrievalAgent(enable_dense=False, enable_rerank=False).run(state)
+        control = retrieval.GPUFinetuneRetrievalAgent(
+            enable_dense=False, enable_rerank=False, page_diverse=False,
+        ).run(state)
         sparse = retrieval.GPUFinetuneRetrievalAgent(
             enable_dense=False, enable_rerank=False, page_diverse=True,
         ).run(state)
