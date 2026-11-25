@@ -869,9 +869,103 @@ def nli_prompt(pairs):
     return NLI_INSTRUCTION + "\n" + json.dumps(pairs, ensure_ascii=False)
 
 
+_VI_DIACRITIC_RE = re.compile(
+    r"[àáảãạăằắẳẵặâầấẩẫậđèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵ]",
+    re.IGNORECASE,
+)
+_SYMBOLIC_MATH_NLI_RE = re.compile(
+    r"(?::=|\\frac|\\sum|\\prod|\\int|\\sqrt|\\mathbb|[∑∏∫∈∉≤≥≈≠∇∂∞]|\^[-\w{(]|_[a-zA-Z0-9{(])"
+)
+
+_CROSS_LINGUAL_MATH_NLI_SYSTEM = (
+    "You are a strict cross-lingual scientific NLI Fact-Checker (English/Vietnamese + Math/LaTeX). "
+    "Compare each claim against its exact source evidence (which may be in another language or use mathematical symbols "
+    "such as P_i, sum, :=, N^-1, R_bar). Return ONLY a JSON object with key 'evaluations': a list of objects each with "
+    "'claim_id' (string), 'verdict' ('SUPPORT' | 'CONTRADICT' | 'NOT_ENOUGH_INFO'), 'confidence' (float 0.0 to 1.0), "
+    "and 'reason' (short explanation). Rules: SUPPORT if the claim accurately translates, paraphrases, or states facts/formulas "
+    "present in the evidence; CONTRADICT if any number, sign, condition, or meaning conflicts with the evidence; "
+    "NOT_ENOUGH_INFO if the evidence does not contain enough information to verify the claim."
+)
+
+
+def _is_cross_lingual_or_symbolic_math(claim: str, evidence: str) -> bool:
+    """Detects EN<->VI cross-lingual pairs or symbolic math formulas where small encoder NLI fails."""
+    c_str = str(claim or "")
+    e_str = str(evidence or "")
+    if bool(_VI_DIACRITIC_RE.search(c_str)) != bool(_VI_DIACRITIC_RE.search(e_str)):
+        return True
+    if _SYMBOLIC_MATH_NLI_RE.search(c_str) or _SYMBOLIC_MATH_NLI_RE.search(e_str):
+        return True
+    return False
+
+
+def _batch_qwen_cross_lingual_nli(candidates: list[dict[str, Any]], client: Any) -> dict[str, dict[str, Any]]:
+    """
+    Escalates cross-lingual (EN<->VI) or symbolic-math NLI pairs to Kaggle GPU 0 Qwen3-8B (adapter='none')
+    in a single deterministic batch call (temperature=0.0). Preserves cross-model independence from Gemini.
+    """
+    if not candidates or not hasattr(client, "_post_worker"):
+        return {}
+    base_url = (getattr(getattr(client, "settings", None), "REMOTE_INFERENCE_URL", "") or "").rstrip("/")
+    if not base_url:
+        return {}
+    timeout = float(getattr(getattr(client, "settings", None), "REMOTE_TIMEOUT_SECONDS", 45.0) or 45.0)
+    prompt_items = [
+        {"claim_id": p["claim_id"], "claim": p["claim"], "evidence": p["evidence"][:1400]}
+        for p in candidates
+    ]
+    payload = {
+        "prompt": json.dumps({"pairs": prompt_items}, ensure_ascii=False),
+        "system_instruction": _CROSS_LINGUAL_MATH_NLI_SYSTEM,
+        "adapter": "none",
+        "temperature": 0.0,
+        "max_tokens": 768,
+    }
+    try:
+        resp = client._post_worker(base_url, "generate", payload, min(timeout, 45.0), "none")
+        if resp.status_code != 200:
+            return {}
+        body = resp.json()
+        raw_text = body.get("text") if isinstance(body, dict) else ""
+        if not isinstance(raw_text, str) or not raw_text.strip():
+            return {}
+        cleaned = re.sub(r"<think>.*?</think>", "", raw_text, flags=re.DOTALL).strip()
+        m = re.search(r"\{.*\}", cleaned, re.DOTALL)
+        if not m:
+            return {}
+        parsed = json.loads(m.group(0))
+        evals = parsed.get("evaluations")
+        if not isinstance(evals, list):
+            return {}
+        out: dict[str, dict[str, Any]] = {}
+        for idx, item in enumerate(evals):
+            if not isinstance(item, dict):
+                continue
+            cid = item.get("claim_id")
+            if not cid and idx < len(candidates):
+                cid = candidates[idx]["claim_id"]
+            verdict = str(item.get("verdict") or "").strip().upper()
+            conf = item.get("confidence")
+            if (
+                isinstance(cid, str)
+                and verdict in {"SUPPORT", "CONTRADICT", "NOT_ENOUGH_INFO"}
+                and isinstance(conf, (int, float))
+                and 0.0 < float(conf) <= 1.0
+            ):
+                out[cid] = {
+                    "status": verdict,
+                    "rationale": f"Qwen3 Cross-Lingual/Math NLI: {verdict} (p={float(conf):.2f}) — {str(item.get('reason') or '').strip()[:180]}",
+                }
+        return out
+    except Exception as exc:
+        logger.debug("Cross-lingual Qwen3 NLI escalation skipped (%s)", type(exc).__name__)
+        return {}
+
+
 def specialist_nli(pairs, client, *, finetuned):
     """Bind each classifier result to the single claim and premise used for inference."""
     results = []
+    xl_math_candidates = []
     for pair in pairs:
         payload = ({"claims": [pair["claim"]], "context": pair["evidence"], "adapter": "factcheck"}
                    if finetuned else {"claim": pair["claim"], "evidence_context": pair["evidence"]})
@@ -892,19 +986,41 @@ def specialist_nli(pairs, client, *, finetuned):
             row = items[0]
             verdict = row.get("verdict")
             confidence = row.get("confidence")
-            if verdict in ("SUPPORT", "CONTRADICT") and (
-                type(confidence) not in (int, float) or not 0 < confidence <= 1
-            ):
+            valid_conf = type(confidence) in (int, float) and 0 < confidence <= 1
+            if verdict in ("SUPPORT", "CONTRADICT") and not valid_conf:
                 continue
         else:
             row = response
             verdict = row.get("label")
+            valid_conf = False
         reason = str(row.get("reason") or "")
         if re.search(r"\b(?:mock|fallback)\b", reason, re.I):
             continue
-        # The specialist's premise is the exact source passage, unlike a generated quotation.
-        results.append({"claim_id": pair["claim_id"], "status": verdict,
-                        "quote": row.get("quote", pair["evidence"]), "rationale": reason})
+        entry = {
+            "claim_id": pair["claim_id"],
+            "status": verdict,
+            "quote": row.get("quote", pair["evidence"]),
+            "rationale": reason,
+        }
+        results.append(entry)
+        # Small encoder NLI (mDeBERTa/BGE 278M) is monolingual and blind to EN<->VI translation & symbolic math.
+        # When /api/factcheck is online and returns non-SUPPORT on a cross-lingual/math pair, escalate to Qwen3-8B on GPU 0.
+        if (
+            finetuned
+            and valid_conf
+            and verdict != "SUPPORT"
+            and _is_cross_lingual_or_symbolic_math(pair["claim"], pair["evidence"])
+        ):
+            xl_math_candidates.append(pair)
+
+    if xl_math_candidates:
+        overrides = _batch_qwen_cross_lingual_nli(xl_math_candidates, client)
+        if overrides:
+            for entry in results:
+                ov = overrides.get(entry["claim_id"])
+                if ov:
+                    entry["status"] = ov["status"]
+                    entry["rationale"] = ov["rationale"]
     return results
 
 
@@ -965,36 +1081,45 @@ def review_claims(state, reviewer: Optional[Callable] = None):
         claims = [{"id": "claim_1", "text": answer.strip()}]
     verified, rejected, gaps = [], [], []
     raw_spans = [s for s in state.get("evidence_spans") or [] if isinstance(s, dict)]
-    spans = {
-        s.get("id"): s.get("source_unit_id")
+    valid_span_objs = {
+        s.get("id"): s
         for s in raw_spans
         if s.get("id") and (not s.get("doc_id") or verify_evidence_span_provenance(s, units)[0])
+    }
+    spans = {sid: s.get("source_unit_id") for sid, s in valid_span_objs.items()}
+    span_quotes = {
+        sid: str(s.get("quote") or s.get("text") or "").strip()
+        for sid, s in valid_span_objs.items()
     }
     units_by_id = {u.get("id"): u for u in units if u.get("id")}
     for begin in range(0, len(claims), 4):
         batch = claims[begin:begin + 4]
         premises = []
+        anchors = []
         for c in batch:
             candidate_ids = list(c.get("evidence_ids") or [])
             if c.get("unit_id") and c["unit_id"] not in candidate_ids:
                 candidate_ids.append(c["unit_id"])
             linked = [units_by_id[uid] for eid in candidate_ids
                       if (uid := spans.get(eid, eid)) in units_by_id]
-            best_premise = find_best_supporting_unit(c["text"], linked or units)
+            anchor_quote = next((span_quotes[eid] for eid in candidate_ids if span_quotes.get(eid)), "")
+            search_probe = anchor_quote or c["text"]
+            best_premise = find_best_supporting_unit(search_probe, linked or units)
             if best_premise is None and linked:
                 best_premise = linked[0]
             elif best_premise is None and units:
-                best_premise = find_best_supporting_unit(c["text"], units, min_overlap=0.05)
+                best_premise = find_best_supporting_unit(search_probe, units, min_overlap=0.05)
             premises.append(best_premise)
+            anchors.append(anchor_quote or c["text"])
         pairs = [
             {
                 "claim_id": c["id"],
                 "claim": c["text"],
                 "evidence": _extract_focused_evidence_window(
-                    c["text"], str(u.get("text") or u.get("content") or ""), max_chars=900
+                    anchor, str(u.get("text") or u.get("content") or ""), max_chars=900
                 ),
             }
-            for c, u in zip(batch, premises) if u
+            for c, u, anchor in zip(batch, premises, anchors) if u
         ]
         rows = None
         if reviewer and pairs:

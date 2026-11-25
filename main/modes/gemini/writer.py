@@ -98,7 +98,8 @@ class GeminiWriterAgent(BaseAgent):
             f"{allowed_markers}. Không được tự tạo số trích dẫn khác.\n"
             "3. Nếu câu hỏi yêu cầu phân tích, đối chiếu hoặc so sánh nhiều mô hình/phương pháp, hãy trình bày rõ từng mục "
             "và kèm một bảng so sánh Markdown ngắn gọn, súc tích.\n"
-            "4. Không lặp lại tiêu đề '## 1. Tóm tắt Tổng quan', chỉ xuất nội dung phần tổng quan."
+            "4. Khi trình bày công thức toán học, đặt chuẩn trong ký hiệu LaTeX $...$ (nội dòng) hoặc $$...$$ (khối riêng) đúng theo bằng chứng gốc.\n"
+            "5. Không lặp lại tiêu đề '## 1. Tóm tắt Tổng quan', chỉ xuất nội dung phần tổng quan."
         )
         user_prompt = (
             f"Câu hỏi nghiên cứu:\n{query}\n\n"
