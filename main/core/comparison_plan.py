@@ -134,7 +134,7 @@ async def compare_documents(
         selected = blended[:top_k]
         units = [unit for _, unit in selected if unit is not None]
         schema = {
-            **reads[0][2]["document_schema"],
+            **(reads[0][2].get("document_schema") or {}),
             "pages_covered": sorted({unit["page_no"] for unit in units}),
             "total_units": len(units),
         }

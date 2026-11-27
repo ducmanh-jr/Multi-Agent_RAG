@@ -397,8 +397,15 @@ def _extract_chunk_provenance(chunk: Mapping[str, Any], *, branch_id: str | None
         }
         if chunk.get("context_hash"):
             primary["context_hash"] = str(chunk["context_hash"])
+        if chunk.get("source_path"):
+            primary["source_path"] = str(chunk["source_path"])
+        if chunk.get("document_sha256"):
+            primary["document_sha256"] = str(chunk["document_sha256"])
+        if chunk.get("origin_task_id"):
+            primary["task_id"] = str(chunk["origin_task_id"])
         if branch_id:
             primary["branch_id"] = branch_id
+            primary.setdefault("task_id", branch_id)
         raw_list.insert(0, primary)
 
     for item in raw_list:
@@ -798,6 +805,201 @@ def execute_retrieval_dag(
     )
 
 
+def _enrich_chunk_lineage(
+    chunk: Mapping[str, Any],
+    *,
+    doc_path: str | None = None,
+    task_id: str | None = None,
+) -> dict[str, Any]:
+    """Attach explicit per-document and per-task lineage to a retrieved chunk without dropping existing fields."""
+    item = dict(chunk)
+    if doc_path and not item.get("source_path"):
+        item["source_path"] = doc_path
+    if task_id:
+        item["origin_task_id"] = task_id
+        branches = list(item.get("discovered_by_branches") or [])
+        if task_id not in branches:
+            branches.append(task_id)
+        item["discovered_by_branches"] = branches
+    prov = _extract_chunk_provenance(item, branch_id=task_id)
+    for entry in prov:
+        if doc_path and not entry.get("source_path"):
+            entry["source_path"] = doc_path
+        if task_id and not entry.get("task_id"):
+            entry["task_id"] = task_id
+        if item.get("document_sha256") and not entry.get("document_sha256"):
+            entry["document_sha256"] = str(item["document_sha256"])
+    if prov:
+        item["provenance"] = prov
+    return item
+
+
+async def execute_document_fanout_dag_async(
+    pdf_paths: Sequence[str],
+    retrieve_document: Callable[[str], dict[str, Any]],
+    *,
+    top_k: int = 10,
+    budget: ResearchDAGBudget | None = None,
+    round_index: int = 0,
+    previous_seen_chunks: Sequence[Mapping[str, Any]] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """
+    Fans out retrieval per document via TaskScheduler (one task per PDF path, bounded concurrency),
+    then merges chunks while guaranteeing balanced multi-document representation and preserving
+    full lineage (`source_path`, `doc_id`, `document_sha256`, `origin_task_id`, `provenance`).
+    """
+    cfg = budget or ResearchDAGBudget()
+    unique_paths = list(dict.fromkeys(str(p).strip() for p in pdf_paths if isinstance(p, str) and str(p).strip()))
+    if not unique_paths:
+        return {"retrieved_docs": []}, {
+            "agent": "task_scheduler",
+            "action": "document_fanout_dag_executed",
+            "status": "skipped",
+            "reason": "no_documents",
+            "round_index": round_index,
+            "tasks": [],
+        }
+
+    prefix = f"r{round_index}_" if round_index > 0 else ""
+    doc_tasks: list[ResearchTask] = []
+    path_by_task: dict[str, str] = {}
+    policies: dict[str, TaskPolicy] = {}
+    for idx, path in enumerate(unique_paths, start=1):
+        tid = f"{prefix}doc_investigate_{idx}"
+        doc_tasks.append(ResearchTask(id=tid))
+        path_by_task[tid] = path
+        policies[tid] = TaskPolicy(
+            timeout_seconds=cfg.task_timeout_seconds,
+            max_retries=cfg.max_task_retries,
+            retry_delay_seconds=0.1,
+            retry_on=(TimeoutError,),
+        )
+
+    merge_tid = f"{prefix}merge_documents"
+    merge_task = ResearchTask(id=merge_tid, depends_on_terminal=tuple(path_by_task.keys()))
+    scheduler = TaskScheduler(
+        [*doc_tasks, merge_task],
+        max_concurrency=min(max(cfg.max_concurrency, 2), len(doc_tasks), 4),
+        task_policies=policies,
+        run_timeout_seconds=cfg.run_timeout_seconds,
+    )
+    started = time.perf_counter()
+
+    async def _executor(task: ResearchTask, deps: Mapping[str, TaskOutcome]) -> Any:
+        if task.id == merge_tid:
+            branch_lists: list[list[dict[str, Any]]] = []
+            branch_ids: list[str] = []
+            branch_outputs: list[tuple[str, Mapping[str, Any]]] = []
+            top_per_doc: list[dict[str, Any]] = []
+            for dep_id, dep_out in deps.items():
+                if dep_out.status != TaskStatus.COMPLETED or not isinstance(dep_out.output, dict):
+                    continue
+                d_path = path_by_task.get(dep_id)
+                enriched_docs = [
+                    _enrich_chunk_lineage(c, doc_path=d_path, task_id=dep_id)
+                    for c in (dep_out.output.get("retrieved_docs") or [])
+                    if isinstance(c, Mapping)
+                ]
+                enriched_seen = [
+                    _enrich_chunk_lineage(c, doc_path=d_path, task_id=dep_id)
+                    for c in (dep_out.output.get("seen_chunks") or [])
+                    if isinstance(c, Mapping)
+                ]
+                branch_outputs.append((dep_id, {**dep_out.output, "retrieved_docs": enriched_docs, "seen_chunks": enriched_seen}))
+                if enriched_docs:
+                    branch_lists.append(enriched_docs)
+                    branch_ids.append(dep_id)
+                    top_per_doc.append(enriched_docs[0])
+            if not branch_lists:
+                raise RuntimeError("All per-document retrieval fan-out branches failed to produce evidence.")
+            effective_top_k = max(int(top_k or 8), len(branch_lists))
+            fused = merge_branch_chunks(branch_lists, top_k=effective_top_k + len(branch_lists), branch_ids=branch_ids)
+            # Guarantee every responsive document retains at least its #1 chunk before filling by RRF score
+            balanced: list[dict[str, Any]] = []
+            seen_keys: set[str] = set()
+            fused_by_key = {_chunk_dedup_key(c): c for c in fused}
+            for lead in top_per_doc:
+                k = _chunk_dedup_key(lead)
+                if k not in seen_keys:
+                    seen_keys.add(k)
+                    balanced.append(fused_by_key.get(k, lead))
+            for cand in fused:
+                k = _chunk_dedup_key(cand)
+                if k not in seen_keys:
+                    seen_keys.add(k)
+                    balanced.append(cand)
+                if len(balanced) >= effective_top_k:
+                    break
+            merged_seen, no_new_ev = merge_seen_chunks_across_branches(
+                branch_outputs,
+                previous_seen_chunks=previous_seen_chunks,
+                round_index=round_index,
+            )
+            return {
+                "retrieved_docs": balanced[:effective_top_k],
+                "seen_chunks": merged_seen,
+                "no_new_evidence": no_new_ev,
+            }
+
+        d_path = path_by_task[task.id]
+        return await asyncio.to_thread(retrieve_document, d_path)
+
+    outcomes = await scheduler.run(_executor)
+    elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
+    task_summaries = []
+    for tid, out in outcomes.items():
+        hits = len(out.output.get("retrieved_docs") or []) if out.status == TaskStatus.COMPLETED and isinstance(out.output, dict) else 0
+        task_summaries.append({
+            "id": tid,
+            "doc_path": path_by_task.get(tid, ""),
+            "status": str(out.status),
+            "attempts": out.attempts,
+            "hits": hits,
+            "error": type(out.error).__name__ if out.error else None,
+        })
+    merge_out = outcomes[merge_tid]
+    merged_update = (
+        dict(merge_out.output)
+        if merge_out.status == TaskStatus.COMPLETED and isinstance(merge_out.output, dict)
+        else {"retrieved_docs": []}
+    )
+    completed_docs = sum(1 for tid in path_by_task if outcomes[tid].status == TaskStatus.COMPLETED)
+    trace_event = {
+        "agent": "task_scheduler",
+        "action": "document_fanout_dag_executed",
+        "status": "completed" if merge_out.status == TaskStatus.COMPLETED else "degraded",
+        "round_index": round_index,
+        "document_count": len(unique_paths),
+        "completed_documents": completed_docs,
+        "merged_chunks": len(merged_update.get("retrieved_docs") or []),
+        "elapsed_ms": elapsed_ms,
+        "tasks": task_summaries,
+    }
+    return merged_update, trace_event
+
+
+def execute_document_fanout_dag(
+    pdf_paths: Sequence[str],
+    retrieve_document: Callable[[str], dict[str, Any]],
+    *,
+    top_k: int = 10,
+    budget: ResearchDAGBudget | None = None,
+    round_index: int = 0,
+    previous_seen_chunks: Sequence[Mapping[str, Any]] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Synchronous wrapper for per-document parallel fan-out retrieval with lineage preservation."""
+    return run_coro_sync(
+        execute_document_fanout_dag_async(
+            pdf_paths,
+            retrieve_document,
+            top_k=top_k,
+            budget=budget,
+            round_index=round_index,
+            previous_seen_chunks=previous_seen_chunks,
+        )
+    )
+
+
 def sync_dag_manifest_from_retrieval(
     manifest: Mapping[str, Any] | None,
     trace_event: Mapping[str, Any] | None = None,
@@ -808,6 +1010,9 @@ def sync_dag_manifest_from_retrieval(
     """
     Synchronizes PENDING investigation and merge nodes in the DAG manifest with actual
     TaskScheduler execution outcomes (or single-branch retrieval outcomes) for the active round.
+    CRITICAL (M4): When `trace_event` carries task-level outcomes (`tasks`), ONLY nodes whose
+    exact `task_id` appears in `trace_event["tasks"]` are transitioned; other pending branches
+    remain `PENDING`, and `merge` stays `PENDING` until all its dependencies are terminal.
     """
     if not isinstance(manifest, Mapping) or not manifest.get("nodes"):
         return dict(manifest or {})
@@ -824,17 +1029,21 @@ def sync_dag_manifest_from_retrieval(
         )
     )
 
+    has_task_event_payload = isinstance(trace_event, Mapping) and ("tasks" in trace_event)
     task_by_id: dict[str, Mapping[str, Any]] = {}
-    task_by_query: dict[str, Mapping[str, Any]] = {}
     if isinstance(trace_event, Mapping):
         for t in trace_event.get("tasks") or []:
             if isinstance(t, Mapping) and t.get("id"):
                 task_by_id[str(t["id"])] = t
-                q = str(t.get("query") or "").strip()
-                if q:
-                    task_by_query[_query_signature(q)] = t
 
-    any_branch_completed = retrieved_count > 0
+    terminal_statuses = {
+        str(TaskStatus.COMPLETED),
+        str(TaskStatus.FAILED),
+        str(TaskStatus.SKIPPED),
+        str(TaskStatus.CANCELLED),
+    }
+
+    # Pass 1: Update investigation nodes strictly by exact task_id when a task event payload is present.
     for node in nodes:
         node_round = int(node.get("round_index", node.get("metadata", {}).get("round_index", 0)))
         node["round_index"] = node_round
@@ -846,33 +1055,61 @@ def sync_dag_manifest_from_retrieval(
             continue
         if kind in {"investigate", "gap_investigate"}:
             nid = str(node.get("id") or "")
-            q_sig = _query_signature(str(node.get("query") or ""))
-            matched = task_by_id.get(nid) or task_by_query.get(q_sig)
+            matched = task_by_id.get(nid)
             meta = dict(node.get("metadata") or {})
-            if matched:
+            if matched is not None:
                 st = str(matched.get("status") or TaskStatus.COMPLETED)
                 node["status"] = st
                 meta["attempts"] = int(matched.get("attempts") or 1)
                 meta["hits"] = int(matched.get("hits") or 0)
                 if matched.get("error"):
                     meta["error"] = matched["error"]
-                if st == str(TaskStatus.COMPLETED):
-                    any_branch_completed = True
-            else:
+                node["metadata"] = meta
+            elif not has_task_event_payload:
+                # Single-pass non-scheduler retrieval completed all planned round queries in one call.
                 node["status"] = str(TaskStatus.COMPLETED if retrieved_count > 0 else TaskStatus.FAILED)
                 meta["hits"] = retrieved_count
+                node["metadata"] = meta
+
+    node_status_by_id = {str(n.get("id") or ""): str(n.get("status") or TaskStatus.PENDING) for n in nodes}
+
+    # Pass 2: Update merge nodes strictly by exact task_id, or only when ALL dependencies are terminal.
+    for node in nodes:
+        node_round = int(node.get("round_index", node.get("metadata", {}).get("round_index", 0)))
+        if node_round != target_round or node.get("kind") != "merge":
+            continue
+        if str(node.get("status") or TaskStatus.PENDING) != str(TaskStatus.PENDING):
+            continue
+        nid = str(node.get("id") or "")
+        matched = task_by_id.get(nid)
+        meta = dict(node.get("metadata") or {})
+        if matched is not None:
+            node["status"] = str(matched.get("status") or TaskStatus.COMPLETED)
+            meta["merged_chunks"] = int(matched.get("hits") or retrieved_count)
+            if matched.get("error"):
+                meta["error"] = matched["error"]
             node["metadata"] = meta
-        elif kind == "merge":
-            nid = str(node.get("id") or "")
-            matched = task_by_id.get(nid)
-            meta = dict(node.get("metadata") or {})
-            if matched:
-                node["status"] = str(matched.get("status") or TaskStatus.COMPLETED)
-                meta["merged_chunks"] = int(matched.get("hits") or retrieved_count)
-            else:
-                node["status"] = str(TaskStatus.COMPLETED if any_branch_completed else TaskStatus.FAILED)
+        else:
+            deps = [
+                str(d) for d in (
+                    list(node.get("depends_on_terminal") or [])
+                    + list(node.get("depends_on_success") or [])
+                )
+                if d
+            ]
+            if deps:
+                dep_statuses = [node_status_by_id.get(d, str(TaskStatus.PENDING)) for d in deps]
+                if not all(st in terminal_statuses for st in dep_statuses):
+                    # At least one upstream branch is still PENDING/RUNNING -> merge MUST stay PENDING!
+                    continue
+                any_dep_completed = any(st == str(TaskStatus.COMPLETED) for st in dep_statuses)
+                node["status"] = str(TaskStatus.COMPLETED if any_dep_completed else TaskStatus.FAILED)
                 meta["merged_chunks"] = retrieved_count
-            node["metadata"] = meta
+                node["metadata"] = meta
+            elif not has_task_event_payload:
+                node["status"] = str(TaskStatus.COMPLETED if retrieved_count > 0 else TaskStatus.FAILED)
+                meta["merged_chunks"] = retrieved_count
+                node["metadata"] = meta
 
     updated["nodes"] = nodes
     updated["completed_tasks"] = sum(

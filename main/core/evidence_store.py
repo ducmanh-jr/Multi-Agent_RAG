@@ -61,7 +61,13 @@ class EvidenceStore:
             record: dict[str, Any] = {
                 "id": uid,
                 "doc_id": doc_id,
+                "document_sha256": str(raw.get("document_sha256") or ""),
                 "page_no": page_no,
+                "bbox": raw.get("bbox"),
+                "page_rotation": int(raw.get("page_rotation") or 0),
+                "coordinate_space": str(raw.get("coordinate_space") or "pdf_points_top_left"),
+                "unit_type": str(raw.get("unit_type") or "text"),
+                "extractor_version": str(raw.get("extractor_version") or ""),
                 "section": str(raw.get("section") or ""),
                 "doi": str(raw.get("doi") or ""),
                 "title": str(raw.get("title") or ""),
@@ -70,6 +76,7 @@ class EvidenceStore:
                 "provenance": raw_prov,
                 "text": full_text,
                 "text_preview": full_text[:240],
+                "metadata": dict(raw.get("metadata") or {}),
             }
             if uid not in self.sources:
                 self.sources[uid] = record
@@ -121,6 +128,9 @@ class EvidenceStore:
                 "source_unit_id": unit_id,
                 "doc_id": doc_id,
                 "page_no": page_no,
+                "bbox": raw.get("bbox"),
+                "page_rotation": int(raw.get("page_rotation") or 0),
+                "unit_type": str(raw.get("unit_type") or "text"),
                 "quote": quote,
                 "context_hash": ctx_hash,
                 "provenance_verified": bool(prov_ok),

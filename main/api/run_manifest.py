@@ -6,7 +6,7 @@ from core.config import RunConfig, use_run_config
 from core.comparison_plan import COMPARISON_SCHEDULE
 from core.coordination import reflection_limit
 from core.token_usage import TOKEN_BUDGET_EXHAUSTED, TOKEN_USAGE_ACTION
-from core.worker_observations import WORKER_INFERENCE_ACTION
+from core.worker_observations import PROVIDER_INFERENCE_ACTION, WORKER_INFERENCE_ACTION
 from modes.registry import normalize_mode, resolve_agent_modes
 
 
@@ -75,20 +75,40 @@ def _component(details: Any, fields: set[str]) -> dict[str, Any]:
     return {key: value for key, value in details.items() if key in fields} if isinstance(details, dict) else {}
 
 
+_RETRIEVAL_TRACE_ACTIONS = {
+    "gpu_finetune_retrieval_completed",
+    "hybrid_retrieval_completed",
+    "gemini_retrieval_completed",
+    "cpu_min_agentic_retrieval_completed",
+    "cpu_max_retrieval_completed",
+    "gpu_max_retrieval_completed",
+}
+
+
 def _retrieval_attempts(trace: list[dict[str, Any]]) -> list[dict[str, Any]]:
     attempts = []
     for event in trace:
-        if event.get("action") != "gpu_finetune_retrieval_completed":
+        action = str(event.get("action") or "")
+        if action not in _RETRIEVAL_TRACE_ACTIONS and not action.startswith("Truy hồi Hybrid"):
             continue
         details = event.get("details")
         if not isinstance(details, dict):
             continue
-        attempts.append({
+        attempt: dict[str, Any] = {
             "top_k": details.get("top_k"),
             "retrieved_count": details.get("retrieved_count"),
-            "dense": _component(details.get("dense"), {"status", "reason", "model", "revision", "admitted_passages"}),
+            "dense": _component(details.get("dense"), {"status", "backend", "reason", "model", "revision", "admitted_passages"}),
             "rerank": _component(details.get("rerank"), {"status", "reason", "model", "revision", "changed", "kept_prefix"}),
-        })
+        }
+        if action != "gpu_finetune_retrieval_completed":
+            attempt["action"] = action
+        if details.get("strategy_used"):
+            attempt["strategy_used"] = details["strategy_used"]
+        if details.get("cross_lingual_queries"):
+            attempt["cross_lingual_queries"] = list(details["cross_lingual_queries"])
+        if details.get("fallback_chain"):
+            attempt["fallback_chain"] = list(details["fallback_chain"])
+        attempts.append(attempt)
     return attempts
 
 
@@ -115,6 +135,10 @@ def get_run_manifest(record: dict[str, Any]) -> dict[str, Any] | None:
     inferences = [
         {key: value for key, value in event.items() if key != "action"}
         for event in trace if event.get("action") == WORKER_INFERENCE_ACTION
+    ]
+    provider_inferences = [
+        {key: value for key, value in event.items() if key != "action"}
+        for event in trace if event.get("action") == PROVIDER_INFERENCE_ACTION
     ]
     usage = None
     if "token_budget" in admission["configuration"]:
@@ -148,6 +172,7 @@ def get_run_manifest(record: dict[str, Any]) -> dict[str, Any] | None:
             ],
             "comparison_schedules": [event["details"] for event in trace if event.get("action") == COMPARISON_SCHEDULE],
             "worker_inference": inferences,
+            "provider_inference": provider_inferences,
             "generator_revision": _reported_revision(inferences, "generator"),
             "verifier_revision": _reported_revision(inferences, "verifier"),
         },

@@ -20,9 +20,7 @@ Provides complete API compatibility for the Web Workspace UI, including:
 
 from __future__ import annotations
 
-
-
-
+import asyncio
 import datetime
 
 import json
@@ -191,6 +189,7 @@ class CreateRunRequest(BaseModel):
     max_iterations: Optional[int] = Field(default=2, ge=0)
     chat_history: Optional[list[dict[str, str]]] = None
     session_id: Optional[str] = None
+    answer_language: Optional[str] = None
 
 
 class RenameSessionRequest(BaseModel):
@@ -209,6 +208,7 @@ class DirectResearchRequest(BaseModel):
     comparison_timeout_seconds: float = Field(default=DEFAULT_COMPARISON_TIMEOUT_SECONDS, gt=0, allow_inf_nan=False)
     token_budget: int | None = Field(default=None, gt=0, strict=True)
     session_id: str | None = None
+    answer_language: Optional[str] = None
 
 
 
@@ -1130,6 +1130,10 @@ def _format_doc(doc: dict[str, Any]) -> dict[str, Any]:
         "authors": authors,
         "year": year,
         "abstract": abstract,
+        "sha256": meta.get("sha256") or "",
+        "ingest_status": meta.get("ingest_status") or "completed",
+        "failed_pages": meta.get("failed_pages") or [],
+        "pages_status": meta.get("pages_status") or [],
     })
     return formatted
 
@@ -1179,6 +1183,23 @@ def get_document_figure(doc_id: str, figure_id: str):
         png = render_pdf_figure(path, figure_id)
     except (KeyError, OSError, ValueError, RuntimeError):
         raise HTTPException(status_code=404, detail="Figure not found in the current PDF")
+    return Response(png, media_type="image/png", headers={"Cache-Control": "private, max-age=3600"})
+
+
+@app.get("/api/documents/{doc_id}/crop")
+def get_document_region_crop(doc_id: str, page: int = 1, bbox: str = ""):
+    """Renders an arbitrary unrotated `[x0,y0,x1,y1]` PDF region (equations, table cells, spans) as PNG."""
+    from core.pdf_ingest import render_pdf_region_crop
+
+    doc = db.get_document(doc_id)
+    path = (doc or {}).get("path") or ""
+    if not doc or doc["id"] != doc_id or not path.lower().endswith(".pdf") or not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="Source PDF not found")
+    try:
+        coords = [float(x.strip()) for x in bbox.split(",") if x.strip()]
+        png = render_pdf_region_crop(path, page, coords)
+    except (KeyError, OSError, ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid crop region: {exc}")
     return Response(png, media_type="image/png", headers={"Cache-Control": "private, max-age=3600"})
 
 
@@ -1357,23 +1378,56 @@ async def upload_document_api(file: UploadFile = File(...)):
                     raise HTTPException(status_code=413, detail="Tệp tin vượt quá giới hạn cho phép (tối đa 100MB).")
                 buffer.write(chunk)
 
-        _UPLOAD_STATUS[upload_id] = {"upload_id": upload_id, "status": "indexing", "percent": 75}
+        _UPLOAD_STATUS[upload_id] = {"upload_id": upload_id, "status": "indexing", "percent": 60}
         size = os.path.getsize(file_path)
         doc_type = "pdf" if safe_filename.lower().endswith(".pdf") else "text"
+
+        from core.pdf_ingest import compute_file_sha256, get_ingest_manifest
+        from core.tools import load_or_parse_selected_pdf
+
+        file_sha = await asyncio.to_thread(compute_file_sha256, file_path)
+        parsed_chunks = await asyncio.to_thread(load_or_parse_selected_pdf, file_path)
+        ingest_manifest = get_ingest_manifest(file_path) or {}
+        ingest_status = str(ingest_manifest.get("status") or ("completed" if parsed_chunks else "failed"))
+        pages_status = list(ingest_manifest.get("pages") or [])
+        failed_pages = list(ingest_manifest.get("failed_pages") or [])
+        page_count = int(ingest_manifest.get("page_count") or max((int(c.get("page_no", 1)) for c in parsed_chunks), default=1))
+
         doc_info = db.save_document(
             doc_id=doc_id,
             name=safe_filename,
             path=os.path.abspath(file_path),
             size=size,
             doc_type=doc_type,
+            metadata={
+                "sha256": file_sha,
+                "ingest_status": ingest_status,
+                "page_count": page_count,
+                "chunk_count": len(parsed_chunks),
+                "failed_pages": failed_pages,
+                "pages_status": pages_status,
+                "extractor_version": ingest_manifest.get("extractor_version", ""),
+            },
         )
         _UPLOAD_STATUS[upload_id] = {
             "upload_id": upload_id,
-            "status": "completed",
-            "percent": 100,
+            "status": ingest_status,
+            "percent": 100 if ingest_status in {"completed", "partial_completed"} else 0,
             "doc_id": doc_id,
+            "sha256": file_sha,
+            "page_count": page_count,
+            "chunk_count": len(parsed_chunks),
+            "failed_pages": failed_pages,
+            "pages": pages_status,
         }
-        return {"document": _format_doc(doc_info), "status": "uploaded", "upload_id": upload_id}
+        return {
+            "document": _format_doc(doc_info),
+            "status": "uploaded" if ingest_status != "failed" else "ingest_failed",
+            "ingest_status": ingest_status,
+            "sha256": file_sha,
+            "pages": pages_status,
+            "upload_id": upload_id,
+        }
     except Exception as exc:
         _UPLOAD_STATUS[upload_id] = {"upload_id": upload_id, "status": "failed", "percent": 0, "error": str(exc)}
         raise HTTPException(status_code=500, detail=f"Upload failed: {exc}")
@@ -2042,6 +2096,7 @@ async def create_run(req: CreateRunRequest):
         max_reflection_loops=2 if req.max_iterations is None else req.max_iterations,
         chat_history=req.chat_history or [],
         session_id=req.session_id,
+        answer_language=req.answer_language,
     ))
     return {
         **run.record,
@@ -2248,6 +2303,7 @@ def _legacy_research_request(req: DirectResearchRequest) -> ResearchRequest:
         comparison_plan=req.comparison_plan,
         comparison_timeout_seconds=req.comparison_timeout_seconds,
         token_budget=req.token_budget,
+        answer_language=req.answer_language,
     )
 
 
@@ -2267,6 +2323,8 @@ async def execute_direct_research(req: DirectResearchRequest):
         "run_manifest": get_run_manifest(record),
         "answer_status": run_answer_status(record),
         "confidence": state.get("confidence", "unknown"),
+        "answer": state.get("answer") or "",
+        "short_answer": state.get("short_answer") or state.get("answer") or "",
         "final_report": record.get("final_report") or "",
         "verified_claims": record.get("verified_claims") or [],
         "rejected_claims": record.get("rejected_claims") or [],
@@ -2307,14 +2365,20 @@ async def execute_research_stream(req: DirectResearchRequest):
             while (step := await steps.get()) is not None:
                 output, traces = step.output, step.traces
                 trace = next((item for item in reversed(traces) if item.get("action") != "citation_audit"), {})
+                step_audit = get_citation_audit(traces)
+                audited_partial = (
+                    (output.get("short_answer") or output.get("answer") or output.get("final_report"))
+                    if (not wait_for_final and bool(step_audit))
+                    else None
+                )
                 yield event({
                     "event": "node_update", "node": step.node, "run_id": run_id,
                     "action": trace.get("action", "completed"),
                     "data": {
                         "fact_check_label": output.get("fact_check_label"),
                         "retry_count": output.get("retry_count"),
-                        "partial_answer": None if wait_for_final else output.get("answer") or output.get("final_report"),
-                        "citation_audit": {} if wait_for_final else get_citation_audit(traces),
+                        "partial_answer": audited_partial,
+                        "citation_audit": {} if wait_for_final else step_audit,
                         "figures": [] if wait_for_final else answer_figures(traces),
                         "handoffs": [
                             {**entry, "message": _trace_message(entry)} for entry in traces

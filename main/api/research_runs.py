@@ -27,6 +27,7 @@ from core.supervisor import supervisor_planner
 from core.task_scheduler import ScheduleTimeoutError
 from core.token_usage import RunTokenLedger, capture_token_usage
 from core.worker_observations import capture_worker_observations, drain_worker_observations
+from utils.language import localized_status_message, resolve_language_bundle
 from utils.logger import logger
 
 
@@ -35,6 +36,14 @@ WAITING_REPORT = f"# Thông báo Hệ thống\n\n> **Trạng thái:** `WAITING_F
 DOCUMENT_EXTENSIONS = {".pdf", ".txt", ".md"}
 CHECKPOINT_STATE_KEYS = (
     "query",
+    "query_with_context",
+    "resolved_query",
+    "inherited_entities",
+    "chat_history",
+    "document_scope",
+    "query_language",
+    "answer_language",
+    "source_language",
     "pdf_path",
     "pdf_paths",
     "intent",
@@ -147,6 +156,7 @@ class ResearchRequest:
     comparison_plan: bool = False
     comparison_timeout_seconds: float = DEFAULT_COMPARISON_TIMEOUT_SECONDS
     token_budget: int | None = None
+    answer_language: str | None = None
     resume_state: dict[str, Any] | None = None
     resumed_from_run_id: str | None = None
     resumed_from_step: int | None = None
@@ -235,19 +245,41 @@ class ResearchRunService:
         effective_mode = mode if mode is not None else manifest_cfg.get("mode_override")
         run_cfg = config or RunConfig.capture(agent_modes=saved_agent_modes)
         if config is not None and saved_agent_modes and effective_mode is None:
-            run_cfg = replace(
-                config,
+            run_cfg = config.with_overrides(
                 AGENT_RETRIEVAL_MODE=saved_agent_modes.get("retrieval", config.AGENT_RETRIEVAL_MODE),
                 AGENT_READER_MODE=saved_agent_modes.get("reader", config.AGENT_READER_MODE),
                 AGENT_SUMMARIZER_MODE=saved_agent_modes.get("summarizer", config.AGENT_SUMMARIZER_MODE),
-                AGENT_FACT_CHECKER_MODE=saved_agent_modes.get("fact_checker", config.AGENT_FACT_CHECKER_MODE),
+                AGENT_FACTCHECKER_MODE=saved_agent_modes.get(
+                    "fact_checker",
+                    saved_agent_modes.get("factchecker", config.AGENT_FACTCHECKER_MODE),
+                ),
                 AGENT_WRITER_MODE=saved_agent_modes.get("writer", config.AGENT_WRITER_MODE),
             )
 
         ckpt_state = dict(checkpoint.get("state") or {})
         doc_ids = tuple(d for d in (record.get("document_ids") or []) if isinstance(d, str) and d)
+        ckpt_scope = [
+            item for item in (ckpt_state.get("document_scope") or [])
+            if isinstance(item, dict)
+        ]
+        if not doc_ids and ckpt_scope:
+            doc_ids = tuple(
+                str(item["id"])
+                for item in ckpt_scope
+                if isinstance(item.get("id"), str) and item.get("id") and item.get("catalogued", True)
+            )
         ckpt_paths = list(ckpt_state.get("pdf_paths") or [])
+        if not ckpt_paths and ckpt_scope:
+            ckpt_paths = [str(item["path"]) for item in ckpt_scope if isinstance(item.get("path"), str) and item.get("path")]
+            if ckpt_paths:
+                ckpt_state["pdf_paths"] = ckpt_paths
+                ckpt_state.setdefault("pdf_path", ckpt_paths[0])
         pdf_path = ckpt_state.get("pdf_path") or (ckpt_paths[0] if ckpt_paths else None)
+        saved_chat_history = [
+            dict(turn) for turn in (ckpt_state.get("chat_history") or [])
+            if isinstance(turn, dict)
+        ]
+        saved_answer_lang = ckpt_state.get("answer_language")
         comparison_plan = bool(manifest_cfg.get("comparison_plan_requested", False))
         retrieval_cfg = manifest_cfg.get("retrieval") if isinstance(manifest_cfg.get("retrieval"), dict) else {}
         limits_cfg = manifest_cfg.get("limits") if isinstance(manifest_cfg.get("limits"), dict) else {}
@@ -274,10 +306,12 @@ class ResearchRunService:
             pdf_path=pdf_path if not doc_ids else None,
             auto_scout=auto_scout,
             max_reflection_loops=max_reflection_loops,
+            chat_history=saved_chat_history,
             parallel_retrieval=parallel_retrieval,
             comparison_plan=comparison_plan,
             comparison_timeout_seconds=comparison_timeout_seconds,
             token_budget=token_budget,
+            answer_language=saved_answer_lang,
             session_id=record.get("session_id"),
             resume_state=ckpt_state,
             resumed_from_run_id=source_run_id,
@@ -339,8 +373,17 @@ class ResearchRunService:
             traces.extend(refusal["reasoning_trace"])
             traces.append({"action": "run_outcome", "answer_status": refusal["answer_status"]})
         elif waiting:
-            report = WAITING_REPORT
-            traces.append({"action": "waiting_for_document", "message": WAITING_MESSAGE})
+            lang_bundle = resolve_language_bundle(
+                request.query,
+                explicit_answer_language=request.answer_language,
+            )
+            w_lang = lang_bundle["answer_language"]
+            w_msg = localized_status_message("WAITING_FOR_DOCUMENT", language=w_lang, query=request.query)
+            if w_lang == "en":
+                report = f"# System Notice\n\n> **Status:** `WAITING_FOR_DOCUMENT`\n\n{w_msg}"
+            else:
+                report = WAITING_REPORT
+            traces.append({"action": "waiting_for_document", "message": w_msg})
         terminal = waiting or missing_comparison_source
         record = await asyncio.to_thread(
             db.save_run,
@@ -383,10 +426,27 @@ class ResearchRunService:
         ledger: RunTokenLedger,
     ) -> ResearchResult:
         paths = [source["path"] for source in sources]
+        lang_bundle = resolve_language_bundle(
+            request.query,
+            explicit_answer_language=request.answer_language,
+        )
         state: dict[str, Any] = {
             "query": request.query,
+            "query_language": lang_bundle["query_language"],
+            "answer_language": lang_bundle["answer_language"],
+            "source_language": lang_bundle["source_language"],
             "pdf_path": paths[0] if paths else None,
             "pdf_paths": paths,
+            "document_scope": [
+                {
+                    "id": s["id"],
+                    "name": s["name"],
+                    "path": s["path"],
+                    "sha256": s["sha256"],
+                    "catalogued": bool(s.get("catalogued", False)),
+                }
+                for s in sources
+            ],
             "retry_count": 0,
             "chat_history": request.chat_history,
         }
@@ -425,6 +485,8 @@ class ResearchRunService:
                         "parallel_retrieval": request.parallel_retrieval,
                         "comparison_plan": request.comparison_plan,
                     }
+                    if request.auto_scout and sources:
+                        graph_kwargs["allow_scout_handoff"] = True
                     if request.resume_start_at_node:
                         graph_kwargs["start_at_node"] = request.resume_start_at_node
                     graph = await asyncio.to_thread(build_research_rag_graph, **graph_kwargs)
@@ -445,13 +507,22 @@ class ResearchRunService:
                                 if not isinstance(output, dict):
                                     continue
                                 added = None
-                                if node == "scout_node" and not sources and output.get("pdf_path"):
+                                if node == "scout_node" and (output.get("pdf_path") or output.get("pdf_paths")):
                                     found_paths = output.get("pdf_paths") or [output["pdf_path"]]
-                                    added = await asyncio.to_thread(_resolve_paths, found_paths)
-                                    if not added:
-                                        raise RuntimeError("Tài liệu Auto-Scout vừa tìm không còn truy cập được.")
-                                    sources = added
-                                    paths = [source["path"] for source in sources]
+                                    if not sources:
+                                        added = await asyncio.to_thread(_resolve_paths, found_paths)
+                                        if not added:
+                                            raise RuntimeError("Tài liệu Auto-Scout vừa tìm không còn truy cập được.")
+                                        sources = added
+                                        paths = [source["path"] for source in sources]
+                                    else:
+                                        existing_path_set = {source["path"] for source in sources}
+                                        resolved_found = await asyncio.to_thread(_resolve_paths, found_paths)
+                                        newly_added = [s for s in resolved_found if s["path"] not in existing_path_set]
+                                        if newly_added:
+                                            sources = [*sources, *newly_added]
+                                            paths = [source["path"] for source in sources]
+                                            added = sources
                                 node_traces = [
                                     deepcopy(trace) for trace in output.get("reasoning_trace") or []
                                     if isinstance(trace, dict)

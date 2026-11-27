@@ -1,5 +1,6 @@
 import asyncio
 from functools import partial
+import inspect
 from typing import Any, Callable, Optional
 from langgraph.graph import END, START, StateGraph
 
@@ -10,7 +11,7 @@ from core.comparison_plan import (
     run_coro_sync,
 )
 from core.config import RunConfig, agent_inference_mode, get_run_settings, use_run_config
-from core.coordination import decide_handoff, fact_check_accepted
+from core.coordination import decide_handoff, evaluate_agent_handoff, fact_check_accepted
 from core.evidence_store import EvidenceStore
 from core.figure_qa import (
     add_figure_evidence, attach_answer_figures, check_visual_answer,
@@ -20,6 +21,7 @@ from core.handoff_inputs import prepare_handoff_input
 from core.provider_router import is_gemini_permitted
 from core.research_dag import (
     build_research_dag_plan,
+    execute_document_fanout_dag,
     execute_retrieval_dag,
     mark_dag_stage_status,
     pending_dag_investigation_queries,
@@ -30,6 +32,7 @@ from core.research_tasks import TaskStatus
 from core.state import AgentState
 from core.supervisor import supervisor_planner
 from modes.registry import get_active_agents, get_agent_runners, normalize_mode, resolve_agent_modes
+from utils.language import detect_corpus_language, localized_status_message, resolve_language_bundle
 from utils.logger import logger
 
 
@@ -50,19 +53,34 @@ def orchestrator_router_node(
     query = state.get("query", "")
     retry_count = state.get("retry_count", 0)
     evidence_gaps = state.get("evidence_gaps") or []
+    chat_history = state.get("chat_history") or []
+
+    coref = supervisor_planner.resolve_conversational_query(
+        query,
+        chat_history,
+        existing_resolved=state.get("resolved_query") or state.get("query_with_context"),
+    )
+    resolved_query = coref["resolved_query"] or query
+    inherited_entities = list(
+        dict.fromkeys([*(state.get("inherited_entities") or []), *(coref.get("inherited_entities") or [])])
+    )[:8]
 
     base_plan = supervisor_planner.plan_query(
-        query=query,
+        query=resolved_query,
         evidence_gaps=evidence_gaps,
         retry_count=retry_count,
     )
+    if inherited_entities:
+        base_plan.required_entities = list(dict.fromkeys([*base_plan.required_entities, *inherited_entities]))[:8]
+        if coref.get("is_followup") and query.strip() and query.strip() not in base_plan.sub_queries:
+            base_plan.sub_queries = list(dict.fromkeys([resolved_query, query.strip(), *base_plan.sub_queries]))[:4]
     plan = base_plan
     planning_source = "deterministic"
 
     custom_llm_fn = planner_llm_fn or state.get("planner_llm_fn")
     if callable(custom_llm_fn):
         refined = supervisor_planner.plan_query_with_llm(
-            query=query,
+            query=resolved_query,
             evidence_gaps=evidence_gaps,
             retry_count=retry_count,
             llm_fn=custom_llm_fn,
@@ -92,7 +110,7 @@ def orchestrator_router_node(
                     return llm_client.generate_json(prompt, agent="retrieval")
 
             refined = supervisor_planner.plan_query_with_llm(
-                query=query,
+                query=resolved_query,
                 evidence_gaps=evidence_gaps,
                 retry_count=retry_count,
                 llm_fn=_planner_llm,
@@ -143,7 +161,27 @@ def orchestrator_router_node(
         "dag_task_count": dag_manifest["total_tasks"],
         "retry_count": retry_count,
     }
+    lang_bundle = resolve_language_bundle(
+        query,
+        explicit_answer_language=state.get("answer_language"),
+        units_or_docs=state.get("source_units") or state.get("retrieved_docs"),
+        existing_source_language=state.get("source_language"),
+    )
+    doc_scope = list(state.get("document_scope") or [])
+    if not doc_scope:
+        raw_paths = list(dict.fromkeys(state.get("pdf_paths") or ([state["pdf_path"]] if state.get("pdf_path") else [])))
+        for rp in raw_paths:
+            if isinstance(rp, str) and rp.strip():
+                doc_scope.append({"path": rp.strip()})
+
     return {
+        "query_language": lang_bundle["query_language"],
+        "answer_language": lang_bundle["answer_language"],
+        "source_language": lang_bundle["source_language"],
+        "resolved_query": resolved_query,
+        "query_with_context": coref["query_with_context"],
+        "inherited_entities": inherited_entities,
+        "document_scope": doc_scope,
         "intent": plan.intent,
         "complexity": plan.complexity,
         "sub_queries": plan.sub_queries,
@@ -210,7 +248,12 @@ def _write_escalated_report(
         try:
             return write(writer_state)
         except Exception:
-            answer = "Chưa thể xuất báo cáo đã đối chiếu với nguồn."
+            lang = writer_state.get("answer_language") or "vi"
+            answer = (
+                "Unable to compile a source-audited report."
+                if lang == "en"
+                else "Chưa thể xuất báo cáo đã đối chiếu với nguồn."
+            )
             return {
                 "final_report": answer,
                 "reasoning_trace": [{"node": "EscalationNode", "action": "escalate_with_warning"}],
@@ -218,10 +261,12 @@ def _write_escalated_report(
 
     result = write_with_citation_audit(state_copy, write_or_warn)
     result["confidence"] = "low"
-    result["final_report"] = (
-        "> **Độ tin cậy thấp.** Bằng chứng hiện có chưa đủ để xác nhận toàn bộ câu trả lời.\n\n"
-        + (result.get("final_report") or "")
+    banner = localized_status_message(
+        "LOW_CONFIDENCE_BANNER",
+        language=str(state.get("answer_language") or ""),
+        query=str(state.get("query") or ""),
     )
+    result["final_report"] = f"{banner}\n\n" + (result.get("final_report") or "")
     result["reasoning_trace"].append({
         "node": "EscalationNode", "action": "unresolved_review", "retry_count": state.get("retry_count", 0),
     })
@@ -235,7 +280,7 @@ def writer_node(state: AgentState) -> dict[str, Any]:
     return res
 
 
-# ===================== CONDITIONAL EDGES =====================
+# ===================== UNIFIED CONDITIONAL DISPATCH =====================
 
 def _handoff_for(state: AgentState, role: str, key: str) -> dict[str, Any] | None:
     trace = state.get("reasoning_trace") or []
@@ -246,49 +291,34 @@ def _handoff_for(state: AgentState, role: str, key: str) -> dict[str, Any] | Non
     return None
 
 
-def route_after_scout(state: AgentState) -> str:
-    trace = state.get("reasoning_trace") or []
-    if trace and trace[-1].get("action") in {
-        "discovery_clarify", "discovery_rejected", "discovery_failed", "download_failed", "waiting_for_document",
-    }:
-        return END
-    return "retrieval_node"
-
-
-def route_after_reader(state: AgentState) -> str:
-    request = _handoff_for(state, "reader", "sender")
-    return f"{request['recipient']}_node" if request else "summarizer_node"
-
-
-def route_after_summarizer(state: AgentState) -> str:
-    request = _handoff_for(state, "summarizer", "sender")
-    return f"{request['recipient']}_node" if request else "fact_checker_node"
-
-
-def route_after_fact_check(state: AgentState) -> str:
-    request = _handoff_for(state, "fact_checker", "sender")
-    if request:
-        return f"{request['recipient']}_node"
-    if figure_context(state).get("explicit") and not state.get("rejected_claims"):
-        return "writer_node"
-    return "writer_node" if fact_check_accepted(state) else "escalation_node"
-
-
-def resolve_next_node_after_checkpoint(
+def dispatch_next_node(
     completed_node: str | None,
     state: AgentState,
     *,
     comparison_plan: bool = False,
 ) -> str:
-    """Resolve the exact successor node to execute when resuming after `completed_node`."""
+    """
+    Single unified dispatch policy shared by fresh LangGraph runs, retry loops, and checkpoint resume.
+    Routes every completed node across all 6 specialist roles + Supervisor consistently.
+    """
     node = (completed_node or "").strip()
     if not node:
         return "orchestrator_router"
     if node == "orchestrator_router":
-        return "scout_node"
+        request = _handoff_for(state, "supervisor", "sender")
+        return f"{request['recipient']}_node" if request else "scout_node"
     if node == "scout_node":
-        return route_after_scout(state)
+        trace = state.get("reasoning_trace") or []
+        if trace and trace[-1].get("action") in {
+            "discovery_clarify", "discovery_rejected", "discovery_failed", "download_failed", "waiting_for_document",
+        }:
+            return END
+        request = _handoff_for(state, "scout", "sender")
+        return f"{request['recipient']}_node" if request else "retrieval_node"
     if node == "retrieval_node":
+        request = _handoff_for(state, "retrieval", "sender")
+        if request:
+            return f"{request['recipient']}_node"
         if comparison_plan:
             schedule = comparison_schedule(state.get("reasoning_trace") or [])
             if schedule is not None:
@@ -299,20 +329,64 @@ def resolve_next_node_after_checkpoint(
             schedule = comparison_schedule(state.get("reasoning_trace") or [])
             if schedule is not None:
                 return "comparison_review_node" if schedule["status"] == "COMPLETED" else END
-        return route_after_reader(state)
+        request = _handoff_for(state, "reader", "sender")
+        return f"{request['recipient']}_node" if request else "summarizer_node"
     if node == "summarizer_node":
-        return route_after_summarizer(state)
+        request = _handoff_for(state, "summarizer", "sender")
+        return f"{request['recipient']}_node" if request else "fact_checker_node"
     if node == "fact_checker_node":
-        return route_after_fact_check(state)
+        request = _handoff_for(state, "fact_checker", "sender")
+        if request:
+            return f"{request['recipient']}_node"
+        if figure_context(state).get("explicit") and not state.get("rejected_claims"):
+            return "writer_node"
+        return "writer_node" if fact_check_accepted(state) else "escalation_node"
     if node == "comparison_review_node":
         trace = state.get("reasoning_trace") or []
         last = trace[-1] if trace else {}
         if last.get("action") != "agent_handoff":
             return END
         return "comparison_review_node" if last.get("recipient") == "summarizer" else f"{last['recipient']}_node"
-    if node in {"writer_node", "escalation_node", END, "__end__"}:
+    if node == "writer_node":
+        request = _handoff_for(state, "writer", "sender")
+        return f"{request['recipient']}_node" if request else END
+    if node in {"escalation_node", END, "__end__"}:
         return END
     return "orchestrator_router"
+
+
+def route_after_scout(state: AgentState) -> str:
+    return dispatch_next_node("scout_node", state)
+
+
+def route_after_retrieval(state: AgentState) -> str:
+    return dispatch_next_node("retrieval_node", state)
+
+
+def route_after_reader(state: AgentState) -> str:
+    return dispatch_next_node("reader_node", state)
+
+
+def route_after_summarizer(state: AgentState) -> str:
+    return dispatch_next_node("summarizer_node", state)
+
+
+def route_after_fact_check(state: AgentState) -> str:
+    return dispatch_next_node("fact_checker_node", state)
+
+
+def route_after_writer(state: AgentState) -> str:
+    return dispatch_next_node("writer_node", state)
+
+
+def resolve_next_node_after_checkpoint(
+    completed_node: str | None,
+    state: AgentState,
+    *,
+    comparison_plan: bool = False,
+) -> str:
+    """Resolve the exact successor node to execute when resuming after `completed_node`."""
+    return dispatch_next_node(completed_node, state, comparison_plan=comparison_plan)
 
 
 _agents: dict[str, Any] = {}
@@ -320,16 +394,18 @@ _agents: dict[str, Any] = {}
 
 def build_research_rag_graph(
     mode: Optional[str] = None, *, run_config: RunConfig | None = None, auto_scout: bool = True,
+    allow_scout_handoff: Optional[bool] = None,
     parallel_retrieval: bool = False, comparison_plan: bool = False,
     planner_llm_fn: Optional[Callable[[str], Any]] = None,
     start_at_node: Optional[str] = None,
 ):
-    """Build a run-local team. Only the two reviewing roles can initiate corrective work."""
+    """Build a run-local team with unified 6-role supervised handoff dispatch."""
     run_config = run_config or RunConfig.capture()
     with use_run_config(run_config):
         run_agents = get_agent_runners(mode)
         reader_mode = normalize_mode(mode or run_config.get_agent_mode("reader") or run_config.EXECUTION_MODE)
         scout = ScoutAgent(auto_scout=auto_scout)
+        scout_handoff_allowed = bool(auto_scout) if allow_scout_handoff is None else bool(allow_scout_handoff)
         scout_mode = normalize_mode(mode or run_config.EXECUTION_MODE)
         agent_modes = resolve_agent_modes(run_config, mode)
         pilot_enabled = parallel_retrieval and agent_modes["retrieval"] == "cpu_min"
@@ -360,15 +436,23 @@ def build_research_rag_graph(
             raise ValueError("Reader returned no traceable evidence from the selected document.")
         return {**result, "source_units": units}
 
+    def _accepts_kwarg(fn: Callable[..., Any], kwarg: str) -> bool:
+        try:
+            params = inspect.signature(fn).parameters
+            return kwarg in params or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+        except (TypeError, ValueError):
+            return False
+
     def run_comparison_step(role, inputs, plan, previous):
+        use_cpu_min_reader = is_cpu_min_team and _accepts_kwarg(run_agents["reader"], "allow_pdf_fallback")
         reader = (
             partial(read_comparison_document, run_agents["reader"], inputs.get("query", ""))
-            if is_cpu_min_team
+            if use_cpu_min_reader
             else partial(_read_comparison_generic, inputs.get("query", ""))
         )
         top_k = max(len(plan.paths), min(int(inputs.get("top_k") or 8), 10))
         if role == "retrieval":
-            if is_cpu_min_team:
+            if is_cpu_min_team and _accepts_kwarg(run_agents[role], "comparison"):
                 update = run_agents[role](inputs, comparison=plan, comparison_reader=reader)
             else:
                 per_doc_k = max(2, min(top_k, 8))
@@ -413,23 +497,41 @@ def build_research_rag_graph(
         focus = [item for item in request.get("focus") or [] if isinstance(item, str) and item.strip()]
         discovery_query = focus[0] if focus else state.get("query", "")
         discovery_state = {**state, "query": discovery_query, "pdf_path": None, "pdf_paths": []}
-        update = scout.run(discovery_state)
-        trace = [
-            {
-                "action": "agent_handoff_received",
-                "agent": "scout",
-                "sender": request["sender"],
-                "recipient": "scout",
-                "reason": request["reason"],
-                "signature": request["signature"],
-                "retry_count": request["retry_count"],
-            },
-            *(update.get("reasoning_trace") or []),
-        ]
+        active_scout = scout if (scout.auto_scout or not scout_handoff_allowed) else ScoutAgent(auto_scout=True)
+        update = active_scout.run(discovery_state)
+        receipt = {
+            "action": "agent_handoff_received",
+            "agent": "scout",
+            "sender": request["sender"],
+            "recipient": "scout",
+            "reason": request["reason"],
+            "signature": request["signature"],
+            "retry_count": request["retry_count"],
+        }
+        if request.get("decision_id"):
+            receipt["decision_id"] = request["decision_id"]
+        if request.get("task_id"):
+            receipt["task_id"] = request["task_id"]
         new_paths = list(dict.fromkeys(
             update.get("pdf_paths") or ([update["pdf_path"]] if update.get("pdf_path") else [])
         ))
         merged_paths = list(dict.fromkeys([*existing_paths, *new_paths]))
+        outcome_event = {
+            "action": "handoff_outcome_recorded",
+            "agent": "scout",
+            "sender": request["sender"],
+            "recipient": "scout",
+            "signature": request["signature"],
+            "decision_id": request.get("decision_id"),
+            "task_id": request.get("task_id"),
+            "outcome_status": "discovered_new_documents" if new_paths else "no_new_documents",
+            "new_documents_count": len([p for p in new_paths if p not in existing_paths]),
+        }
+        trace = [
+            receipt,
+            *(update.get("reasoning_trace") or []),
+            outcome_event,
+        ]
         if new_paths and merged_paths:
             return {
                 **update,
@@ -437,6 +539,14 @@ def build_research_rag_graph(
                 "pdf_paths": merged_paths,
                 "no_new_evidence": False,
                 "reasoning_trace": trace,
+            }
+        if not existing_paths and update.get("answer_status"):
+            return {
+                **update,
+                "pdf_path": None,
+                "pdf_paths": [],
+                "no_new_evidence": True,
+                "reasoning_trace": [receipt, *(update.get("reasoning_trace") or [])],
             }
         # If discovery found no new PDF, preserve existing paths and let retrieval/escalation close cleanly
         return {
@@ -483,6 +593,10 @@ def build_research_rag_graph(
                 q.strip() for q in (inputs.get("sub_queries") or [])
                 if isinstance(q, str) and q.strip()
             ))
+            selected_pdfs = list(dict.fromkeys(
+                p for p in (inputs.get("pdf_paths") or ([inputs["pdf_path"]] if inputs.get("pdf_path") else []))
+                if isinstance(p, str) and p.strip()
+            ))
             if len(sub_queries) >= 2:
                 def _run_branch(branch_query: str) -> dict[str, Any]:
                     branch_state = {
@@ -524,16 +638,79 @@ def build_research_rag_graph(
                     if dag_trace:
                         fallback_trace.insert(0, dag_trace)
                     update = {**fallback_update, "reasoning_trace": fallback_trace}
+            elif parallel_retrieval and len(selected_pdfs) >= 2:
+                def _run_doc_branch(doc_path: str) -> dict[str, Any]:
+                    branch_state = {
+                        **inputs,
+                        "pdf_path": doc_path,
+                        "pdf_paths": [doc_path],
+                    }
+                    return run_agents["retrieval"](branch_state)
+
+                current_round = int(state.get("retry_count") or 0)
+                prev_seen = inputs.get("seen_chunks") or state.get("seen_chunks") or []
+                try:
+                    fanout_update, fanout_trace = execute_document_fanout_dag(
+                        selected_pdfs,
+                        _run_doc_branch,
+                        top_k=int(inputs.get("top_k") or 10),
+                        round_index=current_round,
+                        previous_seen_chunks=prev_seen,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        f"[ResearchDAG] Per-document fan-out fell back to single-pass retrieval: {exc}"
+                    )
+                    fanout_update, fanout_trace = {}, {
+                        "agent": "task_scheduler",
+                        "action": "document_fanout_fallback",
+                        "status": "fallback",
+                        "reason": str(exc),
+                    }
+                if fanout_trace.get("status") != "fallback" and fanout_update:
+                    dag_trace = fanout_trace
+                    update = {
+                        **fanout_update,
+                        "reasoning_trace": [fanout_trace],
+                    }
+                else:
+                    fallback_update = run_agents[role](inputs)
+                    fallback_trace = list(fallback_update.get("reasoning_trace") or [])
+                    if fanout_trace:
+                        fallback_trace.insert(0, fanout_trace)
+                    update = {**fallback_update, "reasoning_trace": fallback_trace}
             else:
                 update = run_agents[role](inputs)
         else:
             update = run_agents[role](inputs)
 
+        if role == "retrieval":
+            # Track cumulative seen_chunks & truthful evidence growth across retries for ALL retrieval modes
+            prev_seen_list = list(state.get("seen_chunks") or [])
+            if "retrieved_docs" in update and "no_new_evidence" not in update:
+                new_docs = [d for d in (update.get("retrieved_docs") or []) if isinstance(d, dict)]
+                prev_ids = {
+                    (d.get("id") or d.get("chunk_id") or (d.get("doc_id"), d.get("page_no"), str(d.get("text") or "")[:80]))
+                    for d in prev_seen_list
+                    if isinstance(d, dict)
+                }
+                fresh_docs = [
+                    d for d in new_docs
+                    if (d.get("id") or d.get("chunk_id") or (d.get("doc_id"), d.get("page_no"), str(d.get("text") or "")[:80])) not in prev_ids
+                ]
+                if "seen_chunks" not in update:
+                    update = {**update, "seen_chunks": [*prev_seen_list, *fresh_docs]}
+                if state.get("retry_count", 0) > 0 and prev_seen_list and not fresh_docs:
+                    update = {**update, "no_new_evidence": True}
+
         if role == "retrieval" and dag_manifest is not None:
             schema = dict(update.get("document_schema") or existing_schema)
+            sync_event = dag_trace if (isinstance(dag_trace, dict) and dag_trace.get("action") == "research_dag_executed") else None
+            if isinstance(dag_trace, dict) and dag_trace.get("action") == "document_fanout_dag_executed":
+                schema["document_fanout"] = dag_trace
             schema["research_dag"] = sync_dag_manifest_from_retrieval(
                 dag_manifest,
-                dag_trace,
+                sync_event,
                 retrieved_count=len(update.get("retrieved_docs") or []),
                 round_index=int(state.get("retry_count") or 0),
             )
@@ -556,7 +733,7 @@ def build_research_rag_graph(
             if entry.get("action") not in {"agent_handoff", "agent_handoff_received"}
         ]
         if request:
-            trace.insert(0, {
+            receipt = {
                 "action": "agent_handoff_received",
                 "agent": role,
                 "sender": request["sender"],
@@ -564,12 +741,40 @@ def build_research_rag_graph(
                 "reason": request["reason"],
                 "signature": request["signature"],
                 "retry_count": request["retry_count"],
+            }
+            if request.get("decision_id"):
+                receipt["decision_id"] = request["decision_id"]
+            if request.get("task_id"):
+                receipt["task_id"] = request["task_id"]
+            trace.insert(0, receipt)
+            outcome_status = "completed"
+            if role == "retrieval":
+                outcome_status = "no_new_evidence" if update.get("no_new_evidence") else "evidence_retrieved"
+            elif role == "reader":
+                outcome_status = "units_extracted" if update.get("source_units") else "no_units"
+            elif role == "summarizer":
+                outcome_status = "draft_revised" if (update.get("answer") or "").strip() else "draft_empty"
+            elif role == "fact_checker":
+                outcome_status = str(update.get("fact_check_label") or "evaluated")
+            trace.append({
+                "action": "handoff_outcome_recorded",
+                "agent": role,
+                "sender": request["sender"],
+                "recipient": role,
+                "signature": request["signature"],
+                "decision_id": request.get("decision_id"),
+                "task_id": request.get("task_id"),
+                "outcome_status": outcome_status,
             })
 
         if role == "reader":
             schema = dict(update.get("document_schema") or state.get("document_schema") or {})
             schema["evidence_store"] = EvidenceStore.from_state({**state, **update}).to_dict()
-            update = {**update, "document_schema": schema}
+            src_lang = detect_corpus_language(
+                update.get("source_units") or state.get("source_units") or state.get("retrieved_docs"),
+                default=state.get("source_language") or "en",
+            )
+            update = {**update, "document_schema": schema, "source_language": src_lang}
 
         if role == "summarizer" and state.get("retry_count", 0) > 0:
             # Judgements and citations from the previous draft cannot certify its replacement.
@@ -604,10 +809,12 @@ def build_research_rag_graph(
             reviewed = {
                 **state,
                 **update,
-                "allow_scout_handoff": bool(auto_scout),
+                "allow_scout_handoff": scout_handoff_allowed,
                 "reasoning_trace": [*(state.get("reasoning_trace") or []), *trace],
             }
-            decision = decide_handoff(role, reviewed)
+            decision, audit_event = evaluate_agent_handoff(role, reviewed)
+            if audit_event is not None:
+                trace.append(audit_event)
             if role == "fact_checker":
                 schema = dict(update.get("document_schema") or state.get("document_schema") or {})
                 store = EvidenceStore.from_state(reviewed)
@@ -650,7 +857,10 @@ def build_research_rag_graph(
                 update["document_schema"] = schema
             if decision is not None:
                 attempt = state.get("retry_count", 0) + 1
-                trace.append({**decision.as_trace(), "agent": role, "retry_count": attempt})
+                handoff_event = {**decision.as_trace(), "agent": role, "retry_count": attempt}
+                if audit_event and audit_event.get("decision_id"):
+                    handoff_event["decision_id"] = audit_event["decision_id"]
+                trace.append(handoff_event)
                 update["retry_count"] = attempt
         update["reasoning_trace"] = trace
         return update
@@ -681,6 +891,26 @@ def build_research_rag_graph(
             result["confidence"] = "low"
         else:
             result.setdefault("confidence", "high" if state.get("verified_claims") else "low")
+        if result.get("agent_decision") is not None:
+            w_trace = list(result.get("reasoning_trace") or [])
+            reviewed_w = {
+                **state,
+                **result,
+                "allow_scout_handoff": scout_handoff_allowed,
+                "reasoning_trace": [*(state.get("reasoning_trace") or []), *w_trace],
+            }
+            w_decision, w_audit = evaluate_agent_handoff("writer", reviewed_w)
+            if w_audit is not None:
+                w_trace.append(w_audit)
+            if w_decision is not None:
+                attempt = state.get("retry_count", 0) + 1
+                w_handoff = {**w_decision.as_trace(), "agent": "writer", "retry_count": attempt}
+                if w_audit and w_audit.get("decision_id"):
+                    w_handoff["decision_id"] = w_audit["decision_id"]
+                w_trace.append(w_handoff)
+                result = {**result, "retry_count": attempt, "reasoning_trace": w_trace}
+            else:
+                result = {**result, "reasoning_trace": w_trace}
         return _mark_write_stage(state, attach_answer_figures(state, result))
 
     def _escalation(state: AgentState) -> dict[str, Any]:
@@ -694,22 +924,13 @@ def build_research_rag_graph(
         return run_coro_sync(review_comparison(state, evidence["required_sources"], run_specialist, _writer_node))
 
     def _after_comparison_review(state: AgentState) -> str:
-        last = state["reasoning_trace"][-1]
-        if last.get("action") != "agent_handoff":
-            return END
-        return "comparison_review_node" if last["recipient"] == "summarizer" else f"{last['recipient']}_node"
+        return dispatch_next_node("comparison_review_node", state, comparison_plan=True)
 
     def _after_retrieval(state: AgentState) -> str:
-        schedule = comparison_schedule(state.get("reasoning_trace") or [])
-        if schedule is None:
-            return "reader_node"
-        return "comparison_review_node" if schedule["status"] == "COMPLETED" else END
+        return dispatch_next_node("retrieval_node", state, comparison_plan=comparison_enabled)
 
     def _after_reader(state: AgentState) -> str:
-        schedule = comparison_schedule(state.get("reasoning_trace") or [])
-        if schedule is None:
-            return route_after_reader(state)
-        return "comparison_review_node" if schedule["status"] == "COMPLETED" else END
+        return dispatch_next_node("reader_node", state, comparison_plan=comparison_enabled)
 
     workflow = StateGraph(AgentState)
 
@@ -751,7 +972,11 @@ def build_research_rag_graph(
     workflow.add_conditional_edges("scout_node", route_after_scout, ["retrieval_node", END])
     if comparison_enabled:
         workflow.add_node("comparison_review_node", use_run_config(run_config)(_comparison_review))
-        workflow.add_conditional_edges("retrieval_node", _after_retrieval, ["reader_node", "comparison_review_node", END])
+        workflow.add_conditional_edges(
+            "retrieval_node",
+            _after_retrieval,
+            ["reader_node", "scout_node", "comparison_review_node", END],
+        )
         workflow.add_conditional_edges(
             "reader_node",
             _after_reader,
@@ -762,7 +987,11 @@ def build_research_rag_graph(
             ["retrieval_node", "reader_node", "comparison_review_node", "scout_node", END],
         )
     else:
-        workflow.add_edge("retrieval_node", "reader_node")
+        workflow.add_conditional_edges(
+            "retrieval_node",
+            route_after_retrieval,
+            ["reader_node", "scout_node"],
+        )
         workflow.add_conditional_edges(
             "reader_node",
             route_after_reader,
@@ -776,7 +1005,9 @@ def build_research_rag_graph(
     workflow.add_conditional_edges(
         "fact_checker_node", route_after_fact_check, [*correction_targets, "scout_node", "writer_node", "escalation_node"]
     )
-    workflow.add_edge("writer_node", END)
+    workflow.add_conditional_edges(
+        "writer_node", route_after_writer, ["summarizer_node", "fact_checker_node", END]
+    )
     workflow.add_edge("escalation_node", END)
 
     return workflow.compile()

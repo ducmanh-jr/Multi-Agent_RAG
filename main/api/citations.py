@@ -31,6 +31,18 @@ def _document_aliases(documents: list[dict[str, Any]]) -> dict[str, set[str]]:
     return aliases
 
 
+def _valid_bbox(raw: Any) -> list[float] | None:
+    if not isinstance(raw, (list, tuple)) or len(raw) < 4:
+        return None
+    try:
+        x0, y0, x1, y1 = (float(raw[0]), float(raw[1]), float(raw[2]), float(raw[3]))
+    except (TypeError, ValueError):
+        return None
+    if x1 <= x0 or y1 <= y0:
+        return None
+    return [round(x0, 2), round(y0, 2), round(x1, 2), round(y1, 2)]
+
+
 def citation_references(
     trace: list[dict[str, Any]], spans: list[dict[str, Any]], documents: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
@@ -39,12 +51,14 @@ def citation_references(
         return []
 
     aliases = _document_aliases(documents)
-    catalog_ids = {document["id"] for document in documents}
-    locations = {
-        span["id"]: citation_location(span)
+    docs_by_id = {document["id"]: document for document in documents}
+    catalog_ids = set(docs_by_id)
+    spans_by_id = {
+        span["id"]: span
         for span in spans
         if isinstance(span, dict) and isinstance(span.get("id"), str)
     }
+    locations = {sid: citation_location(sp) for sid, sp in spans_by_id.items()}
     resolved = []
     for ref in references:
         if not isinstance(ref, dict) or type(ref.get("ref_id")) is not int or ref["ref_id"] < 1:
@@ -60,7 +74,29 @@ def citation_references(
             matches = aliases.get(source_id, set())
             document_id = next(iter(matches)) if len(matches) == 1 else None
         if document_id in catalog_ids:
-            resolved.append({"ref_id": ref["ref_id"], "document_id": document_id, "page": page, "evidence_id": evidence_id})
+            entry: dict[str, Any] = {
+                "ref_id": ref["ref_id"],
+                "document_id": document_id,
+                "page": page,
+                "evidence_id": evidence_id,
+            }
+            span_obj = spans_by_id.get(evidence_id) or {}
+            bbox = _valid_bbox(ref.get("bbox") or span_obj.get("bbox"))
+            if bbox is not None:
+                entry["bbox"] = bbox
+                bbox_q = ",".join(f"{v:.2f}" for v in bbox)
+                entry["crop_url"] = f"/api/documents/{document_id}/crop?page={page}&bbox={bbox_q}"
+                doc_path = (docs_by_id.get(document_id) or {}).get("path")
+                if doc_path and Path(doc_path).exists():
+                    try:
+                        from core.pdf_ingest import build_pdfjs_region_descriptor
+
+                        region_desc = build_pdfjs_region_descriptor(doc_path, page, bbox)
+                        if region_desc:
+                            entry["pdfjs_region"] = region_desc
+                    except Exception:
+                        pass
+            resolved.append(entry)
     return resolved
 
 
@@ -128,17 +164,35 @@ def pin_citation_provenance(
 
 def format_run_evidence(spans: list[Any], references: list[dict[str, Any]]) -> list[dict[str, Any]]:
     spans_by_id = {s["id"]: s for s in spans if isinstance(s, dict) and isinstance(s.get("id"), str)}
+    refs_by_ev_id = {
+        ref["evidence_id"]: ref
+        for ref in references
+        if isinstance(ref, dict) and isinstance(ref.get("evidence_id"), str)
+    }
     canonical_docs = {
-        citation_location(spans_by_id[ref["evidence_id"]]): ref["document_id"] for ref in references
+        citation_location(spans_by_id[ref["evidence_id"]]): ref["document_id"]
+        for ref in references
+        if ref.get("evidence_id") in spans_by_id
     }
     evidence = []
     for i, raw in enumerate(spans, start=1):
         span = raw if isinstance(raw, dict) else {"quote": str(raw)}
         location = citation_location(span)
         doc_id, page = location or ("", None)
+        ev_id = span.get("id") or f"legacy_ev_{i}"
+        matched_ref = refs_by_ev_id.get(ev_id) or {}
+        resolved_doc_id = matched_ref.get("document_id") or canonical_docs.get(location, doc_id)
+        regions = list(span.get("regions") or [])
+        if not regions:
+            if isinstance(matched_ref.get("pdfjs_region"), dict):
+                regions = [matched_ref["pdfjs_region"]]
+            else:
+                bbox = _valid_bbox(span.get("bbox") or matched_ref.get("bbox"))
+                if bbox is not None:
+                    regions = [{"page": page, "bbox": bbox}]
         evidence.append({
-            "id": span.get("id") or f"legacy_ev_{i}",
-            "document_id": canonical_docs.get(location, doc_id),
+            "id": ev_id,
+            "document_id": resolved_doc_id,
             "filename": doc_id,
             "quote": evidence_quote(span),
             "page": page,
@@ -146,6 +200,6 @@ def format_run_evidence(spans: list[Any], references: list[dict[str, Any]]) -> l
             "end": span.get("end"),
             "relevance": "Đoạn bằng chứng do hệ thống thu thập",
             "chunk_id": span.get("source_unit_id") or span.get("unit_id") or f"legacy_ch_{i}",
-            "regions": span.get("regions") or [],
+            "regions": regions,
         })
     return evidence

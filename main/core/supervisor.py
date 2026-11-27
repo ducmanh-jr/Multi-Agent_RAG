@@ -33,11 +33,133 @@ _STOP_WORDS_VI_EN = {
 }
 
 
+_FOLLOWUP_TRIGGER_RE = re.compile(
+    r"(?:^\s*(?:còn|thế\s+còn|vậy\s+còn|và\s+còn|còn\s+trên|còn\s+ở|còn\s+với|với\s+nó|"
+    r"what\s+about|how\s+about|and\s+on|and\s+for|and\s+in|on\s+the\s+test|on\s+test|"
+    r"in\s+the\s+test|in\s+validation|trên\s+tập\s+test|trên\s+tập\s+kiểm\s+tra)\b"
+    r"|\b(?:hai\s+phương\s+pháp\s+(?:đó|này|trên)|phương\s+pháp\s+(?:đó|trên)|mô\s+hình\s+(?:đó|trên)|"
+    r"chúng|của\s+nó|those\s+methods|these\s+methods|that\s+model|the\s+same\s+(?:methods?|models?|pair)|"
+    r"compare\s+them|between\s+them)\b)",
+    re.IGNORECASE,
+)
+_HISTORY_METHOD_PAIR_RE = re.compile(
+    r"\b(?:(?:Method|Model|System|Group|Baseline|Approach|Variant|Phương\s+pháp|Mô\s+hình|Nhóm)\s+[A-Z0-9][A-Za-z0-9._-]{0,16}"
+    r"|[A-Z][A-Za-z0-9]+-[A-Za-z0-9.]+|[A-Z]{2,}[0-9]*)\b",
+)
+_HISTORY_SINGLE_LETTER_PAIR_RE = re.compile(
+    r"\b(?:phương\s+pháp|mô\s+hình|method|model|group|system)\s+([A-Z])\s+(?:hơn|và|so\s+với|vs\.?|versus|and|or|exceeds|outperforms|than)\s+(?:(?:phương\s+pháp|mô\s+hình|method|model|group|system)\s+)?([A-Z])\b",
+    re.IGNORECASE,
+)
+_HISTORY_METRIC_RE = re.compile(
+    r"\b(?:điểm\s+phần\s+trăm|percentage\s+points?|accuracy|độ\s+chính\s+xác|f1|bleu|rouge|"
+    r"ndcg(?:@\d+)?|mrr(?:@\d+)?|recall(?:@\d+)?|precision|latency|độ\s+trễ|throughput|loss|"
+    r"yield|năng\s+suất|liters?|lít|days?|ngày|nitrate|nitrat)\b",
+    re.IGNORECASE,
+)
+
+
 class AgenticSupervisorPlanner:
     """
     Unified Supervisor & Query Planner used by all 6 modes.
     Can run deterministically in < 2ms (for CPU Min / Hybrid fast-path) or refine via LLM.
     """
+
+    def resolve_conversational_query(
+        self,
+        query: str,
+        chat_history: Optional[list[dict[str, Any]]] = None,
+        *,
+        existing_resolved: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """
+        Deterministically resolves follow-up / elliptical queries against prior conversation turns
+        (e.g. Turn 1: 'Trong Hình 3, phương pháp B hơn A bao nhiêu điểm phần trăm?' ->
+        Turn 2: 'Còn trên tập test?' inherits ['Method A', 'Method B', 'B', 'A', 'điểm phần trăm']).
+        Never hallucinates facts; preserves the original user query untouched for display.
+        """
+        clean_q = (query or "").strip()
+        if existing_resolved and existing_resolved.strip() and existing_resolved.strip() != clean_q:
+            # Already resolved before a checkpoint interrupt -> preserve verbatim on resume
+            return {
+                "resolved_query": existing_resolved.strip(),
+                "query_with_context": existing_resolved.strip(),
+                "inherited_entities": [],
+                "is_followup": True,
+            }
+        if not clean_q or not chat_history:
+            return {
+                "resolved_query": clean_q,
+                "query_with_context": clean_q,
+                "inherited_entities": [],
+                "is_followup": False,
+            }
+
+        word_count = len(clean_q.split())
+        is_followup = bool(_FOLLOWUP_TRIGGER_RE.search(clean_q)) or (
+            word_count <= 7 and not re.search(r"\b(?:Table|Bảng|Figure|Hình|Equation|Eq\.?)\s*\d+\b", clean_q, re.I)
+            and len(re.findall(r"\b[A-ZĐ][A-Za-zÀ-ỹ0-9_-]{2,}\b", clean_q)) <= 1
+        )
+        if not is_followup:
+            return {
+                "resolved_query": clean_q,
+                "query_with_context": clean_q,
+                "inherited_entities": [],
+                "is_followup": False,
+            }
+
+        recent_texts = [
+            str(turn.get("content") or "").strip()
+            for turn in (chat_history or [])[-4:]
+            if isinstance(turn, dict) and str(turn.get("content") or "").strip()
+        ]
+        if not recent_texts:
+            return {
+                "resolved_query": clean_q,
+                "query_with_context": clean_q,
+                "inherited_entities": [],
+                "is_followup": False,
+            }
+
+        history_blob = " \n ".join(recent_texts)
+        q_low = clean_q.lower()
+        inherited: list[str] = []
+
+        # 1. Explicit single-letter method/model pairs (e.g. "phương pháp B hơn A" -> ["B", "A", "Method B", "Method A"])
+        for m in _HISTORY_SINGLE_LETTER_PAIR_RE.finditer(history_blob):
+            g1, g2 = m.group(1).upper(), m.group(2).upper()
+            for tok in (f"Method {g1}", f"Method {g2}", g1, g2):
+                if tok not in inherited and tok.lower() not in q_low:
+                    inherited.append(tok)
+
+        # 2. Named methods, models, acronyms from recent turns
+        for m in _HISTORY_METHOD_PAIR_RE.finditer(history_blob):
+            tok = " ".join(m.group(0).split()).strip(".,;:()")
+            if tok and tok.lower() not in _STOP_WORDS_VI_EN and tok.lower() not in q_low and tok not in inherited:
+                inherited.append(tok)
+
+        # 3. Core metrics/units from recent turns so retrieval targets the matching column/figure
+        metrics: list[str] = []
+        for m in _HISTORY_METRIC_RE.finditer(history_blob):
+            mt = " ".join(m.group(0).split())
+            if mt and mt.lower() not in q_low and mt not in metrics:
+                metrics.append(mt)
+
+        context_anchors = list(dict.fromkeys([*inherited[:6], *metrics[:3]]))
+        if not context_anchors:
+            return {
+                "resolved_query": clean_q,
+                "query_with_context": clean_q,
+                "inherited_entities": [],
+                "is_followup": False,
+            }
+
+        resolved = f"{clean_q} ({', '.join(context_anchors)})"
+        return {
+            "resolved_query": resolved,
+            "query_with_context": resolved,
+            "inherited_entities": inherited[:6],
+            "is_followup": True,
+        }
 
     def plan_document_comparison(self, state: AgentState) -> ComparisonPlan | None:
         paths = tuple(dict.fromkeys(state.get("pdf_paths") or []))

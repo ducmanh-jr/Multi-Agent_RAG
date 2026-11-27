@@ -16,23 +16,27 @@ from core.config import get_run_settings
 from core.state import AgentState
 
 
-Sender = Literal["summarizer", "fact_checker", "reader", "retrieval"]
-Recipient = Literal["retrieval", "reader", "summarizer", "scout"]
+Sender = Literal["supervisor", "scout", "retrieval", "reader", "summarizer", "fact_checker", "writer"]
+Recipient = Literal["scout", "retrieval", "reader", "summarizer", "fact_checker", "writer"]
 DecisionAction = Literal[
     "request_more_evidence",
     "request_unread_chunks",
     "revise_draft",
     "revise_rejected_claims",
     "discover_additional_literature",
+    "escalate_or_finalize",
     "proceed",
 ]
 
-# Policy matrix: which target agents each source agent is allowed to propose
+# Policy matrix: which target agents each of the 6 specialist roles (+ supervisor) may propose
 ALLOWED_HANDOFF_TARGETS: dict[str, set[str]] = {
+    "supervisor": {"scout", "retrieval"},
+    "scout": {"retrieval"},
+    "retrieval": {"scout", "reader"},
+    "reader": {"retrieval", "reader", "scout"},
     "summarizer": {"retrieval", "reader", "summarizer"},
     "fact_checker": {"retrieval", "reader", "summarizer", "scout"},
-    "reader": {"retrieval", "reader", "scout"},
-    "retrieval": {"scout"},
+    "writer": {"summarizer", "fact_checker"},
 }
 
 ACTION_TO_HANDOFF_REASON: dict[str, str] = {
@@ -71,13 +75,14 @@ class Handoff:
     reason: str
     focus: tuple[str, ...]
     source_ids: tuple[str, ...] = ()
+    task_id: str | None = None
 
     def as_trace(self) -> dict[str, Any]:
         # Ordering of independent gaps or chunks is immaterial when detecting a repeated request.
         sig = _compute_handoff_signature(
             self.sender, self.recipient, self.reason, self.focus, self.source_ids
         )
-        return {
+        payload: dict[str, Any] = {
             "action": "agent_handoff",
             "node": self.sender,
             "sender": self.sender,
@@ -87,12 +92,15 @@ class Handoff:
             "source_ids": list(self.source_ids),
             "signature": sig,
         }
+        if self.task_id:
+            payload["task_id"] = self.task_id
+        return payload
 
 
 class AgentDecision:
     """
     Structured proposal emitted by a specialist agent under Supervised Agent Autonomy.
-    Supports both canonical M3 fields (`decision_id`, `source_agent`, `action`, `reason`,
+    Supports both canonical M3/M4 fields (`decision_id`, `task_id`, `source_agent`, `action`, `reason`,
     `evidence_refs`, `parameters`, `signature`, `round_index`) and directional aliases
     (`status`, `next_action`, `target_agent`, `evidence_ids`, `suggested_queries`).
     """
@@ -113,6 +121,7 @@ class AgentDecision:
         round_index: int = 0,
         status: str = "completed",
         decision_id: str | None = None,
+        task_id: str | None = None,
         signature: str | None = None,
     ):
         self.source_agent: Sender = source_agent
@@ -165,6 +174,7 @@ class AgentDecision:
             source_ids,
         )
         self.decision_id = decision_id or f"dec_{self.signature[:12]}"
+        self.task_id: str | None = str(task_id or params.get("task_id") or "").strip() or None
 
     def to_handoff(self) -> Handoff | None:
         if self.action == "proceed" or not self.target_agent:
@@ -176,10 +186,11 @@ class AgentDecision:
             reason=self.handoff_reason,
             focus=self.focus,
             source_ids=source_ids,
+            task_id=self.task_id,
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "decision_id": self.decision_id,
             "source_agent": self.source_agent,
             "status": self.status,
@@ -192,6 +203,9 @@ class AgentDecision:
             "signature": self.signature,
             "round_index": self.round_index,
         }
+        if self.task_id:
+            payload["task_id"] = self.task_id
+        return payload
 
 
 def reflection_limit(state: AgentState) -> int:
@@ -305,6 +319,7 @@ def _coerce_explicit_decision(sender: Sender, raw: Any, state: AgentState) -> Ag
             round_index=int(raw.get("round_index", state.get("retry_count") or 0)),
             status=str(raw.get("status") or "completed"),
             decision_id=raw.get("decision_id"),
+            task_id=raw.get("task_id"),
             signature=raw.get("signature"),
         )
     return None
@@ -374,7 +389,7 @@ def supervisor_evaluate_decision(
         rejection_reason = f"policy_target_not_permitted:{decision.source_agent}->{target}"
     elif target == "scout" and not state.get("allow_scout_handoff"):
         rejection_reason = "scout_handoff_disabled"
-    elif target == "retrieval" and state.get("no_new_evidence") and not state.get("allow_scout_handoff"):
+    elif target == "retrieval" and state.get("no_new_evidence"):
         rejection_reason = "no_new_evidence_in_corpus"
     else:
         schema = state.get("document_schema")
@@ -396,9 +411,11 @@ def supervisor_evaluate_decision(
         "action": "supervisor_decision_evaluated",
         "node": "SupervisorGatekeeper",
         "decision_id": decision.decision_id,
+        "task_id": decision.task_id,
         "source_agent": decision.source_agent,
         "proposed_action": decision.action,
         "target_agent": decision.target_agent,
+        "reason": decision.reason or decision.handoff_reason,
         "round_index": current_round,
         "approved": rejection_reason is None,
         "rejection_reason": rejection_reason,
@@ -409,8 +426,13 @@ def supervisor_evaluate_decision(
     return decision.to_handoff(), audit_event
 
 
+def evaluate_agent_handoff(sender: Sender, state: AgentState) -> tuple[Handoff | None, dict[str, Any] | None]:
+    """Propose and evaluate a handoff for `sender`, returning both approved Handoff and Supervisor audit trace."""
+    decision = propose_agent_decision(sender, state)
+    return supervisor_evaluate_decision(decision, state)
+
+
 def decide_handoff(sender: Sender, state: AgentState) -> Handoff | None:
     """Evaluates whether `sender`'s proposal is approved by the Supervisor for handoff."""
-    decision = propose_agent_decision(sender, state)
-    approved_handoff, _ = supervisor_evaluate_decision(decision, state)
+    approved_handoff, _ = evaluate_agent_handoff(sender, state)
     return approved_handoff
