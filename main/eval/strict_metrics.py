@@ -16,15 +16,25 @@ Key Corrections over Legacy Metrics:
    - Zero tolerance for fabricated numbers, percentages, or years.
 """
 
+import math
 import re
 from typing import Dict, Any, List, Set, Tuple
+
+from eval.three_layer_evaluator import (
+    check_polarity_alignment,
+    expand_cross_lingual_tokens,
+    extract_canonical_greater_pairs,
+    extract_quantities,
+    has_refusal_phrasing,
+    normalize_word_numbers,
+)
 
 
 _STRICT_ABSTENTION_PATTERNS = [
     r"không\s+(?:được\s+|hoàn\s+toàn\s+)*(?:đề\s+cập|nêu|nhắc\s+(?:đến|tới))",
     r"không\s+tìm\s+thấy",
     r"không\s+có\s+(?:thông\s+tin|dữ\s+liệu|bằng\s+chứng)",
-    r"không\s+đủ\s+bằng\s+chứng",
+    r"(?:không|chưa)\s+đủ\s+bằng\s+chứng",
     r"chưa\s+có\s+dữ\s+liệu",
     r"tài\s+liệu.*không.*(?:đề\s+cập|chứa|nêu|cung\s+cấp)",
     r"insufficient evidence",
@@ -40,13 +50,15 @@ _STOPWORDS = {
     "các", "những", "này", "đó", "trong", "để", "có", "từ", "về", "theo",
     "tại", "bởi", "ra", "vào", "lại", "đến", "sẽ", "đã", "đang", "một",
     "the", "and", "for", "with", "from", "this", "that", "are", "was",
-    "were", "been", "have", "has", "had", "which", "what", "where",
+    "were", "been", "have", "has", "had", "which", "what", "where", "took", "it",
 }
 
 
 def is_strict_abstention(answer: str) -> bool:
     """Strictly checks if the response is an explicit refusal/abstention."""
-    if not answer or len(answer.strip()) < 10:
+    if not answer or not answer.strip():
+        return False
+    if has_refusal_phrasing(answer):
         return True
     lower = answer.lower()
     for pat in _STRICT_ABSTENTION_PATTERNS:
@@ -150,43 +162,76 @@ def compute_strict_groundedness(
     if not full_context.strip():
         return 0.0
 
-    # Sentence-level claim verification with localized numeric guard
+    # Sentence-level claim verification WITHOUT dropping short factual sentences (<= 25 chars)
     clean_ans = re.sub(r"<think>.*?</think>", "", answer, flags=re.DOTALL)
-    raw_sents = [
-        s.strip()
-        for s in re.split(r"(?<=[.!?])\s+|\n+", clean_ans)
-        if len(s.strip()) > 25
-    ]
+    raw_sents = []
+    for seg in re.split(r"(?<=[.!?])\s+|\n+", clean_ans):
+        s_clean = seg.strip()
+        if not s_clean or s_clean.startswith("#") or set(s_clean) <= {"-", "=", "*"}:
+            continue
+        s_no_cite = re.sub(r"\[\d{1,3}\]", "", s_clean).strip()
+        if len(s_no_cite) >= 2:
+            raw_sents.append(s_clean)
     if not raw_sents:
-        return 1.0
+        return 0.0
 
-    ctx_norm = full_context.replace(",", ".")
-    ctx_tokens = {
-        w for w in re.findall(r"\w+", full_context.lower())
-        if w not in _STOPWORDS and len(w) > 1
-    }
+    ctx_quants = extract_quantities(full_context)
+    ctx_nums_str = set(extract_numbers_and_years_strict(normalize_word_numbers(full_context)))
+    ctx_bilingual_tokens = expand_cross_lingual_tokens(full_context) - _STOPWORDS
+    ctx_rel_pairs = extract_canonical_greater_pairs(full_context)
 
     verified_count = 0
     for s in raw_sents:
-        # Check if numbers in this sentence are grounded in context
-        s_nums = extract_numbers_and_years_strict(s)
+        # 1. Negation polarity alignment against context sentences
+        pol_ok, _ = check_polarity_alignment(s, full_context)
+        if not pol_ok:
+            continue
+
+        # 2. Directed subject-object comparison alignment when comparative entities appear
+        s_rel_pairs = extract_canonical_greater_pairs(s)
+        if s_rel_pairs and ctx_rel_pairs:
+            if any((lo, hi) in ctx_rel_pairs for hi, lo in s_rel_pairs):
+                continue
+
+        # 3. Quantity + unit + word-number verification ("fourteen" <-> "14" <-> "mười bốn", "km/h" != "m/h")
+        s_quants = extract_quantities(s)
         num_ok = True
-        for num in s_nums:
-            raw_variants = {num, num.replace(".", ","), num.rstrip("%")}
-            if not any(v in ctx_norm for v in raw_variants if v):
+        for s_val, s_unit, _ in s_quants:
+            matched_q = any(
+                math.isclose(c_val, s_val, abs_tol=1e-4)
+                and (not s_unit or not c_unit or s_unit == c_unit)
+                for c_val, c_unit, _ in ctx_quants
+            )
+            if not matched_q:
                 num_ok = False
                 break
         if not num_ok:
             continue
 
+        for num in extract_numbers_and_years_strict(normalize_word_numbers(s)):
+            raw_variants = {num, num.replace(".", ","), num.rstrip("%")}
+            if not (raw_variants & ctx_nums_str) and not any(
+                math.isclose(c_val, float(num.rstrip("%")), abs_tol=1e-4)
+                for c_val, _, _ in ctx_quants
+                if re.match(r"^-?\d+(?:\.\d+)?$", num.rstrip("%"))
+            ):
+                num_ok = False
+                break
+        if not num_ok:
+            continue
+
+        # 4. Cross-lingual token support (supports faithful EN<->VI translations as well as monolingual)
+        s_norm = normalize_word_numbers(re.sub(r"\[\d{1,3}\]", " ", s)).lower()
         s_tokens = {
-            w for w in re.findall(r"\w+", s.lower())
-            if w not in _STOPWORDS and len(w) > 1
+            w for w in re.findall(r"[a-z0-9à-ỹ]+", s_norm)
+            if w not in _STOPWORDS and (len(w) > 1 or w.isdigit())
         }
         if not s_tokens:
             continue
-        # Strict overlap ratio: at least 45% non-stopword tokens must exist in context
-        overlap = len(s_tokens & ctx_tokens) / len(s_tokens)
+        s_expanded = expand_cross_lingual_tokens(s) - _STOPWORDS
+        direct_hits = len(s_tokens & ctx_bilingual_tokens)
+        bridged_hits = len(s_expanded & ctx_bilingual_tokens)
+        overlap = max(direct_hits / len(s_tokens), min(1.0, bridged_hits / max(len(s_tokens), 1)))
         if overlap >= 0.45:
             verified_count += 1
 
@@ -200,11 +245,19 @@ def compute_strict_abstention_accuracy(
 ) -> float:
     """
     Strict Abstention Accuracy:
-    - If unanswerable: Must explicitly abstain (1.0). Spouting other content = 0.0.
-    - If answerable: Must NOT abstain (1.0). Inappropriately giving up = 0.0.
+    - If unanswerable: Must explicitly abstain AND not state trap_entities without refusal framing (1.0).
+    - If answerable: Must provide a non-empty non-abstaining response (1.0).
     """
+    if not answer or not answer.strip():
+        return 0.0
     abstained = is_strict_abstention(answer)
     if is_unanswerable:
-        return 1.0 if abstained else 0.0
-    else:
-        return 1.0 if not abstained else 0.0
+        if not abstained:
+            return 0.0
+        if trap_entities:
+            lower = answer.lower()
+            # Reject leaky responses that assert concrete quantities alongside trap entities
+            if extract_quantities(answer) and any(ent.lower() in lower for ent in trap_entities if ent):
+                return 0.0
+        return 1.0
+    return 1.0 if not abstained else 0.0

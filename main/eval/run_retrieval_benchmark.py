@@ -27,7 +27,7 @@ if str(MAIN_DIR) not in sys.path:
 from agents.agent1_retrieval.tools.remote_dense import DEFAULT_DENSE_RRF_K, DEFAULT_DENSE_WEIGHT
 from core.config import RunConfig, settings, use_run_config
 from core.tools import clear_pdf_cache
-from eval.retrieval_metrics import CANDIDATE_LIMIT, METRICS, score_ranked_pages
+from eval.retrieval_metrics import CANDIDATE_LIMIT, METRICS, REGION_METRICS, score_ranked_pages, score_ranked_regions
 
 DATA_DIR = Path(__file__).with_name("retrieval_benchmark")
 SPLITS = ("dev", "holdout")
@@ -177,10 +177,32 @@ def _summarize(records: list[dict[str, Any]]) -> dict[str, Any]:
         "rerank_changed": sum(record["rerank"].get("changed", False) for record in records),
         "p95_ms": round(latencies[math.ceil(0.95 * len(latencies)) - 1], 3),
     }
-    for metric in METRICS:
-        values = [record[metric] for record in records if record[metric] is not None]
+    for metric in (*METRICS, *REGION_METRICS):
+        values = [record[metric] for record in records if record.get(metric) is not None]
         result[metric] = round(statistics.mean(values), 6) if values else None
     return result
+
+
+def categorize_retrieval_miss(record: dict[str, Any], case: dict[str, Any]) -> str | None:
+    """Assigns a deterministic root-cause tag when a case drops below perfect Recall@5."""
+    if not record.get("answerable"):
+        return None
+    r5 = record.get("recall_at_5")
+    rr5 = record.get("region_recall_at_5")
+    if r5 is not None and r5 >= 1.0 and (rr5 is None or rr5 >= 1.0):
+        return None
+    cat = str(case.get("category") or "")
+    if r5 is not None and r5 >= 1.0 and rr5 is not None and rr5 < 1.0:
+        return "region_or_anchor_miss_on_right_page"
+    if cat == "vietnamese_english":
+        return "cross_lingual_lexical_gap"
+    if cat in {"table", "figure"}:
+        return f"{cat}_region_miss"
+    if cat == "multi_document":
+        return "multi_document_coverage_miss"
+    if cat == "multi_hop":
+        return "multi_hop_secondary_page_miss"
+    return "sparse_lexical_miss"
 
 
 def evaluate_ranker(cases: list[dict[str, Any]], retrieve: Retrieve) -> dict[str, Any]:
@@ -191,20 +213,28 @@ def evaluate_ranker(cases: list[dict[str, Any]], retrieve: Retrieve) -> dict[str
         chunks, trace = retrieve(case["question"], tuple(case["documents"]))
         latency = (time.perf_counter() - started) * 1000
         ranked = []
+        ranked_chunks = []
         for chunk in chunks[:CANDIDATE_LIMIT]:
             document = scope.get(Path(str(chunk.get("doc_id") or "")).name.casefold().removesuffix(".pdf"))
             page = chunk.get("page_no") or chunk.get("page")
             if document is None or type(page) is not int or page < 1:
                 raise ValueError(f"{case['id']}: retriever returned an invalid or out-of-scope source")
             ranked.append((document, page))
+            ranked_chunks.append((document, chunk))
         relevant = {(label["document"], label["page"]): label["grade"] for label in case["gold_sources"]}
-        records.append({
+        page_scores = score_ranked_pages(ranked, relevant)
+        region_scores = score_ranked_regions(ranked_chunks, case["gold_sources"])
+        rec = {
             "id": case["id"], "category": case["category"], "language": case["language"],
             "answerable": bool(relevant), "ranking": ranked, "latency_ms": round(latency, 3),
             "dense": trace["dense"], "rerank": trace["rerank"],
             "passage_ids": [chunk.get("id") for chunk in chunks[:CANDIDATE_LIMIT]],
-            **score_ranked_pages(ranked, relevant),
-        })
+            **page_scores,
+            **region_scores,
+        }
+        rec["root_cause"] = categorize_retrieval_miss(rec, case)
+        records.append(rec)
+    error_breakdown = Counter(r["root_cause"] for r in records if r.get("root_cause"))
     return {
         "overall": _summarize(records),
         "by_category": {
@@ -215,6 +245,7 @@ def evaluate_ranker(cases: list[dict[str, Any]], retrieve: Retrieve) -> dict[str
             language: _summarize([record for record in records if record["language"] == language])
             for language in sorted({record["language"] for record in records})
         },
+        "error_analysis": dict(error_breakdown),
         "records": records,
     }
 

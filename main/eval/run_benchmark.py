@@ -20,11 +20,20 @@ EVAL_DIR = Path(__file__).resolve().parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from core.config import settings
+from core.config import RunConfig, settings, use_run_config
+from core.token_usage import TOKEN_USAGE_ACTION, capture_token_usage
+from core.tools import clear_pdf_cache, load_or_parse_selected_pdf
+from core.worker_observations import (
+    PROVIDER_INFERENCE_ACTION,
+    WORKER_INFERENCE_ACTION,
+    capture_worker_observations,
+    drain_worker_observations,
+)
 from eval.metrics import evaluate_single_prediction
 from modes.registry import MODE_MAP, normalize_mode
 
 ALL_MODES = list(dict.fromkeys(normalize_mode(mode) for mode in MODE_MAP))
+CACHE_REGIMES = ("cold", "warm_no_cache", "warm_cached")
 LEGACY_DATASET = EVAL_DIR / "benchmark_120.jsonl"
 PILOT_DATASET = EVAL_DIR / "benchmark_pilot.json"
 
@@ -124,15 +133,94 @@ def _summarize_records(records: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _extract_observation_summary(trace: list[dict[str, Any]]) -> dict[str, Any]:
+    worker_calls = [e for e in trace if isinstance(e, dict) and e.get("action") == WORKER_INFERENCE_ACTION]
+    provider_calls = [e for e in trace if isinstance(e, dict) and e.get("action") == PROVIDER_INFERENCE_ACTION]
+    token_calls = [e for e in trace if isinstance(e, dict) and e.get("action") == TOKEN_USAGE_ACTION]
+
+    served_models: list[str] = []
+    for ev in worker_calls:
+        if ev.get("model"):
+            rev = ev.get("revision") or "unpinned"
+            served_models.append(f"kaggle:{ev['model']}@{rev[:12]}")
+    for ev in provider_calls:
+        if ev.get("model_version") or ev.get("served_model"):
+            ver = ev.get("model_version") or ev.get("served_model")
+            served_models.append(f"{ev.get('provider', 'cloud')}:{ver}")
+
+    used_fallback = any(
+        ev.get("status") in {"fallback", "error", "unavailable", "circuit_open", "http_error", "transport_error"}
+        or ev.get("provider") == "heuristic_fallback"
+        for ev in [*worker_calls, *provider_calls]
+    )
+    cache_hits = sum(
+        1 for ev in [*worker_calls, *provider_calls] if ev.get("status") == "cache_hit"
+    )
+    reported_tokens = sum(
+        int(ev.get("total_tokens", 0)) for ev in token_calls if ev.get("status") == "reported"
+    )
+    return {
+        "served_models": list(dict.fromkeys(served_models)),
+        "used_fallback": used_fallback,
+        "cache_hits": cache_hits,
+        "reported_tokens": reported_tokens,
+        "worker_observations": [
+            {k: v for k, v in ev.items() if k != "action"} for ev in worker_calls
+        ],
+        "provider_observations": [
+            {k: v for k, v in ev.items() if k != "action"} for ev in provider_calls
+        ],
+    }
+
+
 def run_mode_evaluation(
-    mode: str, questions: list[dict], documents_dir: Path = ROOT_DIR / "uploads",
+    mode: str,
+    questions: list[dict],
+    documents_dir: Path = ROOT_DIR / "uploads",
+    *,
+    cache_regime: str = "warm_no_cache",
 ) -> dict[str, Any]:
     from core.graph import build_research_rag_graph
 
-    app = build_research_rag_graph(mode, auto_scout=False)
+    if cache_regime not in CACHE_REGIMES:
+        raise ValueError(f"Unsupported cache_regime: {cache_regime!r}")
+
+    cache_enabled = cache_regime == "warm_cached"
+    run_cfg = RunConfig.capture(llm_cache_enabled=cache_enabled)
+
+    if cache_regime == "cold":
+        clear_pdf_cache()
+    else:
+        # Warm parsed PDF chunks into memory prior to timed question loop
+        clear_pdf_cache()
+        for question in questions:
+            for name in question_documents(question):
+                load_or_parse_selected_pdf(str((documents_dir / name).resolve()))
+
+    app = build_research_rag_graph(mode, run_config=run_cfg, auto_scout=False)
+
+    # In warm_cached regime, execute one untimed priming pass so genuine model answers populate SQLite cache
+    if cache_regime == "warm_cached":
+        for question in questions:
+            paths = [str((documents_dir / name).resolve()) for name in question_documents(question)]
+            prime_state = {
+                "query": question["question"],
+                "pdf_path": paths[0],
+                "pdf_paths": paths,
+                "retry_count": 0,
+            }
+            with use_run_config(run_cfg), capture_worker_observations(), capture_token_usage(None):
+                try:
+                    app.invoke(prime_state)
+                except Exception:
+                    pass
+
     records = []
     errors = []
     for question in questions:
+        if cache_regime == "cold":
+            clear_pdf_cache()
+            app = build_research_rag_graph(mode, run_config=run_cfg, auto_scout=False)
         paths = [str((documents_dir / name).resolve()) for name in question_documents(question)]
         initial_state = {
             "query": question["question"],
@@ -142,14 +230,33 @@ def run_mode_evaluation(
         }
         start = time.perf_counter()
         try:
-            result = app.invoke(initial_state)
+            with (
+                use_run_config(run_cfg),
+                capture_worker_observations(),
+                capture_token_usage(None) as ledger,
+            ):
+                result = app.invoke(initial_state)
+                obs_events = drain_worker_observations()
+                tok_events = ledger.drain()
         except Exception as exc:
             errors.append({"id": question["id"], "error": type(exc).__name__})
             continue
         elapsed = time.perf_counter() - start
-        records.append(evaluate_single_prediction(question, result, elapsed))
+        combined_trace = [*(result.get("reasoning_trace") or []), *obs_events, *tok_events]
+        result = {**result, "reasoning_trace": combined_trace}
+        scored = evaluate_single_prediction(question, result, elapsed)
+        scored["cache_regime"] = cache_regime
+        scored["execution_observation"] = _extract_observation_summary(combined_trace)
+        records.append(scored)
 
     overall = _summarize_records(records)
+    clean_records = [r for r in records if not (r.get("execution_observation") or {}).get("used_fallback")]
+    degraded_records = [r for r in records if (r.get("execution_observation") or {}).get("used_fallback")]
+    observed_models = sorted({
+        m
+        for r in records
+        for m in (r.get("execution_observation") or {}).get("served_models", [])
+    })
     by_category = {
         cat: _summarize_records([row for row in records if row.get("category") == cat])
         for cat in sorted({str(row.get("category") or "unknown") for row in records})
@@ -160,8 +267,17 @@ def run_mode_evaluation(
     }
     return {
         "mode": mode,
+        "cache_regime": cache_regime,
         "num_questions": len(questions),
         **overall,
+        "observed_models": observed_models,
+        "fallback_question_count": len(degraded_records),
+        "cache_hit_total": sum(int((r.get("execution_observation") or {}).get("cache_hits", 0)) for r in records),
+        "reported_tokens_total": sum(int((r.get("execution_observation") or {}).get("reported_tokens", 0)) for r in records),
+        "by_execution_path": {
+            "clean_primary": _summarize_records(clean_records) if clean_records else None,
+            "degraded_or_fallback": _summarize_records(degraded_records) if degraded_records else None,
+        },
         "by_category": by_category,
         "by_language": by_language,
         "records": records,
@@ -232,6 +348,13 @@ def write_results(output: Path, config: dict, summaries: list[dict]) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--modes", nargs="+", type=normalize_mode, choices=ALL_MODES, default=["cpu_min"])
+    parser.add_argument(
+        "--cache-regimes",
+        nargs="+",
+        choices=CACHE_REGIMES,
+        default=["warm_no_cache"],
+        help="Cache regimes to evaluate separately (cold, warm_no_cache, warm_cached)",
+    )
     parser.add_argument("--live", action="store_true", help="Allow modes that can access configured model providers")
     datasets = parser.add_mutually_exclusive_group()
     datasets.add_argument("--pilot", action="store_true", help="Use the self-contained PDF pilot")
@@ -264,17 +387,19 @@ def main() -> int:
             "dataset_sha256": hashlib.sha256(dataset.read_text(encoding="utf-8").encode("utf-8")).hexdigest(),
             "document_sha256": hashes,
             "modes": args.modes,
+            "cache_regimes": list(dict.fromkeys(args.cache_regimes)),
             "software": {"python": platform.python_version(), "pymupdf": fitz.VersionBind},
             "limit_per_category": args.limit_per_cat,
             "live": args.live,
             "retrieval_limit": settings.MAX_RETRIEVED_CHUNKS,
             "max_reflection_loops": settings.MAX_ORCHESTRATOR_RETRY,
         }
-        # Isolate import-time database initialization and corpus fallback from the workspace.
-        database_path = str(Path(temp) / "data" / "workspace.db")
+        # Isolate import-time database initialization and create a dedicated SQLite DB per (mode, cache_regime)
+        # so multi-mode runs (e.g., gemini followed by hybrid) can never cross-contaminate via llm_cache.
         original_base_dir = settings.BASE_DIR
         existing_db = sys.modules.get("core.db")
         original_db_path = existing_db.DB_PATH if existing_db else str(Path(original_base_dir) / "data" / "workspace.db")
+        original_db_init = existing_db._db_initialized if existing_db else False
         settings.BASE_DIR = temp
         try:
             from core import db
@@ -283,13 +408,20 @@ def main() -> int:
 
         original_corpus = settings.CORPUS_PATH
         settings.CORPUS_PATH = str(Path(temp) / "empty_corpus.jsonl")
+        summaries = []
         try:
-            if db.DB_PATH != database_path:
-                db.DB_PATH = database_path
-                db.init_db()
-            summaries = [run_mode_evaluation(mode, questions, folder) for mode in args.modes]
+            for regime in dict.fromkeys(args.cache_regimes):
+                for mode in args.modes:
+                    isolated_db = str(Path(temp) / "data" / f"workspace_{mode}_{regime}.db")
+                    db.DB_PATH = isolated_db
+                    db._db_initialized = False
+                    db.init_db()
+                    summaries.append(
+                        run_mode_evaluation(mode, questions, folder, cache_regime=regime)
+                    )
         finally:
             db.DB_PATH = original_db_path
+            db._db_initialized = original_db_init
             settings.CORPUS_PATH = original_corpus
 
     write_results(args.output_dir, config, summaries)

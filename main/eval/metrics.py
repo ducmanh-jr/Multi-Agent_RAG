@@ -19,6 +19,11 @@ from core.verifier import (
     deterministic_verify_claims,
     verify_evidence_span_provenance,
 )
+from eval.three_layer_evaluator import (
+    REFUSAL_STATUSES,
+    audit_abstention_and_display,
+    evaluate_three_layer_case,
+)
 
 
 _ABSTENTION_PATTERNS = [
@@ -210,8 +215,19 @@ def evaluate_single_prediction(
         or ""
     )
     status = result_state.get("answer_status") or report_data.get("status")
-    abstained = status == "NOT_FOUND_IN_DOCUMENT" if status else bool(answer and is_abstention_response(answer))
-    abstention_acc = float(bool(answer or abstained) and abstained == is_unanswerable)
+    abstention_check = audit_abstention_and_display(
+        answer=answer,
+        answer_status=status,
+        answerability="unanswerable" if is_unanswerable else str(question_item.get("answerability") or "answerable"),
+        forbidden_entities=question_item.get("forbidden_entities") or (),
+        forbidden_numbers=question_item.get("forbidden_numbers") or (),
+    )
+    if status:
+        norm_st = str(status).strip().upper()
+        abstained = (norm_st in REFUSAL_STATUSES) and not abstention_check["status_display_mismatch"]
+    else:
+        abstained = bool(answer and is_abstention_response(answer)) and not abstention_check["status_display_mismatch"]
+    abstention_acc = float(bool(answer or abstained) and abstained == is_unanswerable and not abstention_check["status_display_mismatch"])
     evidence = (
         result_state.get("source_units")
         or result_state.get("retrieved_docs")
@@ -255,16 +271,22 @@ def evaluate_single_prediction(
         groundedness = 1.0 if result_state.get("fact_check_label") == "support" else 0.5
         hallucination_rate = round(1.0 - groundedness, 4)
 
-    # 2. Numeric/Date & Compound-Unit Exactness
-    num_ok, date_ok, consistency_issues = check_numerical_and_date_consistency(answer, full_context)
-    numeric_answer = re.sub(r"\[\d+\]|\b(?:trang|page)\s+\d+\b", " ", answer, flags=re.IGNORECASE)
-    numeric_answer = numeric_answer.replace(",", ".")
-    gold_present = all(
-        re.search(r"(?<!\d)(?<!\d[.,])" + re.escape(str(number).replace(",", ".")) + r"(?!\d|[.,]\d)",
-                  numeric_answer)
-        for number in gold_numbers
-    )
-    correct_numbers = bool(answer and not abstained and num_ok and date_ok and gold_present)
+    # 2. Numeric/Date, Compound-Unit & Derived-Claim Exactness
+    three_layer = evaluate_three_layer_case(question_item, result_state)
+    if isinstance(question_item.get("derivation_spec"), dict):
+        derived_res = three_layer.get("derived_audit") or {}
+        correct_numbers = bool(answer and not abstained and derived_res.get("passed"))
+        consistency_issues = [] if derived_res.get("passed") else [str(derived_res.get("reason") or "derived_mismatch")]
+    else:
+        num_ok, date_ok, consistency_issues = check_numerical_and_date_consistency(answer, full_context)
+        numeric_answer = re.sub(r"\[\d+\]|\b(?:trang|page)\s+\d+\b", " ", answer, flags=re.IGNORECASE)
+        numeric_answer = numeric_answer.replace(",", ".")
+        gold_present = all(
+            re.search(r"(?<!\d)(?<!\d[.,])" + re.escape(str(number).replace(",", ".")) + r"(?!\d|[.,]\d)",
+                      numeric_answer)
+            for number in gold_numbers
+        )
+        correct_numbers = bool(answer and not abstained and num_ok and date_ok and gold_present)
     numeric_exactness = None if is_unanswerable else float(correct_numbers)
 
     # 3. Retrieval, Citation F1, and Citation Provenance Audit
@@ -295,6 +317,8 @@ def evaluate_single_prediction(
         "retrieval_recall": round(retrieval_recall, 4) if retrieval_recall is not None else None,
         "numeric_exactness": numeric_exactness,
         "abstention_accuracy": round(abstention_acc, 4),
+        "three_layer_passed": bool(three_layer["passed"]),
+        "three_layer_failures": list(three_layer["failures"]),
         "latency_sec": round(latency_sec, 3),
         "retry_count": int(result_state.get("retry_count", 0)),
         "critic_loops": int(result_state.get("critic_iterations", 0)),
