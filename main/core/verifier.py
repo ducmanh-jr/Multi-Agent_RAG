@@ -16,10 +16,20 @@ import re
 import unicodedata
 from typing import Any, Optional, Callable
 
+from core.claim_semantics import (
+    check_diagram_graph_consistency,
+    check_math_and_domain_consistency,
+    check_sentence_entailment_guards,
+    expand_unicode_scripts_preserving_role,
+    infer_and_bind_derived_claim,
+    normalize_math_preserving_structure,
+    verify_derived_claim,
+)
 from core.schemas import SummarizerCriticOutput
 from core.state import AtomicClaim, ClaimCheckResult, EvidenceGap, EvidenceSpan, compute_context_hash
 from utils.bilingual import expand_bilingual_tokens
 from utils.domain_guard import check_out_of_domain
+from utils.language import detect_corpus_language, is_vietnamese_text
 from utils.logger import logger
 
 
@@ -116,13 +126,9 @@ def _strip_latex_math_delimiters(text: str) -> str:
 
 
 def _expand_unicode_math_digits(text: str) -> str:
-    """Expands Unicode superscript/subscript digits (e.g. x² -> x^2) so math exponents match consistently."""
+    """Expands Unicode superscripts (`x²` -> `x^2`) and subscripts (`x₂` -> `x_2`) distinctly."""
     cleaned = _strip_latex_math_delimiters(text or "")
-    return re.sub(
-        r"([⁰¹²³⁴⁵⁶⁷⁸⁹₀₁₂₃₄₅₆₇₈₉]+)",
-        lambda m: "^" + m.group(1).translate(_SUPERSCRIPT_SUBSCRIPT_MAP),
-        cleaned,
-    )
+    return expand_unicode_scripts_preserving_role(cleaned)
 
 
 def extract_numbers_and_years(text: str) -> list[str]:
@@ -183,8 +189,8 @@ def extract_salient_entities(text: str) -> list[str]:
         if phrase not in candidates:
             candidates.append(phrase)
 
-    # 2. Alphanumeric model/metric identifiers or uppercase acronyms (e.g., Qwen2.5, BGE-M3, ResNet-50, F1, BLEU, T4)
-    for m in re.finditer(r"\b(?:[A-Z]{2,}[A-Za-z0-9._-]*|[A-Z][a-zA-Z]*[-_]?\d+(?:[.\-]\w+)*)\b", clean):
+    # 2. Alphanumeric model/metric identifiers or uppercase acronyms (e.g., Qwen2.5, BGE-M3, ResNet-50, MethodR01_BaselineConfig)
+    for m in re.finditer(r"\b(?:[A-Z]{2,}[A-Za-z0-9._-]*|[A-Z][a-zA-Z]*[-_]?\d+(?:[.\-_]\w+)*)\b", clean):
         tok = m.group(0).strip(".,;:()")
         if len(tok) >= 2 and tok.lower() not in _ENTITY_STOPWORDS and tok not in candidates:
             candidates.append(tok)
@@ -196,6 +202,122 @@ def extract_salient_entities(text: str) -> list[str]:
             candidates.append(tok)
 
     return candidates[:8]
+
+
+def check_table_cell_binding(
+    claim_text: str,
+    units: list[dict[str, Any]],
+) -> tuple[bool, str]:
+    """
+    Verifies `(row_entity, column_header/split, value, unit)` cell bindings when a claim cites
+    values from structured Markdown tables, catching row/column cell swaps (e.g., attributing
+    Validation's cell to Test or Method B's cell to Method A).
+    """
+    if not claim_text or not units:
+        return True, "ok"
+    claim_items = extract_numbers_with_units(claim_text)
+    if not claim_items:
+        return True, "ok"
+    entities = extract_salient_entities(claim_text)
+    if not entities:
+        return True, "ok"
+
+    # Collect structured cells across table SourceUnits (from metadata or Markdown pipe rows)
+    cells: list[dict[str, str]] = []
+    for u in units:
+        if not isinstance(u, dict):
+            continue
+        u_id = str(u.get("id") or "")
+        meta_cells = ((u.get("metadata") or {}).get("table_metadata") or {}).get("cells") or (u.get("table_metadata") or {}).get("cells")
+        if isinstance(meta_cells, list) and meta_cells:
+            for mc in meta_cells:
+                if isinstance(mc, dict):
+                    cells.append({
+                        "unit_id": u_id,
+                        "row_header": str(mc.get("row_header") or ""),
+                        "col_header": str(mc.get("col_header") or ""),
+                        "value": str(mc.get("value") or ""),
+                        "unit": str(mc.get("unit") or ""),
+                    })
+            continue
+        txt = str(u.get("text") or u.get("content") or "")
+        pipe_lines = [ln.strip() for ln in txt.splitlines() if ln.strip().startswith("|") and ln.strip().endswith("|")]
+        if len(pipe_lines) >= 3:
+            headers = [c.strip() for c in pipe_lines[0].strip("|").split("|")]
+            for r_ln in pipe_lines[2:]:
+                if re.match(r"^[\s|:\-]+$", r_ln):
+                    continue
+                cols = [c.strip() for c in r_ln.strip("|").split("|")]
+                if len(cols) >= 2:
+                    row_hdr = cols[0]
+                    for ci in range(1, min(len(cols), len(headers))):
+                        cells.append({
+                            "unit_id": u_id,
+                            "row_header": row_hdr,
+                            "col_header": headers[ci],
+                            "value": cols[ci],
+                            "unit": "",
+                        })
+
+    if not cells:
+        return True, "ok"
+
+    c_lower = claim_text.lower()
+    # Identify if claim names a specific column/split header (e.g. 'validation', 'test', 'precision', 'f1')
+    distinct_cols = {c["col_header"].strip().lower() for c in cells if c["col_header"].strip()}
+    mentioned_cols = [
+        col for col in distinct_cols
+        if any(
+            len(tok) >= 3 and re.search(rf"\b{re.escape(tok)}\b", c_lower)
+            for tok in re.findall(r"[a-z0-9à-ỹ]+", col)
+            if tok not in {"col", "acc", "pct", "the", "and"}
+        )
+    ]
+
+    def _ent_key(s: str) -> str:
+        return re.sub(r"[\s_\-]+", "", (s or "").lower())
+
+    matched_unit_id = ""
+    for ent in entities:
+        ent_l = ent.lower()
+        ent_k = _ent_key(ent_l)
+        ent_short = re.sub(r"^(?:model|method|system|group|variant|config|mô hình|phương pháp|nhóm)\s+", "", ent_l).strip()
+        ent_short_k = _ent_key(ent_short)
+        ent_rows = [
+            c for c in cells
+            if ent_l in c["row_header"].lower()
+            or (len(ent_k) >= 4 and ent_k in _ent_key(c["row_header"]))
+            or (ent_short and re.search(rf"(?<!\w){re.escape(ent_short)}(?!\w)", c["row_header"].lower()))
+            or (len(ent_short_k) >= 4 and ent_short_k in _ent_key(c["row_header"]))
+        ]
+        if not ent_rows:
+            continue
+        target_cells = [c for c in ent_rows if c["col_header"].strip().lower() in mentioned_cols] if mentioned_cols else ent_rows
+        if not target_cells:
+            target_cells = ent_rows
+
+        cell_blob = " ; ".join(
+            f"{c['value']} {c['unit']}".strip() for c in target_cells
+        )
+        all_table_blob = " ; ".join(f"{c['value']} {c['unit']}".strip() for c in cells)
+        for norm_num, c_unit, _ in claim_items:
+            # Only enforce on numbers that actually come from the table
+            in_any_cell = check_numerical_and_date_consistency(
+                f"{norm_num} {c_unit}".strip(), all_table_blob
+            )[0]
+            if not in_any_cell:
+                continue
+            in_target_cell = check_numerical_and_date_consistency(
+                f"{norm_num} {c_unit}".strip(), cell_blob
+            )[0]
+            if not in_target_cell:
+                return False, f"table_cell_mismatch:{ent}->{norm_num}{c_unit}"
+            if not matched_unit_id:
+                matched_unit_id = next((c["unit_id"] for c in target_cells if c.get("unit_id")), "table")
+
+    if matched_unit_id:
+        return True, f"matched_table_cell:{matched_unit_id}"
+    return True, "ok"
 
 
 def check_entity_value_binding(claim_text: str, evidence_text: str) -> tuple[bool, list[str]]:
@@ -251,6 +373,13 @@ def check_entity_value_binding(claim_text: str, evidence_text: str) -> tuple[boo
 
 
 _UNIT_CANONICAL_MAP: dict[str, str] = {
+    "pp": "pp",
+    "percentage point": "pp",
+    "percentage points": "pp",
+    "pct point": "pp",
+    "pct points": "pp",
+    "điểm phần trăm": "pp",
+    "diem phan tram": "pp",
     "%": "%", "percent": "%", "pct": "%", "phần trăm": "%", "phan tram": "%",
     # Compound rate / speed units (matched before bare units)
     "km/h": "km/h", "kmh": "km/h", "kph": "km/h", "km/giờ": "km/h", "km/gio": "km/h",
@@ -260,10 +389,12 @@ _UNIT_CANONICAL_MAP: dict[str, str] = {
     "tokens/s": "tokens/s", "token/s": "tokens/s", "tok/s": "tokens/s", "toks/s": "tokens/s",
     "mb/s": "mb/s", "mbps": "mb/s", "gb/s": "gb/s", "gbps": "gb/s", "kb/s": "kb/s",
     "req/s": "req/s", "qps": "req/s", "fps": "fps",
-    # Distance / length
+    # Distance / length / volume
     "km": "km", "kilometer": "km", "kilometers": "km", "kilomet": "km",
     "m": "m", "meter": "m", "meters": "m", "mét": "m", "met": "m",
     "cm": "cm", "mm": "mm",
+    "l": "l", "liter": "l", "liters": "l", "litre": "l", "litres": "l", "lít": "l", "lit": "l",
+    "ml": "ml", "milliliter": "ml", "milliliters": "ml",
     # Time
     "ms": "ms", "millisecond": "ms", "milliseconds": "ms",
     "s": "s", "sec": "s", "secs": "s", "second": "s", "seconds": "s", "giây": "s",
@@ -286,14 +417,16 @@ _UNIT_CANONICAL_MAP: dict[str, str] = {
 
 _UNIT_PATTERN = re.compile(
     r"(?<!\d)(\d+(?:[.,]\d+)?)\s*("
+    r"điểm\s+phần\s+trăm|diem\s+phan\s+tram|percentage\s+points?\b|pct\s+points?\b|pp\b|"
     r"km/h|kmh|kph|km/giờ|km/gio|m/h|m/giờ|m/gio|m/s|mps|m/giây|km/s|"
     r"tokens?/s|toks?/s|gb/s|gbps|mb/s|mbps|kb/s|req/s|qps|fps|"
-    r"%|phần\s+trăm|phan\s+tram|percent|pct|"
+    r"%|phần\s+trăm|phan\s+tram|percent\b|pct\b|"
     r"kilometers?|kilomet|km\b|meters?|mét|met|cm\b|mm\b|"
+    r"milliliters?\b|ml\b|liters?\b|litres?\b|lít\b|lit\b|"
     r"milliseconds?|ms\b|seconds?|secs?\b|giây|minutes?|mins?\b|phút|hours?|hrs?\b|giờ|days?\b|ngày|"
     r"ghz\b|mhz\b|khz\b|hz\b|tb\b|gb\b|mb\b|kb\b|kg\b|mg\b|usd\b|vnd\b|\$|"
     r"layers?\b|lớp|tầng|epochs?\b|gpus?\b|cpus?\b|heads?\b|bits?\b|"
-    r"m\b|s\b|g\b|h\b"
+    r"m\b|s\b|g\b|h\b|l\b"
     r")?",
     re.IGNORECASE,
 )
@@ -439,7 +572,7 @@ def check_numerical_and_date_consistency(claim_text: str, full_context_text: str
             if claim_unit:
                 if c_unit == claim_unit:
                     unit_matched_positions.append(c_pos)
-                elif not c_unit and claim_unit not in {"%", "km/h", "m/h", "m/s", "km/s", "km", "m", "cm", "mm", "ms", "s", "gb", "mb", "kb", "tb", "kg", "g", "mg", "usd", "vnd"}:
+                elif not c_unit and claim_unit not in {"pp", "%", "km/h", "m/h", "m/s", "km/s", "km", "m", "cm", "mm", "l", "ml", "ms", "s", "gb", "mb", "kb", "tb", "kg", "g", "mg", "usd", "vnd"}:
                     # Allow soft count words like "3 layers" when context writes bare "3" with non-conflicting unit
                     unit_matched_positions.append(c_pos)
                 elif not c_unit and claim_unit in {"m", "s", "g", "h"}:
@@ -461,7 +594,7 @@ def check_numerical_and_date_consistency(claim_text: str, full_context_text: str
                     if is_math_var_in_ctx or is_math_expr_in_claim:
                         unit_matched_positions.append(c_pos)
             else:
-                if c_unit != "%":
+                if c_unit not in {"%", "pp"}:
                     unit_matched_positions.append(c_pos)
 
         local_win = cleaned_lower[max(0, claim_pos - 100) : min(len(cleaned_lower), claim_pos + 100)]
@@ -609,6 +742,8 @@ def split_answer_into_atomic_claims(
                         text=txt,
                         evidence_ids=ev_ids,
                         unit_id=uid or (ev_ids[0] if ev_ids else None),
+                        claim_type=c.get("claim_type") if isinstance(c, dict) else None,
+                        derivation=(c.get("derivation") or c.get("derivation_spec")) if isinstance(c, dict) else None,
                     ).to_dict()
                 )
         if normalized_claims:
@@ -729,13 +864,11 @@ def _normalized_quote(text: str) -> str:
 
 
 def _math_norm_for_quote(text: str) -> str:
-    nfkc = unicodedata.normalize("NFKC", text or "").translate(_SUPERSCRIPT_SUBSCRIPT_MAP)
-    nfkc = re.sub(r"[\^_]\s*\{?(\d+)\}?", r"\1", nfkc)
-    return " ".join(nfkc.split())
+    return normalize_math_preserving_structure(text)
 
 
 def _quote_in_source(quote: Any, source: str) -> bool:
-    """Match an NLI quote against source text, tolerating PDF line breaks, soft hyphens, and Unicode math symbols."""
+    """Match an NLI quote against source text, tolerating PDF line breaks, soft hyphens, and Unicode math symbols while preserving ^ vs _."""
     if not isinstance(quote, str) or not quote.strip() or not source:
         return False
     if quote in source:
@@ -750,44 +883,148 @@ def _quote_in_source(quote: Any, source: str) -> bool:
     q_math = _math_norm_for_quote(q_norm)
     s_math = _math_norm_for_quote(s_norm)
     if q_math and q_math in s_math:
-        return True
+        start = r"(?<!\w)" if q_math[0].isalnum() else ""
+        end = r"(?!\w)" if q_math[-1].isalnum() else ""
+        if re.search(start + re.escape(q_math) + end, s_math):
+            return True
     return False
 
 
 def _verbatim(text: str, source: str) -> bool:
     quote = _normalized_quote(text)
-    return bool(quote and re.search(r"(?<!\w)" + re.escape(quote) + r"(?!\w)", _normalized_quote(source)))
+    if not quote or not source:
+        return False
+    norm_src = _normalized_quote(source)
+    matched = bool(re.search(r"(?<!\w)" + re.escape(quote) + r"(?!\w)", norm_src))
+    if not matched:
+        q_m = _math_norm_for_quote(text).casefold().strip(" .!?")
+        s_m = _math_norm_for_quote(source).casefold()
+        if q_m:
+            start = r"(?<!\w)" if q_m[0].isalnum() else ""
+            end = r"(?!\w)" if q_m[-1].isalnum() else ""
+            matched = bool(re.search(start + re.escape(q_m) + end, s_m))
+    if not matched:
+        return False
+    # Never certify a substring stripped of enclosing negation, conditional framing, or math role!
+    sem_ok, _, _ = check_sentence_entailment_guards(text, source)
+    if not sem_ok:
+        return False
+    math_ok, _ = check_math_and_domain_consistency(text, source)
+    return math_ok
 
 
-def _result(claim, status, reason, unit=None):
-    result = ClaimCheckResult(claim_id=claim["id"], claim_text=claim["text"], status=status,
-                              reason=reason, confidence_score=1.0 if status == "SUPPORT" else 0.0).to_dict()
-    if status == "SUPPORT" and unit and unit.get("id"):
-        result["evidence_ids"] = [unit["id"]]
+def _result(
+    claim: dict[str, Any],
+    status: str,
+    reason: str,
+    unit: Optional[dict[str, Any]] = None,
+    *,
+    evidence_ids: Optional[list[str]] = None,
+    claim_type: Optional[str] = None,
+    derivation: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    eff_deriv = derivation if derivation is not None else (claim.get("derivation") or claim.get("derivation_spec"))
+    eff_type = claim_type or claim.get("claim_type") or ("derived_claim" if eff_deriv else "extractive_claim")
+    result = ClaimCheckResult(
+        claim_id=claim["id"],
+        claim_text=claim["text"],
+        status=status,
+        reason=reason,
+        confidence_score=1.0 if status == "SUPPORT" else 0.0,
+        claim_type=eff_type,
+        derivation=eff_deriv if isinstance(eff_deriv, dict) else None,
+    ).to_dict()
+    if status == "SUPPORT":
+        if evidence_ids:
+            result["evidence_ids"] = list(dict.fromkeys(evidence_ids))
+        elif unit and unit.get("id"):
+            result["evidence_ids"] = [unit["id"]]
     return result
 
 
-def _local_check(claim, units):
+def _local_check(claim: dict[str, Any], units: list[dict[str, Any]]) -> dict[str, Any]:
     text = claim["text"]
     units_by_id = {u.get("id"): u for u in units if isinstance(u, dict) and u.get("id")}
     bound_ids = [uid for uid in (claim.get("evidence_ids") or []) if uid in units_by_id]
     bound_units = [units_by_id[uid] for uid in bound_ids] if bound_ids else list(units)
+    bound_source = "\n".join(str(u.get("text") or u.get("content") or "") for u in bound_units)
 
+    # 1. Enclosing-sentence negation/polarity, conditional framing, quantifier & directed-relation guard
+    if bound_source:
+        sem_ok, sem_verdict, sem_reason = check_sentence_entailment_guards(text, bound_source)
+        if not sem_ok:
+            return _result(claim, sem_verdict, f"Sai lệch ngữ nghĩa/phủ định/chiều so sánh so với câu nguồn: {sem_reason}")
+        math_ok, math_reason = check_math_and_domain_consistency(text, bound_source)
+        if not math_ok:
+            return _result(claim, "CONTRADICT", f"Sai lệch biểu thức toán học hoặc miền xác định: {math_reason}")
+
+    # 1.5. Structured Table Cell (row, col, value, unit) swap check & M2b Diagram Graph check
+    tbl_ok, tbl_reason = check_table_cell_binding(text, bound_units)
+    if not tbl_ok:
+        return _result(claim, "CONTRADICT", f"Lệch ô bảng (hàng/cột–giá trị): {tbl_reason}")
+
+    diag_ok, diag_status, diag_reason, diag_unit = check_diagram_graph_consistency(text, bound_units or units)
+    if not diag_ok:
+        return _result(claim, "CONTRADICT", f"Lệch đồ thị sơ đồ nút–cạnh: {diag_reason}")
+    if diag_status == "SUPPORT" and diag_unit is not None:
+        num_ok_d, date_ok_d, _ = check_numerical_and_date_consistency(text, str(diag_unit.get("text") or ""))
+        if num_ok_d and date_ok_d:
+            return _result(claim, "SUPPORT", f"Đã đối chiếu chính xác đồ thị nút–cạnh trên sơ đồ ({diag_reason}).", diag_unit)
+
+    # 2. Deterministic Derived Numerical Claim (`derived_claim`) verification (including cross-page stitched tables!)
+    explicit_deriv = claim.get("derivation") or claim.get("derivation_spec")
+    inferred_deriv = (
+        explicit_deriv
+        if isinstance(explicit_deriv, dict)
+        else (infer_and_bind_derived_claim(text, bound_units) or infer_and_bind_derived_claim(text, units))
+    )
+    if isinstance(inferred_deriv, dict):
+        d_res = verify_derived_claim(text, inferred_deriv, bound_units)
+        if not d_res.get("passed") and len(units) > len(bound_units):
+            d_res = verify_derived_claim(text, inferred_deriv, units)
+        if d_res.get("passed"):
+            ev_ids = d_res.get("used_source_ids") or bound_ids or ([bound_units[0]["id"]] if bound_units and bound_units[0].get("id") else [])
+            return _result(
+                claim,
+                "SUPPORT",
+                f"Đã kiểm chứng tất định phép tính suy ra ({d_res.get('computed_value')} {d_res.get('expected_unit')}).",
+                evidence_ids=ev_ids,
+                claim_type="derived_claim",
+                derivation=inferred_deriv,
+            )
+        if isinstance(explicit_deriv, dict) or str(d_res.get("reason", "")).startswith(
+            ("derived_unit_mismatch", "split_mismatch", "directed_relation_reversed", "derived_value_missing_in_claim")
+        ):
+            return _result(
+                claim,
+                "CONTRADICT",
+                f"Phép tính suy ra không hợp lệ: {d_res.get('reason')}",
+                claim_type="derived_claim",
+                derivation=inferred_deriv,
+            )
+
+    # 3. Verbatim entailment check (already guarded by _verbatim's sentence polarity & math checks)
     for unit in bound_units:
         if _verbatim(text, unit.get("text") or unit.get("content") or ""):
             return _result(claim, "SUPPORT", "Đã đối chiếu trực tiếp với văn bản gốc.", unit)
     if bound_ids:
         for unit in units:
-            if unit not in bound_units and _verbatim(text, unit.get("text") or unit.get("content") or ""):
+            u_txt = unit.get("text") or unit.get("content") or ""
+            if unit not in bound_units and _verbatim(text, u_txt):
                 return _result(claim, "SUPPORT", "Đã đối chiếu trực tiếp với văn bản gốc.", unit)
 
-    # Check numerical consistency against bound unit(s) first, then full source pool
-    bound_source = "\n".join(str(u.get("text") or u.get("content") or "") for u in bound_units)
+    # 4. Numerical consistency against bound unit(s) first, then full source pool
     num_ok, date_ok, missing = check_numerical_and_date_consistency(text, bound_source)
     if bound_source and (not num_ok or not date_ok):
         return _result(claim, "CONTRADICT", "Số liệu cần đối chiếu lại: " + ", ".join(missing))
 
-    # Entity-value binding check: catch swapped values across models/rows
+    # 4.5. Certified structured table cell lookup (row + column + value + unit verified above)
+    if tbl_reason.startswith("matched_table_cell:") and num_ok and date_ok:
+        matched_uid = tbl_reason.split(":", 1)[1]
+        matched_u = units_by_id.get(matched_uid) or (bound_units[0] if bound_units else None)
+        return _result(claim, "SUPPORT", "Đã đối chiếu chính xác ô bảng (hàng/cột/đơn vị).", matched_u)
+
+    # 5. Entity-value binding check: catch swapped values across models/rows
     if bound_source:
         bind_ok, missing_ents = check_entity_value_binding(text, bound_source)
         if not bind_ok:
@@ -821,6 +1058,8 @@ def deterministic_verify_claims(claims, source_units, query=""):
             "id": raw.get("id") or raw.get("claim_id") or f"claim_{i}",
             "text": text,
             "evidence_ids": raw.get("evidence_ids") or ([raw["unit_id"]] if raw.get("unit_id") else []),
+            "claim_type": raw.get("claim_type"),
+            "derivation": raw.get("derivation") or raw.get("derivation_spec"),
         }
         result = _local_check(claim, source_units)
         if result["status"] == "SUPPORT":
@@ -835,18 +1074,45 @@ def review_abstention(state):
     """Assess a source-search outcome independently of the phrasing of the draft."""
     answer = str(state.get("answer") or "").casefold()
     if state.get("answer_status") != "NOT_FOUND_IN_DOCUMENT" and not state.get("is_out_of_domain"):
-        if not any(p in answer for p in ("không được đề cập", "không tìm thấy thông tin", "hoàn toàn không đề cập",
-                                          "tài liệu hiện tại không cung cấp đủ thông tin")):
+        if not any(
+            p in answer
+            for p in (
+                "không được đề cập",
+                "không tìm thấy thông tin",
+                "hoàn toàn không đề cập",
+                "tài liệu hiện tại không cung cấp đủ thông tin",
+                "is not mentioned in the provided sources",
+                "does not mention",
+                "not mentioned in the selected documents",
+            )
+        ):
             return None
     units = state.get("source_units") or state.get("retrieved_docs") or []
-    query = state.get("query") or ""
+    query = str(state.get("resolved_query") or state.get("query") or "")
     absent, why = check_out_of_domain(query, units)
-    query_is_vietnamese = bool(re.search(r"[ăâđêôơưà-ỹ]", query.casefold()))
-    source_is_vietnamese = any(re.search(r"[ăâđêôơưà-ỹ]", str(u.get("text") or "").casefold()) for u in units)
+    query_is_vietnamese = is_vietnamese_text(query)
+    source_is_vietnamese = detect_corpus_language(units, default="en") == "vi"
     cross_language = query_is_vietnamese != source_is_vietnamese
+    # Also recognize when a source unit explicitly states that a metric/variable was NOT collected/measured/reported
+    all_unit_text = " ".join(str(u.get("text") or u.get("content") or "") for u in units if isinstance(u, dict)).lower()
+    explicit_source_exclusion = bool(
+        re.search(
+            r"(?:không\s+(?:thu\s+thập|đo|báo\s+cáo|khảo\s+sát|ghi\s+nhận)|"
+            r"(?:did|does|do|was|were)\s+not\s+(?:collect|measure|report|evaluate|record)|"
+            r"not\s+(?:collected|measured|reported|evaluated))",
+            all_unit_text,
+        )
+    )
     # A search over evidence can support an abstention, not an assertion about the entire PDF.
     explicit_identifier = why.startswith("foreign_term_absent:") or why.startswith("quoted_entities_absent:")
-    justified = bool(units and query.strip() and absent and (not cross_language or explicit_identifier))
+    justified = bool(
+        units
+        and query.strip()
+        and (
+            (absent and (not cross_language or explicit_identifier))
+            or explicit_source_exclusion
+        )
+    )
     reason = ("Không tìm thấy chủ đề trong các đoạn nguồn đã truy xuất." if justified
               else "Chưa xác nhận được việc thiếu thông tin. Cần đối chiếu thêm đoạn nguồn.")
     return {"fact_check_label": "support" if justified else "not_enough_info",
@@ -1137,6 +1403,65 @@ def review_claims(state, reviewer: Optional[Callable] = None):
             elif rows is None:
                 checked = _local_check(claim, units)
             else:
+                # Honor M2b deterministic diagram graph & cross-page derived_claim verification before/alongside external NLI
+                diag_ok_r, diag_st_r, diag_rsn_r, diag_u_r = check_diagram_graph_consistency(
+                    claim["text"], [unit] if unit else units
+                )
+                if not diag_ok_r:
+                    checked = _result(claim, "CONTRADICT", f"Lệch đồ thị sơ đồ nút–cạnh: {diag_rsn_r}")
+                    rejected.append(checked)
+                    gaps.append(EvidenceGap(missing_aspect=claim["text"], suggested_query=state.get("query") or claim["text"]).to_dict())
+                    continue
+                if diag_st_r == "SUPPORT" and diag_u_r is not None:
+                    num_ok_dr, date_ok_dr, _ = check_numerical_and_date_consistency(claim["text"], str(diag_u_r.get("text") or ""))
+                    if num_ok_dr and date_ok_dr:
+                        checked = _result(
+                            claim,
+                            "SUPPORT",
+                            f"Đã đối chiếu chính xác đồ thị nút–cạnh trên sơ đồ ({diag_rsn_r}).",
+                            diag_u_r,
+                        )
+                        verified.append(checked)
+                        continue
+
+                explicit_deriv = claim.get("derivation") or claim.get("derivation_spec")
+                inferred_deriv = (
+                    explicit_deriv
+                    if isinstance(explicit_deriv, dict)
+                    else (
+                        infer_and_bind_derived_claim(claim["text"], [unit] if unit else units)
+                        or infer_and_bind_derived_claim(claim["text"], units)
+                    )
+                )
+                if isinstance(inferred_deriv, dict):
+                    d_res = verify_derived_claim(claim["text"], inferred_deriv, [unit] if unit else units)
+                    if not d_res.get("passed") and len(units) > 1:
+                        d_res = verify_derived_claim(claim["text"], inferred_deriv, units)
+                    if d_res.get("passed"):
+                        ev_ids_d = d_res.get("used_source_ids") or ([unit["id"]] if unit and unit.get("id") else [])
+                        checked = _result(
+                            claim,
+                            "SUPPORT",
+                            f"Đã kiểm chứng tất định phép tính suy ra ({d_res.get('computed_value')} {d_res.get('expected_unit')}).",
+                            unit,
+                            evidence_ids=ev_ids_d,
+                            claim_type="derived_claim",
+                            derivation=inferred_deriv,
+                        )
+                        verified.append(checked)
+                        continue
+                    if isinstance(explicit_deriv, dict):
+                        checked = _result(
+                            claim,
+                            "CONTRADICT",
+                            f"Phép tính suy ra không hợp lệ: {d_res.get('reason')}",
+                            claim_type="derived_claim",
+                            derivation=inferred_deriv,
+                        )
+                        rejected.append(checked)
+                        gaps.append(EvidenceGap(missing_aspect=claim["text"], suggested_query=state.get("query") or claim["text"]).to_dict())
+                        continue
+
                 match = [row for row in rows if isinstance(row, dict) and row.get("claim_id") == claim["id"]]
                 row = match[0] if len(match) == 1 else {}
                 status = row.get("status")
@@ -1145,12 +1470,25 @@ def review_claims(state, reviewer: Optional[Callable] = None):
                 if (not isinstance(status, str) or status not in {"SUPPORT", "CONTRADICT"}
                         or not _quote_in_source(quote, source)):
                     status = "NOT_ENOUGH_INFO"
+                reason = row.get("rationale") or "Không có phán quyết và bằng chứng hợp lệ."
                 if status == "SUPPORT":
-                    if not all(check_numerical_and_date_consistency(claim["text"], quote)[:2]):
+                    sem_ok, sem_verdict, sem_reason = check_sentence_entailment_guards(
+                        claim["text"], str(source), qualitative_comparatives=False
+                    )
+                    math_ok, math_reason = check_math_and_domain_consistency(claim["text"], str(source))
+                    if not sem_ok:
+                        status = sem_verdict
+                        reason = f"Cổng ngữ nghĩa bác bỏ kết quả NLI: {sem_reason}"
+                    elif not math_ok:
+                        status = "CONTRADICT"
+                        reason = f"Cổng toán học bác bỏ kết quả NLI: {math_reason}"
+                    elif not check_table_cell_binding(claim["text"], [unit] if unit else units)[0]:
+                        status = "CONTRADICT"
+                        reason = "Cổng đối chiếu ô bảng bác bỏ kết quả NLI (lệch hàng/cột)."
+                    elif not all(check_numerical_and_date_consistency(claim["text"], quote)[:2]):
                         status = "NOT_ENOUGH_INFO"
                     elif not check_entity_value_binding(claim["text"], quote)[0]:
                         status = "NOT_ENOUGH_INFO"
-                reason = row.get("rationale") or "Không có phán quyết và bằng chứng hợp lệ."
                 checked = _result(claim, status, str(reason), unit)
             if checked["status"] == "SUPPORT":
                 verified.append(checked)

@@ -51,12 +51,21 @@ class CPUMaxFactCheckerAgent(BaseAgent):
 
         if self.judge.classifier is None:
             result = review_claims(state)
+            result["verifier_model_family"] = "cpu_max_deterministic_nli"
             result.setdefault("reasoning_trace", []).append(
                 self.log_action("cpu_max_fact_check_completed", {"label": result["fact_check_label"]}))
             return result
         refusal = review_abstention(state)
         if refusal is not None:
             return refusal
+
+        # Even when a local HuggingFace NLI classifier is loaded, run deterministic semantic/math/derived guards
+        det_review = review_claims(state)
+        det_by_text = {
+            (c.get("claim_text") or c.get("text") or ""): c
+            for c in (det_review.get("verified_claims") or []) + (det_review.get("rejected_claims") or [])
+            if isinstance(c, dict)
+        }
 
         original_text = [str(u.get("text") or "") for u in (source_units or retrieved_docs)]
         ev_texts = [e["quote"] for e in evidence_spans if isinstance(e, dict) and e.get("quote")
@@ -82,6 +91,17 @@ class CPUMaxFactCheckerAgent(BaseAgent):
         statuses = []
 
         for c_text in claims_to_check:
+            det_hit = det_by_text.get(c_text)
+            if det_hit and det_hit.get("claim_type") == "derived_claim" and str(det_hit.get("status")).upper() == "SUPPORT":
+                verified_claims.append(det_hit)
+                statuses.append("support")
+                continue
+            if det_hit and str(det_hit.get("status")).upper() == "CONTRADICT":
+                rejected_claims.append({**det_hit, "status": "contradict"})
+                evidence_gaps.append(EvidenceGap(missing_aspect=c_text[:120], suggested_query=c_text).to_dict())
+                statuses.append("contradict")
+                continue
+
             nums_ok, num_reason = verify_numbers_in_claim(c_text, context_corpus)
             dates_ok, date_reason = verify_dates_in_claim(c_text, context_corpus)
 

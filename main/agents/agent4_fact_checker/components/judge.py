@@ -1,5 +1,6 @@
 import re
 from typing import Optional, Any
+from core.claim_semantics import check_math_and_domain_consistency, check_sentence_entailment_guards
 from utils.logger import logger
 
 
@@ -42,8 +43,12 @@ class FactCheckJudge:
         "scibert", "rag", "react", "bleu", "glue", "vram", "gpu"
     }
 
-    NEGATION_WORDS_VN = {"không", "không thể", "chưa", "chẳng", "không có"}
-    NEGATION_WORDS_EN = {"not", "never", "cannot", "no", "hardly", "fail", "fails", "unable", "dispense"}
+    NEGATION_WORDS_VN = {"không", "không thể", "chưa", "chẳng", "không có", "sai", "bác bỏ", "vô hiệu", "thất bại"}
+    NEGATION_WORDS_EN = {
+        "not", "never", "cannot", "no", "hardly", "fail", "fails", "failed",
+        "unable", "dispense", "false", "untrue", "incorrect", "neither", "nor",
+        "without", "lack", "lacks", "ineffective", "refute", "refutes",
+    }
 
     def __init__(self, model_path: Optional[str] = None, device: str = "cpu"):
         self.model_path = model_path
@@ -217,18 +222,39 @@ class FactCheckJudge:
         claim_tokens, claim_nums, claim_neg, claim_ents = self._extract_and_expand_tokens(claim)
 
         target_pool = evidence_spans if evidence_spans else [s.strip() for s in re.split(r"[.?!]\s+", context) if s.strip()]
+        full_corpus_raw = " ".join([context] + list(evidence_spans))
 
-        # Exact substring shortcut: if claim is verbatim in context or evidence, it is verified 100% SUPPORT
+        # Sentence-level polarity, conditional framing, quantifier, directed-relation & math guards
+        sem_ok, sem_verdict, sem_reason = check_sentence_entailment_guards(claim, full_corpus_raw)
+        if not sem_ok:
+            return {
+                "status": "contradict" if sem_verdict == "CONTRADICT" else "not_enough_info",
+                "confidence": 0.95,
+                "evidence": full_corpus_raw[:300],
+                "matched_keywords": [],
+                "reason": f"Vi phạm kiểm chứng ngữ nghĩa câu nguồn: {sem_reason}",
+            }
+        math_ok, math_reason = check_math_and_domain_consistency(claim, full_corpus_raw)
+        if not math_ok:
+            return {
+                "status": "contradict",
+                "confidence": 0.95,
+                "evidence": full_corpus_raw[:300],
+                "matched_keywords": [],
+                "reason": f"Sai lệch biểu thức toán học / miền xác định: {math_reason}",
+            }
+
+        # Exact substring shortcut ONLY after enclosing-sentence negation/conditional/math guards pass
         norm_claim = claim.strip().lower().rstrip(".,;:")
         if norm_claim and len(norm_claim) >= 15:
-            full_corpus = " ".join([context] + list(evidence_spans)).lower()
+            full_corpus = full_corpus_raw.lower()
             if norm_claim in full_corpus:
                 return {
                     "status": "support",
                     "confidence": 1.0,
                     "evidence": norm_claim,
                     "matched_keywords": list(claim_tokens),
-                    "reason": "Luận điểm trích xuất trực tiếp từ văn bản nguồn (Exact Substring Match)."
+                    "reason": "Luận điểm trích xuất trực tiếp từ văn bản nguồn (Exact Substring Match).",
                 }
 
         best_span = ""
@@ -277,12 +303,8 @@ class FactCheckJudge:
                     "reason": f"Xung đột số liệu định lượng: claim chứa {list(claim_nums)} nhưng evidence có {list(best_ev_nums)}."
                 }
 
-        # TH B: Chia sẻ cùng chủ đề nhưng mâu thuẫn phủ định trực tiếp
-        # Không xem là mâu thuẫn nếu:
-        # - Trùng khớp số liệu định lượng (common_nums), HOẶC
-        # - Điểm tương đồng rất cao (best_score >= 0.35 hoặc best_overlap_count >= 5)
-        has_common_nums = bool(claim_nums and claim_nums.intersection(best_ev_nums))
-        if (best_score >= 0.18 or best_overlap_count >= 3) and (claim_neg != best_ev_neg) and not has_common_nums:
+        # TH B: Chia sẻ cùng chủ đề nhưng mâu thuẫn phủ định trực tiếp (kể cả khi trùng số liệu định lượng!)
+        if (best_score >= 0.18 or best_overlap_count >= 2) and (claim_neg != best_ev_neg):
             return {
                 "status": "contradict",
                 "confidence": 0.88,
