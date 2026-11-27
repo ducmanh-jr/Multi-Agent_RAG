@@ -153,15 +153,96 @@ def probe_kaggle_worker(remote_url: Optional[str] = None, timeout: float = 5.0) 
     return {"online": False, "url": url, "adapters": [], "has_vllm_32b": False}
 
 
-def probe_all_capabilities(force_refresh: bool = False) -> dict[str, Any]:
+_GEMINI_ACCESS_CACHE: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
+
+
+def probe_gemini_model_access(
+    api_key: str,
+    model_name: str,
+    *,
+    timeout: float = 4.0,
+    force_refresh: bool = False,
+    http_client: Any | None = None,
+) -> dict[str, Any]:
+    """
+    Verifies real per-model Gemini API permission (`GET /v1beta/models/{model}`) instead of
+    inferring readiness solely from API key presence + daily count.
+    Returns `{"ok": bool, "status": str, "model": str, "http_status": int | None, "detail": str}`.
+    """
+    key = (api_key or "").strip()
+    clean_model = (model_name or "").strip().removeprefix("models/")
+    if not key or len(key) <= 10:
+        return {"ok": False, "status": "api_key_missing", "model": clean_model, "http_status": None, "detail": "GEMINI_API_KEY not configured"}
+    if not clean_model:
+        return {"ok": False, "status": "model_unspecified", "model": "", "http_status": None, "detail": "No Gemini model specified"}
+
+    cache_key = (key[:8] + ":" + str(len(key)), clean_model)
+    now = time.monotonic()
+    if not force_refresh and http_client is None and cache_key in _GEMINI_ACCESS_CACHE:
+        ts, cached_res = _GEMINI_ACCESS_CACHE[cache_key]
+        if now - ts < 60.0:
+            return dict(cached_res)
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{clean_model}"
+    try:
+        if http_client is not None:
+            resp = http_client.get(url, headers={"x-goog-api-key": key}, timeout=timeout)
+        else:
+            with httpx.Client(timeout=timeout) as client:
+                resp = client.get(url, headers={"x-goog-api-key": key})
+        code = int(resp.status_code)
+        if code == 200:
+            data = resp.json() if resp.content else {}
+            methods = data.get("supportedGenerationMethods") or []
+            if methods and "generateContent" not in methods:
+                res = {
+                    "ok": False,
+                    "status": "unsupported_method",
+                    "model": clean_model,
+                    "http_status": code,
+                    "detail": f"Model '{clean_model}' does not support generateContent",
+                }
+            else:
+                res = {
+                    "ok": True,
+                    "status": "verified",
+                    "model": str(data.get("name") or clean_model).removeprefix("models/"),
+                    "http_status": code,
+                    "detail": "Model permission verified via Gemini Models API",
+                }
+        elif code in {401, 403}:
+            res = {"ok": False, "status": "permission_denied", "model": clean_model, "http_status": code, "detail": f"HTTP {code} permission denied for model '{clean_model}'"}
+        elif code == 404:
+            res = {"ok": False, "status": "model_not_found", "model": clean_model, "http_status": code, "detail": f"HTTP 404 model '{clean_model}' not accessible for this key"}
+        elif code == 429:
+            res = {"ok": False, "status": "quota_exhausted", "model": clean_model, "http_status": code, "detail": "HTTP 429 Gemini API quota exhausted"}
+        else:
+            res = {"ok": False, "status": f"http_{code}", "model": clean_model, "http_status": code, "detail": f"Unexpected HTTP {code}"}
+    except Exception as exc:
+        res = {"ok": False, "status": "unreachable", "model": clean_model, "http_status": None, "detail": f"{type(exc).__name__}: {exc}"}
+
+    if http_client is None:
+        _GEMINI_ACCESS_CACHE[cache_key] = (now, res)
+    return dict(res)
+
+
+def probe_all_capabilities(force_refresh: bool = False, *, live_gemini_probe: bool | None = None) -> dict[str, Any]:
     """
     Cached capability probe (TTL = 10s) across Local CPU/Vulkan, Gemini API, and Kaggle GPU.
     Used by Hybrid Mode to dynamically route Generator and Cross-Model Verifier.
+    When `live_gemini_probe` is True (or `GEMINI_LIVE_PROBE_ENABLED=true`), verifies actual
+    per-model API permission via `probe_gemini_model_access` instead of key presence alone.
     """
     global _PROBE_CACHE
     settings = get_run_settings()
     gemini_ready = bool(settings.GEMINI_API_KEY and len(settings.GEMINI_API_KEY.strip()) > 10)
-    key = (settings.LOCAL_CPU_URL, settings.LOCAL_CPU_MODEL, settings.REMOTE_INFERENCE_URL, gemini_ready)
+    do_live_probe = (
+        live_gemini_probe
+        if live_gemini_probe is not None
+        else os.getenv("GEMINI_LIVE_PROBE_ENABLED", "false").strip().lower() in {"true", "1", "yes"}
+    )
+    default_model = getattr(settings, "DEFAULT_LLM_MODEL", "") or ""
+    key = (settings.LOCAL_CPU_URL, settings.LOCAL_CPU_MODEL, settings.REMOTE_INFERENCE_URL, gemini_ready, default_model, do_live_probe)
     now = time.monotonic()
     cached = _PROBE_CACHE
     if not force_refresh and cached and cached[0] == key and now - cached[1] < 10.0:
@@ -180,6 +261,20 @@ def probe_all_capabilities(force_refresh: bool = False) -> dict[str, Any]:
         pass
 
     gemini_quota_ok = gemini_ready and (gemini_used_today < 1480)
+    gemini_access: dict[str, Any] = {
+        "ok": gemini_quota_ok,
+        "status": "unverified_offline" if gemini_quota_ok else ("quota_exhausted" if gemini_ready else "api_key_missing"),
+        "model": default_model,
+        "http_status": None,
+        "detail": "",
+    }
+    if gemini_quota_ok and do_live_probe:
+        gemini_access = probe_gemini_model_access(
+            settings.GEMINI_API_KEY,
+            default_model,
+            force_refresh=force_refresh,
+        )
+        gemini_quota_ok = bool(gemini_access.get("ok"))
 
     status = {
         "hardware": get_local_hardware_profile(),
@@ -193,6 +288,9 @@ def probe_all_capabilities(force_refresh: bool = False) -> dict[str, Any]:
         "gemini": {
             "online": gemini_quota_ok,
             "api_key_configured": gemini_ready,
+            "model": default_model,
+            "model_access_status": gemini_access.get("status"),
+            "model_access_detail": gemini_access.get("detail"),
             "used_today": gemini_used_today,
             "daily_limit": 1500,
         },

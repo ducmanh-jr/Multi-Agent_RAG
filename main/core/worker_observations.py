@@ -10,6 +10,7 @@ import httpx
 
 
 WORKER_INFERENCE_ACTION = "worker_inference"
+PROVIDER_INFERENCE_ACTION = "provider_inference"
 _ENDPOINTS = {
     "api/router", "api/summarize/generator", "api/summarize/critic",
     "api/writer", "api/factcheck", "generate", "v1/chat/completions",
@@ -78,12 +79,15 @@ def _read_worker_headers(event: dict[str, Any], headers: httpx.Headers) -> None:
     if component == "verifier" and headers.get("X-Research-Model-Status") == "unavailable":
         event["status"] = "unavailable"
         return
-    expected_adapter = None if component == "verifier" else component
-    if adapter != expected_adapter or not _MODEL_NAME.fullmatch(model):
+    if not _MODEL_NAME.fullmatch(model):
+        return
+    if component == "verifier":
+        if adapter is not None:
+            return
+    elif adapter not in {component, "none"}:
         return
     event["model"] = model
-    revision_pattern = _SHA256 if component == "verifier" else _MODEL_REVISION
-    if revision_pattern.fullmatch(revision):
+    if _MODEL_REVISION.fullmatch(revision):
         event["revision"] = revision
     if adapter is not None:
         event["adapter"] = adapter
@@ -91,3 +95,41 @@ def _read_worker_headers(event: dict[str, Any], headers: httpx.Headers) -> None:
             event["adapter_sha256"] = adapter_sha256
     if "revision" in event and (adapter in {None, "none"} or "adapter_sha256" in event):
         event["status"] = "reported"
+
+
+def record_provider_observation(
+    *,
+    provider: str,
+    operation: str,
+    status: str,
+    requested_model: str | None = None,
+    attempted_models: list[str] | tuple[str, ...] = (),
+    served_model: str | None = None,
+    model_version: str | None = None,
+    fallback_reason: str | None = None,
+    agent: str | None = None,
+) -> None:
+    """Record cloud/local/fallback LLM provider execution metadata within an active observation scope."""
+    pending = _observations.get()
+    if pending is None:
+        return
+    event: dict[str, Any] = {
+        "action": PROVIDER_INFERENCE_ACTION,
+        "provider": str(provider or "unknown"),
+        "operation": str(operation or "generate"),
+        "status": str(status or "unreported"),
+    }
+    if agent:
+        event["agent"] = str(agent)
+    if requested_model:
+        event["requested_model"] = str(requested_model)
+    if attempted_models:
+        event["attempted_models"] = [str(m) for m in attempted_models if m]
+    if served_model:
+        event["served_model"] = str(served_model)
+    if model_version:
+        event["model_version"] = str(model_version)
+    if fallback_reason:
+        event["fallback_reason"] = str(fallback_reason)[:300]
+    with pending.lock:
+        pending.events.append(event)

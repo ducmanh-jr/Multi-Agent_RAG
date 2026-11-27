@@ -9,7 +9,15 @@ from __future__ import annotations
 import os
 import re
 import unicodedata
-from typing import Any, Tuple
+from typing import Any, Optional, Tuple
+
+from utils.language import (
+    detect_corpus_language,
+    detect_language,
+    has_vietnamese_diacritics,
+    is_vietnamese_text,
+    normalize_language_code,
+)
 
 
 def strip_accents(text: str) -> str:
@@ -44,6 +52,17 @@ GENERIC_COMMON_WORDS = {
     "explain", "describe", "compare", "contrast", "difference", "differences",
     "main", "key", "most", "some", "many", "much", "any", "all", "each",
     "can", "could", "will", "would", "should", "shall", "may", "might", "must",
+    "table", "tables", "figure", "figures", "fig", "tab", "section", "sections",
+    "sec", "equation", "equations", "eq", "formula", "formulas", "appendix",
+    "page", "pages", "chapter", "algorithm", "theorem", "lemma", "corollary",
+    "chart", "plot", "graph", "diagram", "row", "rows", "column", "columns",
+}
+
+DOCUMENT_LOCATOR_WORDS = {
+    "table", "tables", "figure", "figures", "fig", "tab", "section", "sections",
+    "sec", "equation", "equations", "eq", "formula", "formulas", "appendix",
+    "page", "pages", "chapter", "part", "algorithm", "theorem", "lemma",
+    "proposition", "corollary", "chart", "plot", "graph", "diagram",
 }
 
 # Common unaccented Vietnamese words to never confuse with English tech terms
@@ -64,20 +83,20 @@ VN_ASCII_WORDS = {
 
 
 def _has_phrase(phrase: str, doc_lower: str, doc_unaccented: str, query_has_accents: bool) -> bool:
-    """Matches a phrase or technical token with word boundary and multi-whitespace guards."""
+    """Matches a phrase or technical token with word boundary and multi-whitespace guards (treating '_' as separator)."""
     if not phrase:
         return False
     words = phrase.lower().strip().split()
     if not words:
         return False
-    p_c = r"\s+".join(re.escape(w) for w in words)
-    pat1 = r"(?<![\wà-ỹÀ-Ỹ])" + p_c + r"(?![\wà-ỹÀ-Ỹ])"
+    p_c = r"[\s_]+".join(re.escape(w) for w in words)
+    pat1 = r"(?<![a-zA-Z0-9à-ỹÀ-Ỹ])" + p_c + r"(?![a-zA-Z0-9à-ỹÀ-Ỹ])"
     if re.search(pat1, doc_lower):
         return True
     # Only fall back to unaccented match if the query itself was typed without accents
     if not query_has_accents:
-        p_u = r"\s+".join(re.escape(strip_accents(w)) for w in words)
-        pat2 = r"(?<!\w)" + p_u + r"(?!\w)"
+        p_u = r"[\s_]+".join(re.escape(strip_accents(w)) for w in words)
+        pat2 = r"(?<![a-zA-Z0-9])" + p_u + r"(?![a-zA-Z0-9])"
         if re.search(pat2, doc_unaccented):
             return True
     return False
@@ -181,14 +200,12 @@ def check_out_of_domain(query: str, source_units: list[dict[str, Any]]) -> Tuple
     raw_doc_text = " ".join(str(getattr(u, "text", u.get("text", "") if isinstance(u, dict) else str(u))) for u in source_units)
     doc_l = re.sub(r"\s+", " ", raw_doc_text.lower())
     doc_unaccent = strip_accents(doc_l)
-    query_has_accents = bool(re.search(r"[à-ỹÀ-Ỹ]", clean_q))
+    query_has_accents = has_vietnamese_diacritics(clean_q)
     # Distinguish actual Vietnamese documents from English PDFs containing occasional
-    # European accented author names or synthetic Vietnamese status notes by using a ratio threshold.
+    # European accented author names or Greek math symbols by using exact Vietnamese detection.
     vn_specific_pat = r"[ăâđêôơưạảấầẩẫậắằẳẵặẹẻẽếềểễệỉịọỏốồổỗộớờởỡợụủứừửữựỳỵỷỹ]"
-    query_is_vietnamese = bool(re.search(vn_specific_pat, clean_q.lower()))
-    vn_doc_chars = len(re.findall(vn_specific_pat, doc_l))
-    alpha_doc_chars = max(1, len(re.findall(r"[a-zA-Zà-ỹÀ-Ỹ]", doc_l)))
-    doc_is_vietnamese = (vn_doc_chars >= 15) and ((vn_doc_chars / alpha_doc_chars) >= 0.02)
+    query_is_vietnamese = is_vietnamese_text(clean_q)
+    doc_is_vietnamese = detect_corpus_language(source_units, default="en") == "vi"
 
     # 1. Check quoted entities FIRST: if user explicitly probes quoted entities absent from document
     quotes = re.findall(r"[\"\'\`“](.*?)[\"\'\`”]", clean_q)
@@ -231,8 +248,9 @@ def check_out_of_domain(query: str, source_units: list[dict[str, Any]]) -> Tuple
     foreign_terms = [
         t for t in re.findall(r"\b[A-Za-z0-9_-]{3,}\b", clean_q)
         if t.lower() not in VN_ASCII_WORDS
-        and not re.search(r"[à-ỹÀ-Ỹ]", t)
+        and not has_vietnamese_diacritics(t)
         and t.lower() not in GENERIC_COMMON_WORDS
+        and t.lower() not in DOCUMENT_LOCATOR_WORDS
         and t.lower() not in doc_id_tokens
     ]
     words_in_q = clean_q.split()
@@ -241,27 +259,30 @@ def check_out_of_domain(query: str, source_units: list[dict[str, Any]]) -> Tuple
     )
     if words_in_q:
         sentence_initials.add(words_in_q[0].strip("(\"'`“"))
+    is_cross_lingual = query_is_vietnamese != doc_is_vietnamese
     tech_named = []
     for t in foreign_terms:
+        has_upper_or_digit = any(c.isupper() or c.isdigit() for c in t)
         if t in sentence_initials:
             # Sentence-initial capitalization: only count as named tech if acronym, camelCase or identifier
-            if t.isupper() or '_' in t or '-' in t or any(c.isupper() for c in t[1:]):
+            if t.isupper() or '_' in t or any(c.isupper() for c in t[1:]) or ('-' in t and (not is_cross_lingual or any(c.isupper() or c.isdigit() for c in t[1:]))):
                 tech_named.append(t)
-        elif t[0].isupper() or any(c.isupper() for c in t[1:]) or '_' in t or '-' in t:
+        elif t[0].isupper() or any(c.isupper() for c in t[1:]) or '_' in t or ('-' in t and (not is_cross_lingual or has_upper_or_digit)):
             tech_named.append(t)
     if tech_named:
         missing_tech = [
             t for t in tech_named
             if not _has_phrase_in_sources_or_docs(t, source_units, doc_l, doc_unaccent, query_has_accents)
         ]
-        if len(missing_tech) >= max(1, int(len(tech_named) * 0.5)):
-            # All named technical identifiers asked in query are absent from document
+        min_missing = len(tech_named) if is_cross_lingual else max(1, int(len(tech_named) * 0.5))
+        if len(missing_tech) >= min_missing:
+            # Named technical identifiers asked in query are absent from document
             return True, f"foreign_term_absent: {missing_tech}"
 
     # 4. Check core subject phrases & compound n-grams
-    # Skip verbatim lexical n-gram gating for cross-lingual queries (Vietnamese query on English PDF),
-    # because Vietnamese phrases cannot appear verbatim in English text; Steps 1 & 3 + NLI handle OOD.
-    if query_is_vietnamese and not doc_is_vietnamese:
+    # Skip verbatim lexical n-gram gating for BOTH cross-lingual directions (VI->EN and EN->VI),
+    # because translated phrases cannot appear verbatim in the opposite-language source; Steps 1 & 3 + NLI handle OOD.
+    if is_cross_lingual:
         return False, "cross_lingual_in_domain"
 
     phrases = extract_core_subject_phrases(clean_q)
@@ -289,22 +310,37 @@ def check_out_of_domain(query: str, source_units: list[dict[str, Any]]) -> Tuple
     return False, "in_domain"
 
 
-def build_out_of_domain_response(clean_q: str, model_family: str = "extractive") -> dict[str, Any]:
-    """Generates the standardized Zero-Hallucination Honest Refusal payload."""
-    no_doc_msg = (
-        f"Dựa trên các bài báo/tài liệu hiện có trong hệ thống, thông tin về \"{clean_q}\" "
-        f"**hoàn toàn không được đề cập**.\n\n"
-        f"Vui lòng hỏi các câu hỏi liên quan đến nội dung tài liệu được cung cấp hoặc tải thêm tài liệu liên quan lên hệ thống để phân tích."
-    )
+def build_out_of_domain_response(
+    clean_q: str,
+    model_family: str = "extractive",
+    answer_language: Optional[str] = None,
+) -> dict[str, Any]:
+    """Generates the standardized Zero-Hallucination Honest Refusal payload in the requested language."""
+    lang = normalize_language_code(answer_language) or detect_language(clean_q, default="vi")
+    if lang == "en":
+        no_doc_msg = (
+            f"Based on the selected documents in the system, information about \"{clean_q}\" "
+            f"**is not mentioned in the provided sources**.\n\n"
+            f"Please ask questions grounded in the selected documents or upload relevant papers for analysis."
+        )
+        claim_txt = f"The selected documents do not mention '{clean_q}'."
+    else:
+        no_doc_msg = (
+            f"Dựa trên các bài báo/tài liệu hiện có trong hệ thống, thông tin về \"{clean_q}\" "
+            f"**hoàn toàn không được đề cập**.\n\n"
+            f"Vui lòng hỏi các câu hỏi liên quan đến nội dung tài liệu được cung cấp hoặc tải thêm tài liệu liên quan lên hệ thống để phân tích."
+        )
+        claim_txt = f"Tài liệu hiện có hoàn toàn không đề cập đến '{clean_q}'."
     return {
         "answer": no_doc_msg,
-        "claims": [{"id": "claim_1", "text": f"Tài liệu hiện có hoàn toàn không đề cập đến '{clean_q}'.", "unit_id": None}],
+        "claims": [{"id": "claim_1", "text": claim_txt, "unit_id": None}],
         "evidence_spans": [],
         "critic_action": "approve",
         "critic_feedback": {"action": "approve", "confidence": 1.0, "reason": "out_of_domain"},
         "generator_model_family": model_family,
         "is_out_of_domain": True,
         "answer_status": "NOT_FOUND_IN_DOCUMENT",
+        "answer_language": lang,
     }
 
 
@@ -312,13 +348,16 @@ def build_ambiguous_clarification_response(
     clean_q: str,
     branches: list[dict[str, Any]],
     model_family: str = "extractive",
+    answer_language: Optional[str] = None,
 ) -> dict[str, Any]:
     """Generates the standardized Active Disambiguation payload for vague / multi-aspect queries."""
+    lang = normalize_language_code(answer_language) or detect_language(clean_q, default="vi")
     branch_items = []
     evidence_spans = []
     claims = []
     for idx, b in enumerate(branches[:4], 1):
-        topic = b.get("topic") or b.get("title") or f"Khía cạnh {idx}"
+        default_topic = f"Aspect {idx}" if lang == "en" else f"Khía cạnh {idx}"
+        topic = b.get("topic") or b.get("title") or default_topic
         ref = b.get("ref", "")
         preview = b.get("preview", "")
         branch_line = f"{idx}. **{topic}**"
@@ -338,17 +377,25 @@ def build_ambiguous_clarification_response(
             })
         claims.append({
             "id": f"claim_{idx}",
-            "text": f"Tài liệu đề cập khía cạnh: {topic}",
+            "text": (f"The document covers aspect: {topic}" if lang == "en" else f"Tài liệu đề cập khía cạnh: {topic}"),
             "unit_id": b.get("unit_id"),
         })
 
-    branches_str = "\n".join(branch_items) if branch_items else "1. Các khía cạnh kỹ thuật liên quan trong tài liệu."
-    msg = (
-        f"Dựa trên tài liệu được cung cấp, câu hỏi *\"{clean_q}\"* có đề cập đến chủ đề này "
-        f"nhưng tồn tại nhiều khía cạnh/kịch bản khác nhau:\n\n"
-        f"{branches_str}\n\n"
-        f"👉 **Vui lòng cung cấp thêm chi tiết để tôi hỗ trợ chính xác hơn dựa trên tài liệu.**"
-    )
+    if lang == "en":
+        branches_str = "\n".join(branch_items) if branch_items else "1. Related technical aspects in the document."
+        msg = (
+            f"Based on the provided documents, the question *\"{clean_q}\"* spans multiple distinct aspects or evaluation conditions:\n\n"
+            f"{branches_str}\n\n"
+            f"**Please clarify which specific aspect, document, or condition you would like analyzed.**"
+        )
+    else:
+        branches_str = "\n".join(branch_items) if branch_items else "1. Các khía cạnh kỹ thuật liên quan trong tài liệu."
+        msg = (
+            f"Dựa trên tài liệu được cung cấp, câu hỏi *\"{clean_q}\"* có đề cập đến chủ đề này "
+            f"nhưng tồn tại nhiều khía cạnh/kịch bản khác nhau:\n\n"
+            f"{branches_str}\n\n"
+            f"👉 **Vui lòng cung cấp thêm chi tiết để tôi hỗ trợ chính xác hơn dựa trên tài liệu.**"
+        )
     return {
         "answer": msg,
         "claims": claims,
@@ -358,4 +405,5 @@ def build_ambiguous_clarification_response(
         "generator_model_family": model_family,
         "is_ambiguous": True,
         "answer_status": "CLARIFICATION_NEEDED",
+        "answer_language": lang,
     }

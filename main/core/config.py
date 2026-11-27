@@ -12,7 +12,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field, fields
 from threading import RLock
 from types import MappingProxyType
-from typing import Mapping
+from typing import Any, Mapping
 from dotenv import load_dotenv
 
 _core_dir = os.path.dirname(os.path.abspath(__file__))
@@ -172,6 +172,12 @@ class Settings(_AgentModeSettings):
         default_factory=lambda: os.getenv("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
     )
 
+    # Semantic / Prompt SQLite Cache Toggle (disabled in no-cache evaluation regimes)
+    LLM_CACHE_ENABLED: bool = field(
+        default_factory=lambda: os.getenv("LLM_CACHE_ENABLED", "true").strip().lower()
+        not in {"0", "false", "no", "off"}
+    )
+
     # Multi-Agent StateGraph Limits & Budget Guards
     MAX_ORCHESTRATOR_RETRY: int = int(os.getenv("MAX_ORCHESTRATOR_RETRY", "3"))
     DEFAULT_MAX_INTERNAL_RETRY: int = int(os.getenv("DEFAULT_MAX_INTERNAL_RETRY", "2"))
@@ -233,6 +239,12 @@ class RunConfig(_AgentModeSettings):
         except KeyError:
             raise AttributeError(name) from None
 
+    def with_overrides(self, **overrides: Any) -> "RunConfig":
+        """Return a new immutable RunConfig with selected configuration keys overridden."""
+        merged = dict(object.__getattribute__(self, "_values"))
+        merged.update(overrides)
+        return type(self)(merged)
+
     @classmethod
     def capture(
         cls,
@@ -240,6 +252,7 @@ class RunConfig(_AgentModeSettings):
         remote_inference_url: str | None = None,
         corpus_path: str | None = None,
         agent_modes: Mapping[str, str] | None = None,
+        llm_cache_enabled: bool | None = None,
     ) -> "RunConfig":
         with run_defaults_lock:
             values = {entry.name: getattr(settings, entry.name) for entry in fields(settings)}
@@ -249,6 +262,8 @@ class RunConfig(_AgentModeSettings):
                 values["REMOTE_INFERENCE_URL"] = remote_inference_url
             if corpus_path is not None:
                 values["CORPUS_PATH"] = corpus_path
+            if llm_cache_enabled is not None:
+                values["LLM_CACHE_ENABLED"] = bool(llm_cache_enabled)
             if agent_modes:
                 for role, mode in agent_modes.items():
                     clean_role = role.lower().replace("agent", "").replace("_", "").strip()

@@ -21,7 +21,7 @@ from core.config import get_run_settings
 from core.db import get_cached_llm, log_api_usage, set_cached_llm
 from core.schemas import canonical_adapter_name
 from core.token_usage import TokenBudgetStop, metered_post
-from core.worker_observations import record_worker_observation
+from core.worker_observations import record_provider_observation, record_worker_observation
 from utils.local_vulkan_setup import probe_ollama_models
 from utils.logger import logger
 
@@ -54,6 +54,7 @@ class UnifiedLLMClient:
         target_mode = config.get_inference_mode(agent)
         target_mode = (target_mode or "cpu_max").lower()
 
+        cache_enabled = bool(getattr(config, "LLM_CACHE_ENABLED", True))
         cache_key_str = json.dumps([
             target_mode, agent, prompt, system_instruction, json_mode, temperature, max_tokens,
             config.LOCAL_CPU_URL, config.LOCAL_CPU_MODEL, config.REMOTE_INFERENCE_URL,
@@ -61,15 +62,24 @@ class UnifiedLLMClient:
             config.GEMINI_API_KEY, config.DEEPSEEK_API_KEY, config.OPENAI_API_KEY,
         ], ensure_ascii=False)
         cache_key = hashlib.sha256(cache_key_str.encode("utf-8")).hexdigest()
-        cached = get_cached_llm(cache_key)
+        cached = get_cached_llm(cache_key) if cache_enabled else None
         if cached:
             logger.info(f"LLM Semantic Cache Hit [{cache_key[:8]}]. Saved 1 external API/GPU call.")
             if target_mode in _REMOTE_MODES:
                 adapter = "none" if target_mode == "gpu_max" else canonical_adapter_name(agent)
                 record_worker_observation("generate", adapter, status="cache_hit")
+            else:
+                record_provider_observation(
+                    provider=target_mode,
+                    operation="generate",
+                    status="cache_hit",
+                    requested_model=config.LOCAL_CPU_MODEL if target_mode in {"cpu", "cpu_min", "cpu_max", "local_cpu"} else config.DEFAULT_LLM_MODEL,
+                    agent=agent,
+                )
             return cached
 
         response_text = ""
+        used_degraded_fallback = False
         is_cpu_mode = target_mode in ["cpu", "cpu_min", "cpu_max", "local_cpu"]
 
         # 0. Pure Local CPU / Radeon 780M Vulkan execution (100% Offline - ZERO Cloud API calls)
@@ -88,13 +98,22 @@ class UnifiedLLMClient:
             except TokenBudgetStop:
                 raise
             except Exception as e:
+                used_degraded_fallback = True
                 logger.info(
                     f"[CPU Mode: {target_mode}] Local Ollama server is offline ({e}). "
                     f"Using pure in-memory CPU extractive processing (100% offline, zero cloud API calls)."
                 )
+                record_provider_observation(
+                    provider="heuristic_fallback",
+                    operation="offline_extractive_fallback",
+                    status="fallback",
+                    requested_model=config.LOCAL_CPU_MODEL,
+                    fallback_reason=f"local_cpu_offline:{type(e).__name__}",
+                    agent=agent,
+                )
                 response_text = self._offline_extractive_fallback(prompt, json_mode)
 
-            if response_text:
+            if response_text and cache_enabled and not used_degraded_fallback:
                 set_cached_llm(cache_key, prompt, response_text)
             return response_text
 
@@ -123,13 +142,14 @@ class UnifiedLLMClient:
             except Exception as e:
                 logger.warning(f"Kaggle remote for agent '{agent}' failed ({e}). Cascading to Cloud Foundation Model for high-fidelity generative synthesis...")
                 response_text = ""
-            if response_text:
+            if response_text and cache_enabled:
                 set_cached_llm(cache_key, prompt, response_text)
             return response_text
 
         # 2. Cloud Foundation Model (Enforced by centralized Provider Policy Gate)
         from core.provider_router import is_gemini_permitted
 
+        cloud_failure_reason = ""
         if self.settings.GEMINI_API_KEY and is_gemini_permitted(target_mode, role=agent or ""):
             try:
                 response_text = self._call_gemini(
@@ -138,14 +158,18 @@ class UnifiedLLMClient:
             except TokenBudgetStop:
                 raise
             except Exception as e:
+                cloud_failure_reason = f"gemini_error:{type(e).__name__}"
                 logger.warning(f"Gemini API call failed: {e}. Trying fallback provider...")
         elif self.settings.GEMINI_API_KEY and not is_gemini_permitted(target_mode, role=agent or ""):
+            cloud_failure_reason = "provider_policy_blocked"
             logger.info(
                 "[ProviderGate] Blocked Gemini API call under mode='%s' (profile='%s', agent='%s').",
                 target_mode,
                 getattr(self.settings, "HYBRID_PROVIDER_PROFILE", "auto"),
                 agent or "",
             )
+        else:
+            cloud_failure_reason = "missing_gemini_api_key"
 
         # 3. Fallback to DeepSeek / OpenAI-compatible API if Gemini fails
         if not response_text and (self.settings.DEEPSEEK_API_KEY or self.settings.OPENAI_API_KEY):
@@ -156,14 +180,24 @@ class UnifiedLLMClient:
             except TokenBudgetStop:
                 raise
             except Exception as e:
+                cloud_failure_reason = f"{cloud_failure_reason};openai_error:{type(e).__name__}".lstrip(";")
                 logger.error(f"Fallback OpenAI/DeepSeek API failed: {e}")
 
-        # 4. Fallback if cloud APIs fail
+        # 4. Fallback if cloud APIs fail — NEVER persist heuristic fallback into llm_cache!
         if not response_text:
+            used_degraded_fallback = True
             logger.warning("Cloud APIs unreachable! Returning heuristic deterministic response.")
+            record_provider_observation(
+                provider="heuristic_fallback",
+                operation="offline_extractive_fallback",
+                status="fallback",
+                requested_model=config.DEFAULT_LLM_MODEL,
+                fallback_reason=cloud_failure_reason or "cloud_unreachable",
+                agent=agent,
+            )
             response_text = self._offline_extractive_fallback(prompt, json_mode)
 
-        if response_text:
+        if response_text and cache_enabled and not used_degraded_fallback:
             set_cached_llm(cache_key, prompt, response_text)
 
         return response_text
@@ -348,11 +382,15 @@ class UnifiedLLMClient:
         active_models = [m for m in candidate_models if cooldowns.get(m, 0.0) <= now_mono]
         if active_models:
             candidate_models = active_models
+        requested_model = candidate_models[0] if candidate_models else (self.settings.DEFAULT_LLM_MODEL or "")
+        attempted_models: list[str] = []
+        cascade_reasons: list[str] = []
         last_error: Optional[Exception] = None
 
         for model in candidate_models:
             if not model:
                 continue
+            attempted_models.append(model)
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
             contents = []
@@ -390,7 +428,9 @@ class UnifiedLLMClient:
                     if resp.status_code == 200:
                         log_api_usage("gemini", model, "generateContent")
                         data = resp.json()
-                        cands = data.get("candidates", [])
+                        raw_version = data.get("modelVersion") if isinstance(data, dict) else None
+                        actual_version = raw_version.strip() if isinstance(raw_version, str) and raw_version.strip() else model
+                        cands = data.get("candidates", []) if isinstance(data, dict) else []
                         if cands:
                             content = cands[0].get("content", {})
                             parts = content.get("parts", [])
@@ -399,15 +439,27 @@ class UnifiedLLMClient:
                                 for p in parts
                                 if isinstance(p, dict) and isinstance(p.get("text"), str) and not p.get("thought")
                             ]
-                            if non_thought:
-                                return non_thought[-1]
-                            if parts and "text" in parts[0]:
-                                return parts[0]["text"]
+                            text_out = non_thought[-1] if non_thought else (parts[0]["text"] if parts and "text" in parts[0] else None)
+                            if text_out is not None:
+                                cascaded = model != requested_model or bool(cascade_reasons)
+                                record_provider_observation(
+                                    provider="gemini",
+                                    operation="generateContent",
+                                    status="fallback" if cascaded else "reported",
+                                    requested_model=requested_model,
+                                    attempted_models=attempted_models,
+                                    served_model=model,
+                                    model_version=actual_version,
+                                    fallback_reason="; ".join(cascade_reasons) if cascade_reasons else None,
+                                )
+                                return text_out
+                        cascade_reasons.append(f"{model}:empty_candidates")
                         logger.warning(f"Gemini response has no text parts: {data}")
                         break
                     elif resp.status_code == 404:
                         # Cache 404 retired model IDs (e.g. gemini-2.5-flash) for 1 hour so they are skipped immediately
                         cooldowns[model] = time.monotonic() + 3600.0
+                        cascade_reasons.append(f"{model}:http_404")
                         last_error = RuntimeError(f"Gemini HTTP 404 (model '{model}' not found)")
                         logger.info(f"Gemini model '{model}' returned 404; caching skip and cascading to next model...")
                         break
@@ -425,17 +477,29 @@ class UnifiedLLMClient:
                         if attempt == 0 and retry_after > 0:
                             time.sleep(retry_after)
                             continue
+                        cascade_reasons.append(f"{model}:http_{resp.status_code}")
                         logger.warning(f"Gemini model {model} hit HTTP {resp.status_code}. Trying next model...")
                         break
                     else:
+                        cascade_reasons.append(f"{model}:http_{resp.status_code}")
                         resp.raise_for_status()
                 except TokenBudgetStop:
                     raise
                 except Exception as e:
                     last_error = e
+                    if not cascade_reasons or not cascade_reasons[-1].startswith(f"{model}:"):
+                        cascade_reasons.append(f"{model}:{type(e).__name__}")
                     logger.warning(f"Gemini call to {model} failed: {e}. Trying fallback...")
                     break
 
+        record_provider_observation(
+            provider="gemini",
+            operation="generateContent",
+            status="error",
+            requested_model=requested_model,
+            attempted_models=attempted_models,
+            fallback_reason="; ".join(cascade_reasons) or (str(last_error) if last_error else "all_models_failed"),
+        )
         if last_error:
             raise last_error
         raise RuntimeError("Tất cả các mô hình Gemini đều không phản hồi.")
@@ -475,15 +539,27 @@ class UnifiedLLMClient:
         if json_mode:
             payload["response_format"] = {"type": "json_object"}
 
+        provider_name = "deepseek" if self.settings.DEEPSEEK_API_KEY else "openai"
         resp = metered_post(
             self.http_client.post, f"{base_url}/chat/completions",
-            provider="deepseek" if self.settings.DEEPSEEK_API_KEY else "openai",
+            provider=provider_name,
             operation="chat/completions", protocol="openai",
             json=payload,
             headers={"Authorization": f"Bearer {api_key}"},
         )
         resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
+        body = resp.json()
+        served_name = str(body.get("model") or model)
+        record_provider_observation(
+            provider=provider_name,
+            operation="chat/completions",
+            status="reported",
+            requested_model=model,
+            attempted_models=[model],
+            served_model=served_name,
+            model_version=served_name,
+        )
+        return body["choices"][0]["message"]["content"]
 
     def _call_local_cpu(
         self,
@@ -538,6 +614,17 @@ class UnifiedLLMClient:
             data = resp.json()
             content = data.get("message", {}).get("content", "")
             if content:
+                served_ollama = str(data.get("model") or model_name)
+                record_provider_observation(
+                    provider="ollama",
+                    operation="api/chat",
+                    status="reported",
+                    requested_model=model_name,
+                    attempted_models=[model_name],
+                    served_model=served_ollama,
+                    model_version=served_ollama,
+                    agent=agent,
+                )
                 logger.info(f"Local Radeon 780M Vulkan [Ollama {model_name}] generated response ({len(content)} chars)")
                 return content
 
@@ -558,6 +645,17 @@ class UnifiedLLMClient:
         )
         resp.raise_for_status()
         data = resp.json()
+        served_compat = str(data.get("model") or model_name)
+        record_provider_observation(
+            provider="local_openai",
+            operation="chat/completions",
+            status="reported",
+            requested_model=model_name,
+            attempted_models=[model_name],
+            served_model=served_compat,
+            model_version=served_compat,
+            agent=agent,
+        )
         return data["choices"][0]["message"]["content"]
 
     def _call_remote_kaggle(self, task: str, payload: dict[str, Any]) -> Any:

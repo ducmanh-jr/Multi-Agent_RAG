@@ -171,9 +171,53 @@ BILINGUAL_PHRASE_MAP: dict[str, list[str]] = {
     "cạnh tranh": ["competitive", "zero-sum"],
     "tự đối kháng": ["self-play", "self", "play"],
     "hội tụ": ["convergence", "non-convergence"],
+    # Information Retrieval, Tables, OCR, Domain Constraints & Evaluation Concepts (M3)
+    "truy hồi": ["retrieval", "retrieve", "search", "ranking"],
+    "sàng lọc": ["filter", "filtering", "consistency", "curated"],
+    "lọc": ["filter", "filtering", "cutoff"],
+    "cặp văn bản": ["text", "pairs", "pair", "corpus"],
+    "một triệu": ["1 million", "million"],
+    "từ vựng": ["lexical", "sparse", "bm25"],
+    "thưa": ["sparse", "lexical"],
+    "dày": ["dense", "semantic", "embedding"],
+    "đa véc-tơ": ["multi-vector", "colbert"],
+    "đa vector": ["multi-vector", "colbert"],
+    "véc-tơ": ["vector", "vectors", "embedding", "embeddings"],
+    "gom nhóm": ["clustering", "cluster", "k-means"],
+    "phân cụm": ["clustering", "cluster", "k-means"],
+    "không cần nhãn": ["unsupervised", "unlabeled", "clustering"],
+    "độ dài tối đa": ["maximum", "length", "max", "tokens"],
+    "tập kiểm tra": ["test", "testing", "split"],
+    "tập test": ["test", "testing", "split"],
+    "tập kiểm định": ["validation", "dev", "development"],
+    "tập huấn luyện": ["train", "training", "split"],
+    "điểm phần trăm": ["percentage", "points", "pp", "percent"],
+    "phần trăm": ["percent", "percentage", "%"],
+    "nồng độ": ["concentration", "nitrate", "mg/l", "level"],
+    "đất": ["soil", "ground"],
+    "hóa đơn": ["invoice", "invoices", "receipt"],
+    "quét": ["scan", "scanned", "ocr"],
+    "nhận dạng": ["recognition", "ocr", "accuracy"],
+    "nhỏ giọt": ["drip", "irrigation", "water", "liters"],
+    "tưới ngầm": ["subsurface", "drip", "irrigation", "water"],
+    "tưới nước": ["irrigation", "water", "watering"],
+    "lít": ["liters", "liter", "l"],
+    "liều": ["dose", "dosage", "treatment"],
+    "điều trị": ["treatment", "therapy", "clinical"],
+    "điều kiện": ["condition", "constraint", "domain", "where"],
+    "miền xác định": ["domain", "constraint", "condition", "where"],
+    "biến": ["variable", "variables", "parameter"],
+    "cận": ["limit", "limits", "bound", "bounds"],
+    "tốc độ học": ["learning", "rate", "stepsize", "alpha"],
+    "bước học": ["stepsize", "learning", "rate", "alpha"],
+    "giảm giá": ["discount", "gamma"],
+    "hệ số chiết khấu": ["discount", "factor", "gamma"],
+    "trang": ["page", "pages"],
+    "chú giải": ["legend", "caption", "label"],
+    "trục": ["axis", "axes"],
 }
 
-# English -> Vietnamese reverse map
+# English -> Vietnamese reverse map (expanded for full EN->VI cross-lingual coverage in M3)
 ENGLISH_TO_VIETNAMESE: dict[str, list[str]] = {
     "attention": ["chú ý", "attention"],
     "transformer": ["kiến trúc", "mô hình transformer", "transformer"],
@@ -182,38 +226,129 @@ ENGLISH_TO_VIETNAMESE: dict[str, list[str]] = {
     "memory": ["bộ nhớ", "vram"],
     "parameters": ["tham số"],
     "weights": ["trọng số"],
-    "latency": ["độ trễ"],
-    "throughput": ["băng thông", "tốc độ xử lý"],
+    "latency": ["độ trễ", "thời gian phản hồi"],
+    "throughput": ["băng thông", "thông lượng", "tốc độ xử lý"],
     "fine-tuning": ["tinh chỉnh", "fine-tuning"],
-    "accuracy": ["độ chính xác", "accuracy"],
+    "accuracy": ["độ chính xác", "chính xác", "accuracy"],
     "training": ["huấn luyện", "đào tạo"],
     "inference": ["suy luận"],
     "quantization": ["lượng tử hóa"],
     "abstract": ["tóm tắt", "nội dung chính"],
     "summary": ["tóm tắt", "tổng quan"],
+    "trial": ["thử nghiệm", "thí nghiệm"],
+    "experiment": ["thí nghiệm", "thực nghiệm", "thử nghiệm"],
+    "experiments": ["thí nghiệm", "thực nghiệm"],
+    "days": ["ngày"],
+    "duration": ["kéo dài", "thời gian", "ngày"],
+    "lasted": ["kéo dài", "ngày"],
+    "water": ["nước", "tưới"],
+    "irrigation": ["tưới tiêu", "tưới nước", "tưới"],
+    "drip": ["nhỏ giọt", "tưới nhỏ giọt"],
+    "liters": ["lít"],
+    "orchard": ["vườn cây", "vườn"],
+    "greenhouse": ["nhà kính"],
+    "yield": ["năng suất", "sản lượng"],
+    "nitrate": ["nitrat", "nồng độ nitrat"],
+    "soil": ["đất"],
+    "concentration": ["nồng độ"],
+    "equation": ["phương trình", "công thức", "biểu thức"],
+    "formula": ["công thức", "phương trình"],
+    "table": ["bảng", "số liệu"],
+    "figure": ["hình", "biểu đồ"],
+    "chart": ["biểu đồ", "đồ thị"],
+    "results": ["kết quả", "số liệu"],
+    "method": ["phương pháp", "mô hình"],
+    "methods": ["phương pháp", "các phương pháp"],
+    "comparison": ["so sánh", "đối chiếu"],
+    "compare": ["so sánh", "đối chiếu"],
+    "difference": ["chênh lệch", "khác biệt", "cao hơn"],
+    "percentage": ["phần trăm", "tỷ lệ", "điểm phần trăm"],
+    "baseline": ["cơ sở", "đối chứng", "nền"],
+    "validation": ["kiểm định", "validation"],
+    "test": ["kiểm tra", "tập test", "thử nghiệm"],
+    "error": ["sai số", "lỗi"],
+    "loss": ["mất mát", "hàm mất mát"],
+    "dataset": ["tập dữ liệu", "bộ dữ liệu"],
+    "model": ["mô hình"],
+    "layers": ["lớp", "tầng"],
+    "steps": ["bước"],
+    "batch": ["lô", "batch"],
+    "clustering": ["phân cụm", "gom nhóm"],
+    "retrieval": ["truy hồi", "tìm kiếm"],
+    "dense": ["dày", "ngữ nghĩa"],
+    "sparse": ["thưa", "từ khóa"],
+    "lexical": ["từ vựng", "từ khóa"],
+    "scan": ["quét", "scan", "ocr"],
+    "invoice": ["hóa đơn"],
+    "invoices": ["hóa đơn"],
+    "ocr": ["nhận dạng", "ocr", "quét"],
+    "treatment": ["điều trị", "phác đồ"],
+    "limitation": ["hạn chế", "nhược điểm"],
+    "limitations": ["hạn chế", "nhược điểm"],
+    "conclusion": ["kết luận"],
+    "score": ["điểm", "chỉ số"],
+    "cost": ["chi phí"],
+    "temperature": ["nhiệt độ"],
+    "speed": ["tốc độ"],
+    "rate": ["tỷ lệ", "tốc độ"],
+    "ratio": ["tỷ lệ", "tỉ số"],
+    "sample": ["mẫu"],
+    "samples": ["mẫu"],
+    "average": ["trung bình"],
+    "maximum": ["tối đa"],
+    "minimum": ["tối thiểu"],
+    "condition": ["điều kiện"],
+    "domain": ["miền xác định", "điều kiện"],
+    "variable": ["biến"],
 }
+
+import unicodedata as _unicodedata
+
+
+def _strip_vi_accents(text: str) -> str:
+    norm = _unicodedata.normalize("NFD", (text or "").lower())
+    return "".join(ch for ch in norm if _unicodedata.category(ch) != "Mn").replace("đ", "d")
+
+
+_UNACCENTED_VI_PHRASE_MAP: dict[str, list[str]] = {}
+for _vn_p, _en_toks in BILINGUAL_PHRASE_MAP.items():
+    _plain = _strip_vi_accents(_vn_p)
+    if _plain and len(_plain) >= 4:
+        _UNACCENTED_VI_PHRASE_MAP.setdefault(_plain, []).extend(_en_toks)
 
 # Pre-compiled regex patterns for high-frequency lookup avoidance
 _COMPILED_EN_PATTERNS: dict[str, re.Pattern] = {
-    en_word: re.compile(r'\b' + re.escape(en_word) + r'\b')
+    en_word: re.compile(r"\b" + re.escape(en_word) + r"\b")
     for en_word in ENGLISH_TO_VIETNAMESE
+}
+_COMPILED_VI_UNACCENT_PATTERNS: dict[str, re.Pattern] = {
+    plain_phrase: re.compile(r"(?<!\w)" + re.escape(plain_phrase) + r"(?!\w)")
+    for plain_phrase in _UNACCENTED_VI_PHRASE_MAP
 }
 
 
 def expand_bilingual_tokens(query: str, current_tokens: Set[str]) -> Set[str]:
     """
-    Expands token set with bilingual synonyms (Vietnamese <-> English).
+    Expands token set with bilingual synonyms (Vietnamese <-> English), including
+    unaccented Vietnamese queries (`do chinh xac`, `tuoi nho giot`, `cong thuc`).
     Returns an expanded set of keyword tokens.
     """
     expanded = set(current_tokens)
-    q_low = query.lower()
+    q_low = (query or "").lower()
+    q_plain = _strip_vi_accents(q_low)
 
-    # 1. Match Vietnamese phrases -> inject English tokens
+    # 1. Match accented Vietnamese phrases -> inject English tokens
     for vn_phrase, en_tokens in BILINGUAL_PHRASE_MAP.items():
         if vn_phrase in q_low:
             expanded.update(en_tokens)
 
-    # 2. Match English words via pre-compiled patterns -> inject Vietnamese tokens
+    # 2. Match unaccented Vietnamese phrases -> inject English + accented Vietnamese tokens
+    if q_plain and q_plain == q_low:
+        for plain_phrase, en_tokens in _UNACCENTED_VI_PHRASE_MAP.items():
+            if _COMPILED_VI_UNACCENT_PATTERNS[plain_phrase].search(q_plain):
+                expanded.update(en_tokens)
+
+    # 3. Match English words via pre-compiled patterns -> inject Vietnamese tokens
     for en_word, pattern in _COMPILED_EN_PATTERNS.items():
         if pattern.search(q_low):
             expanded.update(ENGLISH_TO_VIETNAMESE[en_word])
