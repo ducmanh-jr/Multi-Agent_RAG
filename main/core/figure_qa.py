@@ -1,12 +1,18 @@
 """Select figures from the current PDFs and ground visual answers in their original crops."""
 
+import math
 import re
 import unicodedata
 from pathlib import Path
 
 from agents.agent5_writer.components.report_builder import build_citation_references
+from core.claim_semantics import (
+    extract_directed_entity_pairs,
+    extract_entity_quantity_bindings,
+)
 from core.figure_reader import read_figure
 from core.pdf_figures import extract_pdf_figures, figure_reference, render_pdf_figure
+from core.pdf_ingest import compute_file_sha256, get_cached_page_ocr
 from core.state import AgentState, AtomicClaim, EvidenceSpan, SourceUnit
 from core.verifier import check_numerical_and_date_consistency, extract_numbers_and_years
 from utils.bilingual import expand_bilingual_tokens
@@ -61,9 +67,19 @@ def _select(query: str, catalog: list[dict]) -> dict:
     def scores(fig):
         caption = _tokens(fig.get("caption", ""))
         labels = _tokens(fig.get("embedded_text", ""))
+        ocr_extra = _tokens(fig.get("ocr_text", ""))
+        if not ocr_extra and fig.get("kind") == "scan" and fig.get("source_path"):
+            try:
+                sha = compute_file_sha256(fig["source_path"])
+                cached = get_cached_page_ocr(sha, int(fig.get("page_no", 1)))
+                if cached and cached.get("text"):
+                    ocr_extra = _tokens(cached["text"])
+            except Exception:
+                ocr_extra = set()
+        all_labels = labels | ocr_extra
         title = _tokens(fig.get("doc_id", ""))
-        return (len(terms & title), 3 * len(terms & caption) + 2 * len(terms & labels)
-                + len(translated & (caption | labels)))
+        return (len(terms & title), 3 * len(terms & caption) + 2 * len(terms & all_labels)
+                + len(translated & (caption | all_labels)))
 
     ranked = sorted(catalog, key=lambda f: scores(f) if numbers else scores(f)[::-1], reverse=True)
     selected = []
@@ -89,8 +105,12 @@ def _select(query: str, catalog: list[dict]) -> dict:
         else:
             status = "ambiguous" if ranked else "missing"
     else:
-        # Ordinary text questions may use a figure's actual caption or labels as evidence.
+        # Ordinary text questions may use a figure's actual caption, labels, or full-page scan OCR as evidence.
         selected = [f for f in ranked if scores(f)[1] >= 5][:2]
+        if not selected:
+            scans = [f for f in ranked if f.get("kind") == "scan" and (scores(f)[1] >= 1 or len(ranked) <= 2)]
+            if scans:
+                selected = scans[:2]
     return {
         "explicit": explicit, "status": status,
         "figures": selected[:3] if status == "matched" else [],
@@ -105,32 +125,122 @@ def figure_context(state: AgentState) -> dict:
 
 def cross_check_figure_reading(fig: dict) -> dict:
     """
-    Cross-checks numeric values reported by pixel/vision reading against extractable PDF text
-    (caption + embedded labels + author's body reference) to prevent silent visual hallucinations.
+    Cross-checks pixel/vision observations against extractable PDF text (caption + embedded labels +
+    body reference + OCR) on the full tuple `(entity/series, value, unit, direction)`:
+      1. Detects swapped entity/series values (e.g., source `A = 81%, B = 92%` vs vision `A = 92%, B = 81%`)
+         and marks `"entity_value_conflict"` instead of `"corroborated"`.
+      2. Separates directly printed numbers (`printed_values`) from axis-estimated values (`axis_estimated_values`).
     """
     reading = fig.get("reading") or {}
     method = reading.get("method") or "unavailable"
     visual_text = (reading.get("text") or "").strip()
+    structured = reading.get("structured") if isinstance(reading.get("structured"), dict) else {}
+    printed_vals = list(structured.get("printed_values") or [])
+    axis_est_vals = list(structured.get("axis_estimated_values") or [])
+
     if method not in {"vision", "ocr"} or not visual_text:
-        return {"status": "not_applicable", "unverified_numbers": []}
+        return {
+            "status": "not_applicable",
+            "unverified_numbers": [],
+            "printed_values": printed_vals,
+            "axis_estimated_values": axis_est_vals,
+        }
 
     nums = extract_numbers_and_years(visual_text)
     if not nums:
-        return {"status": "no_numeric_claims", "unverified_numbers": []}
+        return {
+            "status": "no_numeric_claims",
+            "unverified_numbers": [],
+            "printed_values": printed_vals,
+            "axis_estimated_values": axis_est_vals,
+        }
 
     pdf_parts = [
         fig.get("caption") or "",
         fig.get("embedded_text") or "",
+        fig.get("ocr_text") or "",
         (fig.get("reference") or {}).get("text") or "",
     ]
     pdf_text = "\n".join(p for p in pdf_parts if p).strip()
     if not pdf_text:
-        return {"status": "visual_only_numbers", "unverified_numbers": nums}
+        return {
+            "status": "visual_only_numbers",
+            "unverified_numbers": nums,
+            "printed_values": printed_vals,
+            "axis_estimated_values": axis_est_vals,
+            "value_source": "axis_estimated" if axis_est_vals else "visual_only",
+        }
+
+    # 1. Verify entity–series–value–unit tuple bindings & comparative direction (catches A/B swap!)
+    vis_bindings = extract_entity_quantity_bindings(visual_text)
+    pdf_bindings = extract_entity_quantity_bindings(pdf_text)
+    conflicts: list[str] = []
+    if vis_bindings and pdf_bindings:
+        for vb in vis_bindings:
+            same_ent = [pb for pb in pdf_bindings if pb["entity_key"] == vb["entity_key"]]
+            if same_ent:
+                # Entity exists in PDF reference/labels: at least one binding for that entity must match value & unit!
+                if not any(
+                    math.isclose(vb["value"], pb["value"], abs_tol=0.05)
+                    and (not vb["unit"] or not pb["unit"] or vb["unit"] == pb["unit"])
+                    for pb in same_ent
+                ):
+                    conflicts.append(
+                        f"{vb['entity']}={vb['value']}{vb['unit']} (PDF={same_ent[0]['value']}{same_ent[0]['unit']})"
+                    )
+
+    # Also check directed comparative reversals (e.g. "Method A exceeds Method B" when PDF has A=81%, B=92%)
+    vis_pairs = extract_directed_entity_pairs(visual_text)
+    pdf_pairs = extract_directed_entity_pairs(pdf_text)
+    for i in range(len(pdf_bindings)):
+        for j in range(i + 1, len(pdf_bindings)):
+            b1, b2 = pdf_bindings[i], pdf_bindings[j]
+            if b1["unit"] == b2["unit"] and b1["entity_key"] != b2["entity_key"] and not math.isclose(b1["value"], b2["value"], abs_tol=1e-9):
+                hi, lo = (b1["entity_key"], b2["entity_key"]) if b1["value"] > b2["value"] else (b2["entity_key"], b1["entity_key"])
+                if (hi, lo) not in pdf_pairs:
+                    pdf_pairs.append((hi, lo))
+    for v_hi, v_lo in vis_pairs:
+        if (v_lo, v_hi) in pdf_pairs:
+            conflicts.append(f"comparative_swap:{v_hi}>{v_lo}")
+
+    if conflicts:
+        return {
+            "status": "entity_value_conflict",
+            "conflicts": conflicts,
+            "unverified_numbers": conflicts,
+            "printed_values": printed_vals,
+            "axis_estimated_values": axis_est_vals,
+        }
 
     num_ok, date_ok, missing = check_numerical_and_date_consistency(visual_text, pdf_text)
+    # Any axis-estimated values not present in PDF text must remain flagged as estimated, never corroborated
+    if axis_est_vals:
+        est_nums = extract_numbers_and_years(" ".join(axis_est_vals))
+        uncorroborated_est = [n for n in est_nums if not check_numerical_and_date_consistency(n, pdf_text)[0]]
+        if uncorroborated_est:
+            return {
+                "status": "axis_estimated_values",
+                "unverified_numbers": uncorroborated_est,
+                "printed_values": printed_vals,
+                "axis_estimated_values": axis_est_vals,
+                "value_source": "axis_estimated",
+            }
+
     if num_ok and date_ok:
-        return {"status": "corroborated", "unverified_numbers": []}
-    return {"status": "visual_only_numbers", "unverified_numbers": missing}
+        return {
+            "status": "corroborated",
+            "unverified_numbers": [],
+            "printed_values": printed_vals,
+            "axis_estimated_values": axis_est_vals,
+            "value_source": "printed_direct",
+        }
+    return {
+        "status": "visual_only_numbers",
+        "unverified_numbers": missing,
+        "printed_values": printed_vals,
+        "axis_estimated_values": axis_est_vals,
+        "value_source": "visual_only",
+    }
 
 
 def add_figure_evidence(state: AgentState, update: dict, mode: str) -> dict:
@@ -154,6 +264,18 @@ def add_figure_evidence(state: AgentState, update: dict, mode: str) -> dict:
             fig["unique_title"] = len({f["source_path"] for f in catalog if f["doc_id"] == fig["doc_id"]}) == 1
         if not context["explicit"] and not context["figures"]:
             return update
+        # If the PDF has zero embedded raster/vector figures (`not catalog`) AND the retrieved text
+        # units already contain the requested figure label/caption in plain text (e.g. text-rendered
+        # "Figure 2: ..."), fall through to standard text-grounded synthesis instead of blocking.
+        if context["status"] == "missing" and not catalog:
+            req_nums = _NUMBERED.findall(_fold(query))
+            unit_blob = _fold(" ".join(str(u.get("text") or "") for u in (update.get("source_units") or [])))
+            if req_nums and all(n in _NUMBERED.findall(unit_blob) for n in req_nums):
+                context = {**context, "explicit": False}
+                return {
+                    **update,
+                    "document_schema": {**(update.get("document_schema") or {}), "figure_evidence": context},
+                }
         for idx, original in enumerate(context["figures"]):
             fig = dict(original)
             try:
@@ -242,10 +364,16 @@ def draft_visual_answer(state: AgentState) -> dict:
             else:
                 lines.insert(1, line)
         cross_check = fig.get("cross_check") or {}
-        if cross_check.get("status") == "visual_only_numbers" and cross_check.get("unverified_numbers"):
+        if cross_check.get("status") == "entity_value_conflict" and cross_check.get("conflicts"):
+            conflict_str = "; ".join(str(c) for c in cross_check["conflicts"][:6])
+            lines.append(
+                f"Cảnh báo mâu thuẫn nhãn–trị số trên hình: kết quả đọc ảnh ({_plain(conflict_str)}) "
+                "bị đảo nhãn hoặc lệch với văn bản nguồn PDF — không dùng trị số bị đảo này làm kết luận."
+            )
+        elif cross_check.get("status") in {"visual_only_numbers", "axis_estimated_values"} and cross_check.get("unverified_numbers"):
             unverified = ", ".join(str(n) for n in cross_check["unverified_numbers"][:8])
             lines.append(
-                f"Lưu ý đối chiếu ảnh–chữ: các giá trị ({_plain(unverified)}) chỉ đọc từ pixel ảnh, "
+                f"Lưu ý đối chiếu ảnh–chữ: các giá trị ({_plain(unverified)}) chỉ đọc/ước lượng từ pixel ảnh, "
                 "chưa có trong phần chữ gốc/chú thích PDF — vui lòng kiểm tra trực tiếp trên hình bên dưới."
             )
         if method not in {"geometry", "vision"}:

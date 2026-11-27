@@ -26,6 +26,17 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from core.config import get_run_settings
+from core.pdf_ingest import (
+    EXTRACTOR_VERSION,
+    clear_ingest_caches,
+    compute_file_sha256,
+    extract_page_diagrams_graph,
+    extract_page_equations_2d,
+    extract_page_tables_sharded,
+    ocr_pdf_page_if_needed,
+    record_ingest_manifest,
+    stitch_cross_page_tables,
+)
 from utils.logger import logger
 
 
@@ -38,6 +49,7 @@ def clear_pdf_cache() -> None:
     """Clears the in-memory parsed PDF chunks cache to free memory and force re-index."""
     with _PDF_CACHE_LOCK:
         _PDF_CHUNK_CACHE.clear()
+    clear_ingest_caches()
 
 
 _SECTION_HEADING_RE = re.compile(
@@ -388,53 +400,232 @@ def load_or_parse_selected_pdf(
     doc_title = Path(resolved).stem
     doc_title = re.sub(r"^[0-9a-f]{8}_", "", doc_title)
     chunks: list[dict[str, Any]] = []
+    pages_status: list[dict[str, Any]] = []
+    doc_sha256 = ""
+    try:
+        doc_sha256 = compute_file_sha256(resolved)
+    except Exception:
+        doc_sha256 = ""
+
+    # Support plain text / markdown files selected via local path
+    if Path(resolved).suffix.lower() in {".txt", ".md"}:
+        try:
+            txt_content = Path(resolved).read_text(encoding="utf-8", errors="replace").strip()
+            if txt_content:
+                cid = f"{doc_title}_p1_c1"
+                chunks.append({
+                    "id": cid,
+                    "chunk_id": cid,
+                    "doc_id": doc_title,
+                    "document_sha256": doc_sha256,
+                    "title": doc_title,
+                    "page_no": 1,
+                    "page": 1,
+                    "page_rotation": 0,
+                    "coordinate_space": "text_offset",
+                    "extractor_version": EXTRACTOR_VERSION,
+                    "text": txt_content,
+                    "raw_text": txt_content,
+                    "normalized_text": txt_content,
+                    "content": txt_content,
+                    "sentences": [s.strip() for s in txt_content.splitlines() if s.strip()],
+                    "source_path": resolved,
+                    "is_selected_pdf": True,
+                    "unit_type": "text",
+                    "section_title": "",
+                })
+                record_ingest_manifest(resolved, {
+                    "sha256": doc_sha256,
+                    "extractor_version": EXTRACTOR_VERSION,
+                    "page_count": 1,
+                    "status": "completed",
+                    "pages": [{"page_no": 1, "status": "text_ready", "tier": "tier1_native", "chunks_count": 1}],
+                })
+        except Exception as exc:
+            logger.warning(f"[ToolRegistry] Text file read failed on '{resolved}': {exc}")
+        return chunks
 
     try:
         import fitz  # PyMuPDF
 
         pdf_doc = fitz.open(resolved)
         current_section = ""
+        total_pages = len(pdf_doc)
+        page_heights_map: dict[int, float] = {}
         try:
-            for page_idx, page in enumerate(pdf_doc):
+            for page_idx in range(total_pages):
                 page_no = page_idx + 1
-                raw_text = _reconstruct_broken_pdf_equations(_extract_page_text_layout_aware(page))
-                current_section = _detect_section_heading(raw_text, current_section)
-                clean_text = re.sub(r"[ \t]+", " ", raw_text).strip()
+                try:
+                    page = pdf_doc[page_idx]
+                    rotation = int(page.rotation or 0)
+                    derot = page.derotation_matrix
+                    unrot_bounds = page.rect * derot
+                    page_heights_map[page_no] = float(unrot_bounds.height)
+                    default_page_bbox = [round(float(v), 2) for v in unrot_bounds]
 
-                # Extract intact structured tables and mathematical equation blocks on this page
-                page_tables = _extract_page_table_chunks(
-                    page,
-                    doc_title=doc_title,
-                    page_no=page_no,
-                    resolved=resolved,
-                    section_title=current_section,
-                )
-                page_equations = _extract_page_equation_chunks(
-                    raw_text,
-                    doc_title=doc_title,
-                    page_no=page_no,
-                    resolved=resolved,
-                    section_title=current_section,
-                )
+                    raw_text = _reconstruct_broken_pdf_equations(_extract_page_text_layout_aware(page))
+                    current_section = _detect_section_heading(raw_text, current_section)
+                    clean_text = re.sub(r"[ \t]+", " ", raw_text).strip()
 
-                if clean_text:
-                    # Split into sentences first so chunks never cut mid-sentence; keep short math equations intact
-                    sentences = [
-                        s.strip()
-                        for s in re.split(r"(?<=[.!?।])\s+|\n{2,}", clean_text)
-                        if len(s.strip()) > 12 or _is_math_equation_line(s)
+                    page_tables = extract_page_tables_sharded(
+                        page,
+                        doc_title=doc_title,
+                        doc_sha256=doc_sha256,
+                        page_no=page_no,
+                        resolved=resolved,
+                        section_title=current_section,
+                    )
+                    table_bboxes_on_page = [
+                        list((tc.get("table_metadata") or {}).get("table_bbox_on_page") or tc.get("bbox") or [])
+                        for tc in page_tables
+                        if tc.get("bbox")
                     ]
-                    if not sentences:
-                        sentences = [clean_text]
+                    page_diagrams = extract_page_diagrams_graph(
+                        page,
+                        doc_title=doc_title,
+                        doc_sha256=doc_sha256,
+                        page_no=page_no,
+                        resolved=resolved,
+                        section_title=current_section,
+                        excluded_table_bboxes=table_bboxes_on_page,
+                    )
+                    page_equations = extract_page_equations_2d(
+                        page,
+                        doc_title=doc_title,
+                        doc_sha256=doc_sha256,
+                        page_no=page_no,
+                        resolved=resolved,
+                        section_title=current_section,
+                    )
+                    if not page_equations and clean_text:
+                        page_equations = _extract_page_equation_chunks(
+                            raw_text,
+                            doc_title=doc_title,
+                            page_no=page_no,
+                            resolved=resolved,
+                            section_title=current_section,
+                        )
+                        for eq_c in page_equations:
+                            eq_c.setdefault("bbox", default_page_bbox)
+                            eq_c.setdefault("page_rotation", rotation)
+                            eq_c.setdefault("document_sha256", doc_sha256)
+                            eq_c.setdefault("extractor_version", EXTRACTOR_VERSION)
 
-                    current_sents: list[str] = []
-                    current_words = 0
-                    sub_idx = 1
+                    page_chunk_start = len(chunks)
+                    tier_used = "tier1_native"
 
-                    for sent in sentences:
-                        current_section = _detect_section_heading(sent, current_section)
-                        w_count = len(sent.split())
-                        if current_words + w_count > chunk_size_words and current_sents:
+                    # Collect block-level bboxes on this page to localize text chunks accurately
+                    page_text_blocks: list[tuple[list[float], str]] = []
+                    try:
+                        for b in page.get_text("blocks") or []:
+                            if len(b) >= 7 and int(b[6]) == 0 and str(b[4]).strip():
+                                rb = fitz.Rect(b[:4]) * derot
+                                page_text_blocks.append(([round(float(v), 2) for v in rb], " ".join(str(b[4]).split())))
+                    except Exception:
+                        page_text_blocks = []
+
+                    def _infer_chunk_bbox(sents_group: list[str]) -> list[float]:
+                        matched_boxes = []
+                        for sb, btxt in page_text_blocks:
+                            b_low = btxt.lower()
+                            if any(st[:32].lower() in b_low or b_low[:32] in st.lower() for st in sents_group if st):
+                                matched_boxes.append(sb)
+                        if not matched_boxes:
+                            return default_page_bbox
+                        return [
+                            round(min(b[0] for b in matched_boxes), 2),
+                            round(min(b[1] for b in matched_boxes), 2),
+                            round(max(b[2] for b in matched_boxes), 2),
+                            round(max(b[3] for b in matched_boxes), 2),
+                        ]
+
+                    # Tier-1 Scan OCR: when native text is absent/minimal and raster images or drawings exist
+                    ocr_info: dict[str, Any] | None = None
+                    if len(clean_text) < 15:
+                        has_raster_or_drawings = bool(page.get_image_info()) or bool(page.get_drawings())
+                        if has_raster_or_drawings:
+                            ocr_info = ocr_pdf_page_if_needed(page, doc_sha256=doc_sha256 or doc_title, page_no=page_no)
+                            ocr_txt = (ocr_info.get("text") or "").strip()
+                            if ocr_txt:
+                                tier_used = "tier1_ocr"
+                                cid = f"{doc_title}_p{page_no}_ocr1"
+                                chunks.append({
+                                    "id": cid,
+                                    "chunk_id": cid,
+                                    "doc_id": doc_title,
+                                    "document_sha256": doc_sha256,
+                                    "title": doc_title,
+                                    "page_no": page_no,
+                                    "page": page_no,
+                                    "page_rotation": rotation,
+                                    "coordinate_space": "pdf_points_top_left",
+                                    "extractor_version": EXTRACTOR_VERSION,
+                                    "bbox": ocr_info.get("bbox") or default_page_bbox,
+                                    "text": ocr_txt,
+                                    "raw_text": ocr_txt,
+                                    "normalized_text": ocr_txt,
+                                    "content": ocr_txt,
+                                    "sentences": [l["text"] for l in (ocr_info.get("lines") or []) if l.get("text")],
+                                    "source_path": resolved,
+                                    "is_selected_pdf": True,
+                                    "unit_type": "ocr_scan",
+                                    "ocr_engine": ocr_info.get("engine", ""),
+                                    "ocr_confidence": ocr_info.get("confidence", 0.9),
+                                    "section_title": current_section,
+                                })
+
+                    if clean_text:
+                        # Split into sentences first so chunks never cut mid-sentence; keep short math equations intact
+                        sentences = [
+                            s.strip()
+                            for s in re.split(r"(?<=[.!?।])\s+|\n{2,}", clean_text)
+                            if len(s.strip()) > 12 or _is_math_equation_line(s)
+                        ]
+                        if not sentences:
+                            sentences = [clean_text]
+
+                        current_sents: list[str] = []
+                        current_words = 0
+                        sub_idx = 1
+
+                        for sent in sentences:
+                            current_section = _detect_section_heading(sent, current_section)
+                            w_count = len(sent.split())
+                            if current_words + w_count > chunk_size_words and current_sents:
+                                chunk_body = " ".join(current_sents).strip()
+                                cid = f"{doc_title}_p{page_no}_c{sub_idx}"
+                                chunks.append(
+                                    {
+                                        "id": cid,
+                                        "chunk_id": cid,
+                                        "doc_id": doc_title,
+                                        "document_sha256": doc_sha256,
+                                        "title": doc_title,
+                                        "page_no": page_no,
+                                        "page": page_no,
+                                        "page_rotation": rotation,
+                                        "coordinate_space": "pdf_points_top_left",
+                                        "extractor_version": EXTRACTOR_VERSION,
+                                        "bbox": _infer_chunk_bbox(current_sents),
+                                        "text": chunk_body,
+                                        "raw_text": chunk_body,
+                                        "normalized_text": chunk_body,
+                                        "content": chunk_body,
+                                        "sentences": list(current_sents),
+                                        "source_path": resolved,
+                                        "is_selected_pdf": True,
+                                        "unit_type": "text",
+                                        "section_title": current_section,
+                                    }
+                                )
+                                sub_idx += 1
+                                current_sents = current_sents[-2:] if len(current_sents) >= 2 else current_sents[-1:]
+                                current_words = sum(len(x.split()) for x in current_sents)
+
+                            current_sents.append(sent)
+                            current_words += w_count
+
+                        if current_sents:
                             chunk_body = " ".join(current_sents).strip()
                             cid = f"{doc_title}_p{page_no}_c{sub_idx}"
                             chunks.append(
@@ -442,10 +633,17 @@ def load_or_parse_selected_pdf(
                                     "id": cid,
                                     "chunk_id": cid,
                                     "doc_id": doc_title,
+                                    "document_sha256": doc_sha256,
                                     "title": doc_title,
                                     "page_no": page_no,
                                     "page": page_no,
+                                    "page_rotation": rotation,
+                                    "coordinate_space": "pdf_points_top_left",
+                                    "extractor_version": EXTRACTOR_VERSION,
+                                    "bbox": _infer_chunk_bbox(current_sents),
                                     "text": chunk_body,
+                                    "raw_text": chunk_body,
+                                    "normalized_text": chunk_body,
                                     "content": chunk_body,
                                     "sentences": list(current_sents),
                                     "source_path": resolved,
@@ -454,43 +652,73 @@ def load_or_parse_selected_pdf(
                                     "section_title": current_section,
                                 }
                             )
-                            sub_idx += 1
-                            # Keep last 2 sentences for sliding window overlap
-                            current_sents = current_sents[-2:] if len(current_sents) >= 2 else current_sents[-1:]
-                            current_words = sum(len(x.split()) for x in current_sents)
 
-                        current_sents.append(sent)
-                        current_words += w_count
+                    if page_tables:
+                        chunks.extend(page_tables)
+                    if page_diagrams:
+                        chunks.extend(page_diagrams)
+                    if page_equations:
+                        chunks.extend(page_equations)
 
-                    if current_sents:
-                        chunk_body = " ".join(current_sents).strip()
-                        cid = f"{doc_title}_p{page_no}_c{sub_idx}"
-                        chunks.append(
-                            {
-                                "id": cid,
-                                "chunk_id": cid,
-                                "doc_id": doc_title,
-                                "title": doc_title,
-                                "page_no": page_no,
-                                "page": page_no,
-                                "text": chunk_body,
-                                "content": chunk_body,
-                                "sentences": list(current_sents),
-                                "source_path": resolved,
-                                "is_selected_pdf": True,
-                                "unit_type": "text",
-                                "section_title": current_section,
-                            }
-                        )
+                    added_on_page = len(chunks) - page_chunk_start
+                    p_status = "ocr_completed" if tier_used == "tier1_ocr" else ("text_ready" if added_on_page > 0 else "empty_or_pending_ocr")
+                    pages_status.append({
+                        "page_no": page_no,
+                        "status": p_status,
+                        "tier": tier_used,
+                        "page_rotation": rotation,
+                        "chunks_count": added_on_page,
+                        "tables_count": len(page_tables),
+                        "diagrams_count": len(page_diagrams),
+                        "equations_count": len(page_equations),
+                    })
+                except Exception as page_exc:
+                    # Per-page fault isolation: one damaged page NEVER aborts remaining valid pages!
+                    logger.warning(f"[ToolRegistry] Page {page_no} parse error on '{resolved}': {page_exc}")
+                    pages_status.append({
+                        "page_no": page_no,
+                        "status": "failed",
+                        "tier": "failed",
+                        "chunks_count": 0,
+                        "error": str(page_exc),
+                    })
 
-                if page_tables:
-                    chunks.extend(page_tables)
-                if page_equations:
-                    chunks.extend(page_equations)
+            # M2b: Stitch multi-page tables across consecutive pages while preserving per-page (page_no, bbox)
+            stitched_tables_info: list[dict[str, Any]] = []
+            if chunks:
+                chunks, stitched_tables_info = stitch_cross_page_tables(
+                    chunks,
+                    doc_title=doc_title,
+                    page_heights=page_heights_map,
+                )
+
+            failed_pages = [p["page_no"] for p in pages_status if p["status"] == "failed"]
+            overall = "completed" if not failed_pages else ("partial_completed" if chunks else "failed")
+            record_ingest_manifest(resolved, {
+                "sha256": doc_sha256,
+                "extractor_version": EXTRACTOR_VERSION,
+                "page_count": total_pages,
+                "chunks_count": len(chunks),
+                "stitched_logical_tables": stitched_tables_info,
+                "diagrams_count": sum(1 for c in chunks if c.get("unit_type") == "diagram"),
+                "failed_pages": failed_pages,
+                "status": overall,
+                "pages": pages_status,
+            })
         finally:
             pdf_doc.close()
     except Exception as exc:
         logger.warning(f"[ToolRegistry] PyMuPDF parse failed on '{resolved}': {exc}")
+        record_ingest_manifest(resolved, {
+            "sha256": doc_sha256,
+            "extractor_version": EXTRACTOR_VERSION,
+            "page_count": 0,
+            "chunks_count": 0,
+            "failed_pages": [],
+            "status": "failed",
+            "error": str(exc),
+            "pages": [],
+        })
 
     if chunks:
         with _PDF_CACHE_LOCK:
@@ -528,26 +756,43 @@ def extract_table_or_equations_tool(pdf_path: Optional[str], page_number: int = 
                 return f"Số trang {page_number} nằm ngoài phạm vi tài liệu (1..{len(doc)})."
             page = doc[page_number - 1]
             sections: list[str] = []
-            if hasattr(page, "find_tables"):
-                tabs = page.find_tables()
-                for idx, tab in enumerate(tabs.tables):
-                    try:
-                        md = tab.to_markdown()
-                        if md and md.strip():
-                            sections.append(f"### Bảng {idx + 1} (Trang {page_number})\n{md.strip()}")
-                    except Exception:
-                        pass
-
-            raw_text = _reconstruct_broken_pdf_equations(_extract_page_text_layout_aware(page))
-            eq_chunks = _extract_page_equation_chunks(
-                raw_text,
-                doc_title=Path(str(pdf_path)).stem,
+            doc_stem = Path(str(pdf_path)).stem
+            sharded_tabs = extract_page_tables_sharded(
+                page,
+                doc_title=doc_stem,
+                doc_sha256="",
                 page_no=page_number,
                 resolved=str(pdf_path),
                 section_title="",
             )
+            for idx, tchunk in enumerate(sharded_tabs, start=1):
+                sections.append(f"### Bảng {idx} (Trang {page_number})\n{tchunk['text']}")
+
+            eq_chunks = extract_page_equations_2d(
+                page,
+                doc_title=doc_stem,
+                doc_sha256="",
+                page_no=page_number,
+                resolved=str(pdf_path),
+                section_title="",
+            )
+            if not eq_chunks:
+                raw_text = _reconstruct_broken_pdf_equations(_extract_page_text_layout_aware(page))
+                eq_chunks = _extract_page_equation_chunks(
+                    raw_text,
+                    doc_title=doc_stem,
+                    page_no=page_number,
+                    resolved=str(pdf_path),
+                    section_title="",
+                )
             if eq_chunks:
-                eq_lines = [f"- **Công thức {idx}:** `{c['equation']}`\n  *Ngữ cảnh:* {c['text']}" for idx, c in enumerate(eq_chunks, start=1)]
+                eq_lines = []
+                for idx, c in enumerate(eq_chunks, start=1):
+                    latex_part = f" | LaTeX: `${c['latex']}$`" if c.get("latex") and c.get("latex") != c.get("equation") else ""
+                    bbox_part = f" | BBox: `{c['bbox']}`" if c.get("bbox") else ""
+                    eq_lines.append(
+                        f"- **Công thức {idx}:** `{c['equation']}`{latex_part}{bbox_part}\n  *Ngữ cảnh:* {c['text']}"
+                    )
                 sections.append(f"### Công thức / Biểu thức Toán học (Trang {page_number})\n" + "\n".join(eq_lines))
 
             if not sections:
