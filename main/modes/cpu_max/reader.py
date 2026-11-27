@@ -19,6 +19,7 @@ from agents.agent2_reader.tools.reader_pipeline import (
     ingest_pdf_fallbacks,
 )
 from core.base_agent import BaseAgent
+from core.claim_semantics import strip_html_tags_preserve_math
 from core.state import AgentState
 from core.tools import load_or_parse_selected_pdf
 
@@ -27,12 +28,11 @@ def clean_source_text(text: str) -> str:
     """Deeply cleans raw PDF/OCR text, removes HTML line breaks, and separates glued words safely."""
     if not text:
         return ""
-    # 1. Replace HTML breaks with space
-    s = re.sub(r"<br\s*/?>", " ", text, flags=re.I)
-    s = re.sub(r"<[^>]+>", " ", s)
+    # 1. Replace HTML breaks/tags safely without stripping mathematical inequalities like 'x < 3 and y > 2'
+    s = strip_html_tags_preserve_math(text)
 
-    # 2. Fix markdown underscores in words (_Báo Thủ đô_ -> Báo Thủ đô), preserving code snake_case like proxy_pass
-    s = re.sub(r"(?<![A-Za-z0-9])_+|_+(?![A-Za-z0-9])", "", s)
+    # 2. Fix markdown underscores in words (_Báo Thủ đô_ -> Báo Thủ đô), preserving code snake_case and LaTeX subscripts like z_{1}, L_{total}
+    s = re.sub(r"(?<![A-Za-z0-9\\}])_+(?![{A-Za-z0-9])", "", s)
 
     # 3. Fix glued lowercase-uppercase words (BáoThủ -> Báo Thủ), preserving camelCase code identifiers like generateHosts
     s = re.sub(r"([à-ỹ])([A-ZĐ])", r"\1 \2", s)

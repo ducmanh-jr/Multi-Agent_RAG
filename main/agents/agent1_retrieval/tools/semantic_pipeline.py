@@ -11,6 +11,7 @@ Provides:
 from __future__ import annotations
 
 import math
+import os
 import re
 from typing import Any, Iterable
 
@@ -41,7 +42,7 @@ def extract_searchable_figure_chunks(pdf_paths: Iterable[str | None]) -> list[di
     seen_ids: set[str] = set()
     for raw_path in dict.fromkeys(p for p in pdf_paths if p):
         path = str(raw_path)
-        if not path.lower().endswith(".pdf"):
+        if not path.lower().endswith(".pdf") or not os.path.isfile(path):
             continue
         try:
             figures = extract_pdf_figures(path)
@@ -51,11 +52,25 @@ def extract_searchable_figure_chunks(pdf_paths: Iterable[str | None]) -> list[di
         for fig in figures:
             caption = (fig.get("caption") or "").strip()
             embedded = (fig.get("embedded_text") or "").strip()
-            combined = " ".join(part for part in (caption, embedded) if part).strip()
-            if len(combined) < 12:
+            ocr_text = ""
+            if fig.get("kind") == "scan" and not embedded:
+                try:
+                    import fitz
+                    from core.pdf_ingest import compute_file_sha256, ocr_pdf_page_if_needed
+
+                    sha = compute_file_sha256(path)
+                    with fitz.open(path) as doc:
+                        p_idx = int(fig["page_no"]) - 1
+                        if 0 <= p_idx < len(doc):
+                            ocr_res = ocr_pdf_page_if_needed(doc[p_idx], doc_sha256=sha, page_no=int(fig["page_no"]))
+                            ocr_text = str(ocr_res.get("text") or "").strip()
+                except Exception:
+                    ocr_text = ""
+            combined = " ".join(part for part in (caption, embedded, ocr_text) if part).strip()
+            if len(combined) < 8:
                 continue
             fid = fig["figure_id"]
-            cid = f"{fid}:caption" if caption else f"{fid}:embedded_text"
+            cid = f"{fid}:caption" if caption else (f"{fid}:ocr_scan" if ocr_text else f"{fid}:embedded_text")
             if cid in seen_ids:
                 continue
             seen_ids.add(cid)
@@ -69,10 +84,10 @@ def extract_searchable_figure_chunks(pdf_paths: Iterable[str | None]) -> list[di
                     "page": fig["page_no"],
                     "text": combined[:1800],
                     "content": combined[:1800],
-                    "sentences": [s for s in (caption, embedded) if s],
+                    "sentences": [s for s in (caption, embedded, ocr_text) if s],
                     "source_path": fig["source_path"],
                     "is_selected_pdf": True,
-                    "unit_type": "figure",
+                    "unit_type": "ocr_scan" if ocr_text and not embedded else "figure",
                     "figure_id": fid,
                     "bbox": list(fig.get("caption_bbox") or fig["bbox"]),
                 }
@@ -80,26 +95,60 @@ def extract_searchable_figure_chunks(pdf_paths: Iterable[str | None]) -> list[di
     return chunks
 
 
-_VIETNAMESE_CHAR_RE = re.compile(r"[ăâđêôơưà-ỹ]", re.IGNORECASE)
+from utils.language import detect_corpus_language, is_vietnamese_text
+
 _TABLE_QUERY_RE = re.compile(
-    r"\b(?:table|bảng|so sánh|compare|comparison|metric|score|accuracy|f1|bleu|rouge|"
-    r"kết quả|results|số liệu|bao nhiêu|tỷ lệ|phần trăm|%|giá trị|value|row|column|hàng|cột)\b",
+    r"\b(?:table|tab\.?|bảng|bang|so sánh|so sanh|compare|comparison|metric|score|accuracy|f1|bleu|rouge|ndcg|mrr|recall|"
+    r"kết quả|ket qua|results|số liệu|so lieu|bao nhiêu|bao nhieu|tỷ lệ|ty le|phần trăm|phan tram|"
+    r"%|giá trị|gia tri|value|row|column|hàng|hang|cột|cot|validation|test\s+set|tập\s+test|tập\s+kiểm\s+tra)\b",
     re.IGNORECASE,
 )
+_EQUATION_QUERY_RE = re.compile(
+    r"(?:\b(?:equation|eq\.?|formula|phương\s+trình|phuong\s+trinh|công\s+thức|cong\s+thuc|biểu\s+thức|bieu\s+thuc|"
+    r"fraction|phân\s+số|phan\s+so|domain|miền\s+xác\s+định|điều\s+kiện\s+xác\s+định|derivative|đạo\s+hàm|stepsize)\b"
+    r"|[=≈≤≥≠←→∑∏∫√αβγθλμπσΩΔ]|\\frac|\^[0-9a-zA-Z{])",
+    re.IGNORECASE,
+)
+_EQUATION_NUM_REF_RE = re.compile(
+    r"(?:(?:equation|eq\.?|phương\s+trình|phuong\s+trinh|công\s+thức|cong\s+thuc)\s*\(?(\d+(?:\.\d+)*[a-z]?)\)?|\((\d+(?:\.\d+)*[a-z]?)\))",
+    re.IGNORECASE,
+)
+_TABLE_NUM_REF_RE = re.compile(r"\b(?:table|tab\.?|bảng|bang)\s*([A-Z]?\d+(?:[.-]\d+)*)\b", re.IGNORECASE)
+_FIGURE_NUM_REF_RE = re.compile(r"\b(?:figure|fig\.?|hình|hinh|biểu\s+đồ|bieu\s+do)\s*([A-Z]?\d+(?:[.-]\d+)*)\b", re.IGNORECASE)
+_MATH_VAR_TOKEN_RE = re.compile(r"(?:[A-Za-z][ππαβγθλσ]|[αβγθλμπσΩΔ]|[A-Za-z]_[A-Za-z0-9{]+|[A-Za-z]\^[A-Za-z0-9{]+)")
 
 
-def is_vietnamese_text(text: str) -> bool:
-    return bool(_VIETNAMESE_CHAR_RE.search(text or ""))
+def extract_structural_search_subqueries(query: str) -> list[str]:
+    """
+    Produces targeted structural lookup queries for equation numbers (`Eq. (1)`),
+    math variable symbols (`Qπ`, `α`, `d_k`), table IDs (`Table 2`), or figure IDs (`Figure 3`).
+    """
+    clean_q = (query or "").strip()
+    if not clean_q:
+        return []
+    out: list[str] = []
+    eq_nums = [m.group(1) or m.group(2) for m in _EQUATION_NUM_REF_RE.finditer(clean_q) if (m.group(1) or m.group(2))]
+    math_vars = list(dict.fromkeys(_MATH_VAR_TOKEN_RE.findall(clean_q)))
+    if eq_nums or math_vars:
+        parts = [*(f"({n})" for n in eq_nums[:2]), *math_vars[:4]]
+        if parts:
+            out.append(" ".join(parts))
+    tbl_nums = [m.group(1) for m in _TABLE_NUM_REF_RE.finditer(clean_q)]
+    if tbl_nums:
+        out.append(" ".join(f"Table {n} Bảng {n}" for n in tbl_nums[:2]))
+    fig_nums = [m.group(1) for m in _FIGURE_NUM_REF_RE.finditer(clean_q)]
+    if fig_nums:
+        out.append(" ".join(f"Figure {n} Hình {n}" for n in fig_nums[:2]))
+    return list(dict.fromkeys(q.strip() for q in out if q.strip()))[:2]
 
 
 def is_cross_lingual(query: str, corpus_docs: Iterable[dict[str, Any]]) -> bool:
     """Returns True when query language (VI vs EN) differs from the sampled document pool."""
     q_vi = is_vietnamese_text(query)
-    sample = [str(d.get("text") or d.get("content") or "")[:500] for d in list(corpus_docs)[:8]]
+    sample = list(corpus_docs)[:8]
     if not sample:
         return False
-    doc_vi_ratio = sum(1 for s in sample if is_vietnamese_text(s)) / len(sample)
-    doc_vi = doc_vi_ratio >= 0.4
+    doc_vi = detect_corpus_language(sample, default="en") == "vi"
     return q_vi != doc_vi
 
 
@@ -110,7 +159,8 @@ def build_cross_lingual_subqueries(
     llm_translator: Any | None = None,
 ) -> list[str]:
     """
-    Produces 1-2 bridged cross-lingual sub-queries when query and document languages differ.
+    Produces 1-2 bridged cross-lingual sub-queries when query and document languages differ
+    (covering all 4 VI/EN combinations plus unaccented Vietnamese) and structural equation/table hints.
     Always runs deterministic bilingual phrase mapping first (offline, <1ms); optionally adds
     one concise LLM translation when an online translator callable is supplied.
     """
@@ -123,12 +173,18 @@ def build_cross_lingual_subqueries(
     novel = [tok for tok in sorted(expanded - base_tokens) if len(tok) >= 2]
 
     extra: list[str] = []
-    if novel:
-        # Preserve proper nouns/numbers from the original query alongside translated terms
+    if novel and (cross or not corpus_docs):
+        # Preserve proper nouns, math symbols, and numbers from original query alongside translated terms
         anchors = re.findall(r"\b(?:[A-Z][A-Za-z0-9_-]{1,}|\d+(?:[.,]\d+)?%?)\b", clean_q)
-        bridged = " ".join(dict.fromkeys([*anchors[:4], *novel[:12]]))
+        math_vars = _MATH_VAR_TOKEN_RE.findall(clean_q)
+        bridged = " ".join(dict.fromkeys([*anchors[:4], *math_vars[:3], *novel[:14]]))
         if bridged.strip() and bridged.strip().lower() != clean_q.lower():
             extra.append(bridged.strip())
+
+    # Include direct structural sub-queries for equation numbers, math variables, or table/figure IDs
+    for struct_q in extract_structural_search_subqueries(clean_q):
+        if struct_q.lower() != clean_q.lower() and struct_q not in extra:
+            extra.append(struct_q)
 
     if cross and llm_translator is not None:
         try:
@@ -138,7 +194,7 @@ def build_cross_lingual_subqueries(
         except Exception as exc:
             logger.debug("[SemanticPipeline] Optional query translation skipped: %s", exc)
 
-    return extra[:2]
+    return extra[:3]
 
 
 def prefer_distinct_pages(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -159,28 +215,76 @@ def prefer_distinct_pages(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return first_hits + remaining
 
 
+def boost_entities_tables_and_equations(
+    query: str,
+    candidates: list[dict[str, Any]],
+    required_entities: list[str],
+    top_k: int,
+) -> list[dict[str, Any]]:
+    """
+    Applies entity coverage, intact-table, equation-number/variable-symbol, and figure/OCR
+    structural priority boosts while preserving RRF rank ordering.
+    """
+    if not candidates:
+        return []
+    clean_q = query or ""
+    wants_table = bool(_TABLE_QUERY_RE.search(clean_q))
+    wants_eq = bool(_EQUATION_QUERY_RE.search(clean_q))
+    eq_nums = {
+        (m.group(1) or m.group(2)).strip()
+        for m in _EQUATION_NUM_REF_RE.finditer(clean_q)
+        if (m.group(1) or m.group(2))
+    }
+    tbl_nums = {m.group(1).strip().lower() for m in _TABLE_NUM_REF_RE.finditer(clean_q)}
+    fig_nums = {m.group(1).strip().lower() for m in _FIGURE_NUM_REF_RE.finditer(clean_q)}
+    math_vars = [v.lower() for v in _MATH_VAR_TOKEN_RE.findall(clean_q)]
+
+    if not required_entities and not wants_table and not wants_eq and not tbl_nums and not fig_nums:
+        return candidates[:top_k]
+
+    def _score(idx_doc: tuple[int, dict[str, Any]]) -> float:
+        rank_idx, doc = idx_doc
+        txt = str(doc.get("text") or doc.get("content") or "")
+        txt_l = txt.lower()
+        u_type = str(doc.get("unit_type") or "text").lower()
+        ent_hits = sum(1 for e in required_entities if e and e.lower() in txt_l)
+        bonus = 0.0
+
+        if wants_table and u_type == "table":
+            bonus += 0.25
+        if tbl_nums and u_type == "table":
+            caption_l = str((doc.get("table_metadata") or {}).get("caption") or txt[:120]).lower()
+            if any(f"table {n}" in caption_l or f"bảng {n}" in caption_l or f"tab. {n}" in caption_l for n in tbl_nums):
+                bonus += 0.55
+
+        if wants_eq and u_type == "equation":
+            bonus += 0.30
+        if u_type == "equation" and (eq_nums or math_vars):
+            eq_meta = doc.get("equation_metadata") or {}
+            eq_num = str(doc.get("equation_number") or eq_meta.get("equation_number") or "").strip("() ")
+            if eq_num and eq_num in eq_nums:
+                bonus += 0.65
+            var_hits = sum(1 for v in math_vars if v in txt_l)
+            bonus += 0.20 * min(var_hits, 3)
+
+        if fig_nums and u_type in {"figure", "ocr_scan"}:
+            if any(f"figure {n}" in txt_l or f"fig. {n}" in txt_l or f"hình {n}" in txt_l for n in fig_nums):
+                bonus += 0.50
+
+        return (1.0 / (rank_idx + 1)) + 0.35 * ent_hits + bonus
+
+    ranked = sorted(enumerate(candidates), key=_score, reverse=True)
+    return [doc for _, doc in ranked[:top_k]]
+
+
 def boost_entities_and_tables(
     query: str,
     candidates: list[dict[str, Any]],
     required_entities: list[str],
     top_k: int,
 ) -> list[dict[str, Any]]:
-    """Applies entity coverage and intact-table priority boost while preserving RRF order."""
-    if not candidates:
-        return []
-    wants_table = bool(_TABLE_QUERY_RE.search(query or ""))
-    if not required_entities and not wants_table:
-        return candidates[:top_k]
-
-    def _score(idx_doc: tuple[int, dict[str, Any]]) -> float:
-        rank_idx, doc = idx_doc
-        txt_l = str(doc.get("text") or doc.get("content") or "").lower()
-        ent_hits = sum(1 for e in required_entities if e and e.lower() in txt_l)
-        table_bonus = 0.25 if (wants_table and doc.get("unit_type") == "table") else 0.0
-        return (1.0 / (rank_idx + 1)) + 0.35 * ent_hits + table_bonus
-
-    ranked = sorted(enumerate(candidates), key=_score, reverse=True)
-    return [doc for _, doc in ranked[:top_k]]
+    """Backward-compatible wrapper delegating to `boost_entities_tables_and_equations`."""
+    return boost_entities_tables_and_equations(query, candidates, required_entities, top_k)
 
 
 def _cosine(a: list[float], b: list[float]) -> float:

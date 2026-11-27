@@ -19,6 +19,7 @@ from agents.agent2_reader.tools.reader_pipeline import (
 )
 from core.base_agent import BaseAgent
 from core.citation_audit import citation_location, evidence_quote
+from core.claim_semantics import strip_html_tags_preserve_math
 from core.state import AgentState, SourceUnit, compute_context_hash
 from core.tools import extract_table_or_equations_tool, load_or_parse_selected_pdf
 
@@ -27,8 +28,7 @@ def sanitize_unit_text(text: str) -> str:
     """Strip raw HTML tags, line breaks, and table markdown artifacts from source unit text."""
     if not text:
         return ""
-    s = re.sub(r"<br\s*/?>", " ", text, flags=re.I)
-    s = re.sub(r"<[^>]+>", " ", s)
+    s = strip_html_tags_preserve_math(text)
     s = re.sub(r"[ \t]+", " ", s)
     return s.strip()
 

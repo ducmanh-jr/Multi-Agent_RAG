@@ -185,7 +185,8 @@ class HybridRetrievalAgent(BaseAgent):
             active_pool = self.corpus_docs
 
         # Cross-lingual bilingual query bridging (Vietnamese <-> English)
-        bridged = build_cross_lingual_subqueries(query, active_pool)
+        effective_q = str(state.get("resolved_query") or query).strip() or query
+        bridged = build_cross_lingual_subqueries(effective_q, active_pool)
         search_queries = list(dict.fromkeys([*sub_queries, *bridged]))[:6]
         candidate_limit = 2 * top_k
 
@@ -249,10 +250,28 @@ class HybridRetrievalAgent(BaseAgent):
 
         all_seen = list(seen_chunks) + [d for d in fresh_docs if d.get("id") not in seen_ids]
 
+        fallback_chain: list[dict[str, str]] = []
+        if dense_trace.get("status") == "fallback":
+            fallback_chain.append({"stage": "dense", "reason": str(dense_trace.get("reason") or "unknown")})
+        if rerank_trace.get("status") in {"fallback", "skipped"}:
+            fallback_chain.append({"stage": "rerank", "status": str(rerank_trace.get("status")), "reason": str(rerank_trace.get("reason") or "unknown")})
+
+        if dense_trace.get("status") == "used" and rerank_trace.get("status") == "used":
+            strategy_used = "hybrid_rerank"
+        elif dense_trace.get("status") == "used":
+            strategy_used = "hybrid"
+        elif rerank_trace.get("status") == "used":
+            strategy_used = "sparse_rerank"
+        else:
+            strategy_used = "sparse"
+
         trace = self.log_action(
             f"Truy hồi Hybrid ({planning_backend}) kết nối {len(merged_docs)} đoạn trích",
             {
                 "planning_backend": planning_backend,
+                "strategy_used": strategy_used,
+                "fallback_chain": fallback_chain,
+                "top_k": top_k,
                 "scoped_to_selected_pdf": bool(pdf_chunks),
                 "sub_queries": search_queries,
                 "cross_lingual_queries": bridged,

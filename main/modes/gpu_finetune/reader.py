@@ -9,6 +9,7 @@ Leverages Remote GPU Worker powered by:
 
 from __future__ import annotations
 
+import base64
 import os
 from typing import Any
 
@@ -20,6 +21,7 @@ from agents.agent2_reader.tools.reader_pipeline import (
     merge_or_append_unit,
 )
 from core.base_agent import BaseAgent
+from core.pdf_ingest import is_parser_error_text
 from core.state import AgentState, SourceUnit
 from core.tools import extract_table_or_equations_tool, load_or_parse_selected_pdf
 from utils.llm_client import llm_client
@@ -71,14 +73,37 @@ class GPUFinetuneReaderAgent(BaseAgent):
             )
             merged_dups += extra_merged
 
-        # 2. LayoutLMv3 Document Layout Analysis
-        extracted_tables: list[tuple[int, str]] = []
+        # 2. LayoutLMv3 / 2D Document Layout Analysis (sends real page/crop PNGs and never injects parser errors!)
+        extracted_tables: list[tuple[int, str, list[float] | None]] = []
         primary_pdf = pdf_path or (pdf_paths[0] if pdf_paths else None)
         if primary_pdf and os.path.exists(primary_pdf):
             if self.settings.REMOTE_INFERENCE_URL:
                 try:
+                    import fitz
+
+                    images_payload: list[dict[str, Any]] = []
+                    try:
+                        with fitz.open(primary_pdf) as doc:
+                            for p_no in sorted(pages_covered)[:3]:
+                                if 1 <= p_no <= len(doc):
+                                    pg = doc[p_no - 1]
+                                    scale = min(1.5, 1200.0 / max(pg.rect.width, pg.rect.height, 1.0))
+                                    png_b = pg.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False).tobytes("png")
+                                    images_payload.append({
+                                        "page_no": p_no,
+                                        "kind": "full_page",
+                                        "image_b64": base64.b64encode(png_b).decode("ascii"),
+                                    })
+                    except Exception:
+                        images_payload = []
+
                     req_kwargs: dict[str, Any] = {
-                        "json": {"pdf_path": os.path.basename(primary_pdf), "pages": list(pages_covered)[:3]},
+                        "json": {
+                            "pdf_path": os.path.basename(primary_pdf),
+                            "pages": list(pages_covered)[:3],
+                            "images": images_payload,
+                            "include_full_page_context": True,
+                        },
                         "timeout": float(self.settings.REMOTE_TIMEOUT_SECONDS) * 2,
                     }
                     worker_headers = llm_client._worker_headers()
@@ -92,30 +117,44 @@ class GPUFinetuneReaderAgent(BaseAgent):
                         layout_data = layout_resp.json()
                         for entry in layout_data.get("extracted_tables", []):
                             if not isinstance(entry, dict):
-                                continue  # Legacy string-only detections have no verifiable page.
+                                continue
                             page = entry.get("page_no")
                             table = entry.get("text")
-                            if type(page) is int and page in pages_covered and isinstance(table, str) and table.strip():
-                                extracted_tables.append((page, table.strip()))
+                            tbbox = entry.get("bbox") if isinstance(entry.get("bbox"), list) else None
+                            if (
+                                type(page) is int
+                                and page in pages_covered
+                                and isinstance(table, str)
+                                and table.strip()
+                                and not is_parser_error_text(table)
+                            ):
+                                extracted_tables.append((page, table.strip(), tbbox))
                         document_schema = layout_data.get("document_schema", {})
-                        self.logger.info(f"[GPU Finetune Reader] LayoutLMv3 parsed {len(extracted_tables)} tables/structures.")
+                        if isinstance(layout_data.get("regions"), list):
+                            document_schema["layout_regions"] = layout_data["regions"]
+                        self.logger.info(f"[GPU Finetune Reader] Layout worker parsed {len(extracted_tables)} tables/structures.")
                 except Exception as e:
                     self.logger.debug(f"[GPU Finetune Reader] Remote layout worker skipped ({e}), falling back to local extractor.")
 
             if not extracted_tables:
                 for p in sorted(pages_covered)[:2]:
                     tbl = extract_table_or_equations_tool(primary_pdf, p)
-                    if tbl and not any(s in tbl for s in ("Không phát hiện", "Không có đường dẫn", "nằm ngoài phạm vi")):
-                        extracted_tables.append((p, tbl.strip()))
+                    if tbl and not is_parser_error_text(tbl):
+                        extracted_tables.append((p, tbl.strip(), None))
 
-        # 3. Augment source units with extracted tables if any
-        for t_idx, (page, tbl_str) in enumerate(extracted_tables[:2]):
+        # 3. Augment source units with extracted tables (strictly excluding parser failure messages)
+        for t_idx, (page, tbl_str, tbbox) in enumerate(extracted_tables[:2]):
+            if is_parser_error_text(tbl_str):
+                continue
             t_unit = SourceUnit(
                 id=f"table_layoutlmv3_{t_idx + 1}",
                 text=tbl_str,
                 doc_id=str(os.path.basename(primary_pdf) if primary_pdf else "extracted_tables"),
                 page_no=page,
+                bbox=tbbox,
                 character_offset=curr_offset,
+                unit_type="table",
+                source_path=primary_pdf,
             )
             curr_offset += len(t_unit.text) + 1
             if merge_or_append_unit(t_unit, by_hash, ordered_units):

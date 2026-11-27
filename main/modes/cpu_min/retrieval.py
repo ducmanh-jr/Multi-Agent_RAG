@@ -19,6 +19,11 @@ from typing import Any
 from agents.agent1_retrieval.tools.bm25 import SimpleBM25
 from agents.agent1_retrieval.tools.fts5_search import SQLiteFTS5Searcher
 from agents.agent1_retrieval.tools.hybrid import reciprocal_rank_fusion
+from agents.agent1_retrieval.tools.semantic_pipeline import (
+    boost_entities_tables_and_equations,
+    build_cross_lingual_subqueries,
+    extract_searchable_figure_chunks,
+)
 from core.base_agent import BaseAgent
 from core.comparison_plan import (
     ComparisonPlan, ComparisonReader, compare_documents, get_comparison_budget, run_coro_sync,
@@ -208,10 +213,19 @@ class CPUMinRetrievalAgent(BaseAgent):
                 chunks = load_or_parse_selected_pdf(p)
                 if chunks:
                     pdf_chunks.extend(chunks)
+        figure_chunks = extract_searchable_figure_chunks(pdf_paths)
+        if figure_chunks:
+            existing_cids = {c.get("id") for c in pdf_chunks if isinstance(c, dict)}
+            pdf_chunks.extend(fc for fc in figure_chunks if fc.get("id") not in existing_cids)
 
         if pdf_chunks:
-            # Cache active index by chunk bounds to avoid rebuilding FTS5/BM25 on every retry loop
-            cache_key = f"{len(pdf_chunks)}::{pdf_chunks[0].get('id')}::{pdf_chunks[-1].get('id')}"
+            # Cache active index by resolved file paths + content hashes to guarantee zero cross-run leakage
+            # even when two concurrent runs inspect distinct PDFs sharing the same filename.
+            path_sig = "|".join(os.path.abspath(str(p)) for p in pdf_paths if p)
+            sha_sig = "|".join(
+                dict.fromkeys(str(c.get("document_sha256") or "") for c in pdf_chunks if isinstance(c, dict))
+            )
+            cache_key = f"{path_sig}::{sha_sig}::{len(pdf_chunks)}::{pdf_chunks[0].get('id')}::{pdf_chunks[-1].get('id')}"
             with self._cache_lock:
                 cached_entry = self._doc_index_cache.get(cache_key)
             if cached_entry is not None:
@@ -279,8 +293,13 @@ class CPUMinRetrievalAgent(BaseAgent):
 
             results = sampled_summary if sampled_summary else active_pool[: max(top_k, 20)]
         else:
-            # First-pass multi-query lexical search
-            results = search(sub_queries, top_k, "primary")
+            # First-pass multi-query lexical search (always bridged VI<->EN + equation/table structure)
+            effective_q = str(state.get("resolved_query") or clean_q).strip() or clean_q
+            bridged_queries = build_cross_lingual_subqueries(effective_q, active_pool)
+            primary_queries = list(dict.fromkeys([*sub_queries, *bridged_queries]))[:6]
+            results = search(primary_queries, max(top_k + 4, top_k), "primary")
+            if results:
+                results = boost_entities_tables_and_equations(effective_q, results, required_entities, top_k)
 
         # 3. Internal Coverage Gate: Check if required_entities are covered
         if required_entities and results and not is_summary_query:
@@ -303,7 +322,9 @@ class CPUMinRetrievalAgent(BaseAgent):
                 expanded_queries.append(" ".join(required_entities))
             res_expanded = search(expanded_queries, top_k + 2, "coverage_expansion")
             if res_expanded:
-                results = res_expanded
+                results = boost_entities_tables_and_equations(
+                    str(state.get("resolved_query") or clean_q), res_expanded, required_entities, top_k
+                )
 
         # Fallback to first chunks of selected PDF only if results is still empty
         if not results and active_pool and is_summary_query:
@@ -322,8 +343,13 @@ class CPUMinRetrievalAgent(BaseAgent):
             "cpu_min_agentic_retrieval_completed",
             {
                 "engine": "Distributed_Sampling_FTS5_BM25",
+                "strategy_used": "sparse",
+                "top_k": top_k,
                 "docs_scoped": len(pdf_paths),
                 "is_summary_query": is_summary_query,
+                "cross_lingual_queries": build_cross_lingual_subqueries(str(state.get("resolved_query") or clean_q), active_pool),
+                "dense": {"status": "disabled"},
+                "rerank": {"status": "disabled"},
                 "retrieved_count": len(fresh_docs),
                 "total_seen": len(all_seen),
             },

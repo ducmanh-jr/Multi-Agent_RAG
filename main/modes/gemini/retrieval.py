@@ -98,7 +98,8 @@ class GeminiRetrievalAgent(BaseAgent):
             active_pool = self.corpus_docs
 
         # 2. Cross-lingual bilingual bridging + multi-query hybrid search over FTS5 + BM25
-        bridged = build_cross_lingual_subqueries(query, active_pool)
+        effective_q = str(state.get("resolved_query") or query).strip() or query
+        bridged = build_cross_lingual_subqueries(effective_q, active_pool)
         search_queries = list(dict.fromkeys([*sub_queries[:4], *bridged]))[:6]
         candidate_limit = 2 * top_k
 
@@ -117,7 +118,7 @@ class GeminiRetrievalAgent(BaseAgent):
 
         # 3. Optional Gemini Dense Embedding + Page Diversity
         fused, dense_trace, rerank_trace = enhance_with_dense_and_rerank(
-            query,
+            effective_q,
             sparse_fused,
             active_pool,
             top_k=max(top_k + 2, top_k),
@@ -128,8 +129,8 @@ class GeminiRetrievalAgent(BaseAgent):
             page_diverse=True,
         )
 
-        # 4. Entity & Intact-Table priority boost
-        fused = boost_entities_and_tables(query, fused, required_entities, top_k)
+        # 4. Entity & Intact-Table/Equation priority boost
+        fused = boost_entities_and_tables(effective_q, fused, required_entities, top_k)
 
         seen_ids = {c.get("id") for c in seen_chunks if isinstance(c, dict)}
         fresh_docs = [d for d in fused if d.get("id") not in seen_ids]
@@ -139,10 +140,20 @@ class GeminiRetrievalAgent(BaseAgent):
 
         all_seen = list(seen_chunks) + [d for d in fresh_docs if d.get("id") not in seen_ids]
 
+        fallback_chain = (
+            [{"stage": "dense", "reason": str(dense_trace.get("reason") or "unknown")}]
+            if dense_trace.get("status") == "fallback"
+            else []
+        )
+        strategy_used = "hybrid" if dense_trace.get("status") == "used" else "sparse"
+
         trace = self.log_action(
             "gemini_retrieval_completed",
             {
                 "scoped_to_selected_pdf": bool(pdf_chunks),
+                "top_k": top_k,
+                "strategy_used": strategy_used,
+                "fallback_chain": fallback_chain,
                 "sub_queries_count": len(search_queries),
                 "cross_lingual_queries": bridged,
                 "dense": dense_trace,

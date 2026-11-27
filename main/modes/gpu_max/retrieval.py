@@ -15,6 +15,11 @@ from typing import Any
 from agents.agent1_retrieval.tools.bm25 import SimpleBM25
 from agents.agent1_retrieval.tools.fts5_search import SQLiteFTS5Searcher
 from agents.agent1_retrieval.tools.hybrid import reciprocal_rank_fusion
+from agents.agent1_retrieval.tools.semantic_pipeline import (
+    boost_entities_tables_and_equations,
+    build_cross_lingual_subqueries,
+    extract_searchable_figure_chunks,
+)
 from core.base_agent import BaseAgent
 from core.schemas import RouterPlanOutput
 from core.state import AgentState
@@ -91,6 +96,10 @@ class GPUMaxRetrievalAgent(BaseAgent):
                 chunks = load_or_parse_selected_pdf(p)
                 if chunks:
                     pdf_chunks.extend(chunks)
+        figure_chunks = extract_searchable_figure_chunks(pdf_paths)
+        if figure_chunks:
+            existing_cids = {c.get("id") for c in pdf_chunks if isinstance(c, dict)}
+            pdf_chunks.extend(fc for fc in figure_chunks if fc.get("id") not in existing_cids)
         if pdf_chunks:
             active_fts = SQLiteFTS5Searcher()
             active_bm25 = SimpleBM25()
@@ -102,9 +111,12 @@ class GPUMaxRetrievalAgent(BaseAgent):
             active_bm25 = self.bm25_fallback
             active_pool = self.corpus_docs
 
-        # 2. Multi-query hybrid search
+        # 2. Multi-query hybrid search (with cross-lingual VI<->EN & structural bridging)
+        effective_q = str(state.get("resolved_query") or query).strip() or query
+        bridged = build_cross_lingual_subqueries(effective_q, active_pool)
+        search_queries = list(dict.fromkeys([*sub_queries[:4], *bridged]))[:6]
         all_lists = []
-        for q in sub_queries[:4]:
+        for q in search_queries:
             res_fts = active_fts.search(q, top_k=top_k)
             res_bm25 = active_bm25.search(q, top_k=top_k)
             if res_fts:
@@ -122,23 +134,13 @@ class GPUMaxRetrievalAgent(BaseAgent):
             ]
         ) or bool(state.get("is_comparative_query") or state.get("intent") == "compare")
 
-        fused = reciprocal_rank_fusion(all_lists, top_n=top_k + 2) if all_lists else []
+        fused = reciprocal_rank_fusion(all_lists, top_n=top_k + 4) if all_lists else []
         if not fused and active_pool and is_summary_query:
             fused = active_pool[: min(top_k, len(active_pool))]
 
-        # 3. Entity priority boost
-        if fused and required_entities:
-            def _score_fn(idx_doc: tuple[int, dict[str, Any]]) -> float:
-                r_idx, d = idx_doc
-                txt_l = str(d.get("text", "")).lower()
-                ent_hits = sum(1 for e in required_entities if e.lower() in txt_l)
-                return (1.0 / (r_idx + 1)) + 0.35 * ent_hits
-
-            indexed = list(enumerate(fused))
-            indexed.sort(key=_score_fn, reverse=True)
-            fused = [d for _, d in indexed[:top_k]]
-        else:
-            fused = fused[:top_k]
+        # 3. Structural Equation/Table & Entity priority boost
+        if fused:
+            fused = boost_entities_tables_and_equations(effective_q, fused, required_entities, top_k)
 
         seen_ids = {c.get("id") for c in seen_chunks if isinstance(c, dict)}
         fresh_docs = [d for d in fused if d.get("id") not in seen_ids]
@@ -153,8 +155,13 @@ class GPUMaxRetrievalAgent(BaseAgent):
             {
                 "gpu": "Dual_T4_32GB_TP2",
                 "model": "Qwen3-32B-AWQ (/no_think router)",
+                "strategy_used": "sparse",
+                "top_k": top_k,
+                "cross_lingual_queries": bridged,
+                "dense": {"status": "disabled"},
+                "rerank": {"status": "disabled"},
                 "scoped_to_selected_pdf": bool(pdf_chunks),
-                "sub_queries": sub_queries,
+                "sub_queries": search_queries,
                 "retrieved_count": len(fresh_docs),
             },
         )

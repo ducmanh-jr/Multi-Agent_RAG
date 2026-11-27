@@ -24,6 +24,11 @@ from agents.agent1_retrieval.tools.remote_dense import (
     RemoteDenseRetriever,
 )
 from agents.agent1_retrieval.tools.remote_rerank import MAX_CANDIDATES, RerankError, rerank_passages
+from agents.agent1_retrieval.tools.semantic_pipeline import (
+    boost_entities_tables_and_equations,
+    build_cross_lingual_subqueries,
+    extract_searchable_figure_chunks,
+)
 from core.base_agent import BaseAgent
 from core.schemas import RouterPlanOutput
 from core.state import AgentState
@@ -141,6 +146,10 @@ class GPUFinetuneRetrievalAgent(BaseAgent):
         pdf_chunks = []
         for path in dict.fromkeys(pdf_paths):
             pdf_chunks.extend(load_or_parse_selected_pdf(path))
+        figure_chunks = extract_searchable_figure_chunks(pdf_paths)
+        if figure_chunks:
+            existing_cids = {c.get("id") for c in pdf_chunks if isinstance(c, dict)}
+            pdf_chunks.extend(fc for fc in figure_chunks if fc.get("id") not in existing_cids)
         if pdf_paths:
             active_fts = SQLiteFTS5Searcher()
             active_bm25 = SimpleBM25()
@@ -152,10 +161,13 @@ class GPUFinetuneRetrievalAgent(BaseAgent):
             active_bm25 = self.bm25_fallback
             active_pool = self.corpus_docs
 
-        # 3. Multi-query hybrid search over FTS5 + BM25
+        # 3. Multi-query hybrid search over FTS5 + BM25 (with VI<->EN & structural bridging)
+        effective_query = str(state.get("resolved_query") or query).strip() or query
+        bridged_queries = build_cross_lingual_subqueries(effective_query, active_pool)
+        search_queries = list(dict.fromkeys([*sub_queries[:4], *bridged_queries]))[:6]
         candidate_limit = 2 * top_k if self.page_diverse else top_k
         candidate_lists = []
-        for sq in sub_queries[:4]:
+        for sq in search_queries:
             res_fts = active_fts.search(sq, top_k=candidate_limit)
             res_bm25 = active_bm25.search(sq, top_k=candidate_limit)
             if res_fts:
@@ -188,6 +200,15 @@ class GPUFinetuneRetrievalAgent(BaseAgent):
                 dense_trace = {"status": "used", "model": self.settings.EMBEDDING_MODEL, "revision": revision}
         if not fused_docs and active_pool:
             fused_docs = active_pool[:candidate_limit]
+        # Before page-diversity deduplication, ensure structured table/equation/figure chunks
+        # win their page's primary slot over unstructured plain-text page dumps!
+        if any(
+            str(d.get("unit_type") or "") in {"equation", "table", "figure", "ocr_scan"}
+            for d in fused_docs
+        ):
+            fused_docs = boost_entities_tables_and_equations(
+                effective_query, fused_docs, required_entities, len(fused_docs)
+            )
         if self.page_diverse:
             unseen_docs = [doc for doc in fused_docs if doc.get("id") not in seen_chunks]
             fused_docs = _prefer_distinct_pages(unseen_docs or fused_docs)[:top_k]
@@ -225,7 +246,28 @@ class GPUFinetuneRetrievalAgent(BaseAgent):
                         "kept_prefix": self.rerank_keep_prefix,
                     }
 
+        if any(
+            str(d.get("unit_type") or "") in {"equation", "table", "figure", "ocr_scan"}
+            for d in final_docs
+        ) and dense_trace.get("status") != "used" and rerank_trace.get("status") != "used":
+            final_docs = boost_entities_tables_and_equations(effective_query, final_docs, required_entities, top_k)
+
         new_seen = list(set(seen_chunks + [d.get("id") for d in final_docs if d.get("id")]))
+
+        fallback_chain: list[dict[str, str]] = []
+        if dense_trace.get("status") == "fallback":
+            fallback_chain.append({"stage": "dense", "reason": str(dense_trace.get("reason") or "unknown")})
+        if rerank_trace.get("status") in {"fallback", "skipped"}:
+            fallback_chain.append({"stage": "rerank", "status": str(rerank_trace.get("status")), "reason": str(rerank_trace.get("reason") or "unknown")})
+
+        if dense_trace.get("status") == "used" and rerank_trace.get("status") == "used":
+            strategy_used = "hybrid_rerank"
+        elif dense_trace.get("status") == "used":
+            strategy_used = "hybrid"
+        elif rerank_trace.get("status") == "used":
+            strategy_used = "sparse_rerank"
+        else:
+            strategy_used = "sparse"
 
         trace = self.log_action(
             "gpu_finetune_retrieval_completed",
@@ -234,6 +276,9 @@ class GPUFinetuneRetrievalAgent(BaseAgent):
                 "retrieved_count": len(final_docs),
                 "intent": intent,
                 "sub_queries": sub_queries,
+                "cross_lingual_queries": bridged_queries,
+                "strategy_used": strategy_used,
+                "fallback_chain": fallback_chain,
                 "alpha": alpha,
                 "top_k": top_k,
                 "dense": dense_trace,

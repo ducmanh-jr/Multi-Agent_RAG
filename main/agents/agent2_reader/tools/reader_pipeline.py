@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 from typing import Any, Callable, Iterable, Optional
 
+from core.pdf_ingest import is_parser_error_text
 from core.state import SourceUnit, compute_content_hash
 from utils.logger import logger
 
@@ -77,8 +78,10 @@ def build_source_units_from_docs(
         if not isinstance(doc, dict):
             continue
         raw_text = str(doc.get("text") or doc.get("content") or "").strip()
+        if is_parser_error_text(raw_text):
+            continue
         clean_text = text_cleaner(raw_text) if text_cleaner else raw_text
-        if not clean_text:
+        if not clean_text or is_parser_error_text(clean_text):
             continue
 
         doc_id = str(doc.get("doc_id") or doc.get("title") or f"doc_{idx + 1}")
@@ -96,6 +99,11 @@ def build_source_units_from_docs(
             orig_offset = doc.get("offset")
         unit_offset = int(orig_offset) if orig_offset is not None else curr_offset
 
+        extra_meta = {
+            k: doc[k]
+            for k in ("latex", "equation", "equation_number", "variable_definitions", "domain_constraints", "equation_components", "table_metadata", "diagram_metadata", "figure_id", "ocr_engine", "ocr_confidence")
+            if k in doc and doc[k] is not None
+        }
         unit = SourceUnit(
             id=str(doc.get("id") or f"{doc_id}_p{page_no}_u{idx + 1}"),
             text=clean_text,
@@ -104,6 +112,13 @@ def build_source_units_from_docs(
             bbox=doc.get("bbox"),
             character_offset=unit_offset,
             provenance=list(doc.get("provenance") or []),
+            unit_type=str(doc.get("unit_type") or "text"),
+            document_sha256=str(doc.get("document_sha256") or ""),
+            page_rotation=int(doc.get("page_rotation") or 0),
+            coordinate_space=str(doc.get("coordinate_space") or "pdf_points_top_left"),
+            extractor_version=str(doc.get("extractor_version") or ""),
+            source_path=doc.get("source_path"),
+            metadata=extra_meta,
         )
         if deduplicate:
             if merge_or_append_unit(unit, by_hash, ordered):
@@ -173,10 +188,19 @@ def ingest_pdf_fallbacks(
                 continue
 
             clean_text = text_cleaner(raw_text) if text_cleaner else raw_text.strip()
-            if not clean_text:
+            if not clean_text or is_parser_error_text(clean_text):
                 continue
             pages_covered.add(page_no)
             unit_offset = int(orig_offset) if orig_offset is not None else curr_offset
+            fb_meta = (
+                {
+                    k: ch[k]
+                    for k in ("latex", "equation", "equation_number", "variable_definitions", "domain_constraints", "equation_components", "table_metadata", "diagram_metadata", "figure_id", "ocr_engine", "ocr_confidence")
+                    if k in ch and ch[k] is not None
+                }
+                if isinstance(ch, dict)
+                else dict(getattr(ch, "metadata", None) or {})
+            )
             unit = SourceUnit(
                 id=uid,
                 text=clean_text,
@@ -184,6 +208,11 @@ def ingest_pdf_fallbacks(
                 page_no=page_no,
                 bbox=bbox,
                 character_offset=unit_offset,
+                unit_type=str(ch.get("unit_type") if isinstance(ch, dict) else getattr(ch, "unit_type", "text")) or "text",
+                document_sha256=str(ch.get("document_sha256") if isinstance(ch, dict) else getattr(ch, "document_sha256", "")) or "",
+                page_rotation=int((ch.get("page_rotation") if isinstance(ch, dict) else getattr(ch, "page_rotation", 0)) or 0),
+                source_path=str(path),
+                metadata=fb_meta,
             )
             if deduplicate:
                 if merge_or_append_unit(unit, units_by_content_hash, ordered_units):

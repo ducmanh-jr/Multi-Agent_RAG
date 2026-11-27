@@ -18,6 +18,11 @@ from agents.agent1_retrieval.tools.bm25 import SimpleBM25
 from agents.agent1_retrieval.tools.fts5_search import SQLiteFTS5Searcher
 from agents.agent1_retrieval.tools.hybrid import reciprocal_rank_fusion
 from agents.agent1_retrieval.tools.perspective import generate_research_perspectives
+from agents.agent1_retrieval.tools.semantic_pipeline import (
+    boost_entities_tables_and_equations,
+    build_cross_lingual_subqueries,
+    extract_searchable_figure_chunks,
+)
 from core.base_agent import BaseAgent
 from core.handoff_inputs import is_focused_retrieval
 from core.state import AgentState
@@ -96,6 +101,10 @@ class CPUMaxRetrievalAgent(BaseAgent):
                 chunks = load_or_parse_selected_pdf(p)
                 if chunks:
                     pdf_chunks.extend(chunks)
+        figure_chunks = extract_searchable_figure_chunks(pdf_paths)
+        if figure_chunks:
+            existing_cids = {c.get("id") for c in pdf_chunks if isinstance(c, dict)}
+            pdf_chunks.extend(fc for fc in figure_chunks if fc.get("id") not in existing_cids)
 
         if pdf_chunks:
             active_fts = SQLiteFTS5Searcher()
@@ -149,12 +158,14 @@ class CPUMaxRetrievalAgent(BaseAgent):
                 perspectives, storm_subs = generate_research_perspectives(clean_q)
             else:
                 perspectives, storm_subs = [], []
+            effective_q = str(state.get("resolved_query") or clean_q).strip() or clean_q
+            bridged_queries = build_cross_lingual_subqueries(effective_q, active_pool)
             combined_queries = []
-            query_candidates = [*plan_subs, clean_q] if focused else [clean_q, *plan_subs, *storm_subs]
+            query_candidates = [*plan_subs, effective_q, *bridged_queries] if focused else [effective_q, *plan_subs, *bridged_queries, *storm_subs]
             for q_cand in query_candidates:
                 if q_cand and q_cand not in combined_queries:
                     combined_queries.append(q_cand)
-            combined_queries = combined_queries[:5]
+            combined_queries = combined_queries[:6]
 
             # Multi-query FTS5 + BM25 search
             all_candidate_lists = []
@@ -166,24 +177,17 @@ class CPUMaxRetrievalAgent(BaseAgent):
                 if bm25_res:
                     all_candidate_lists.append(bm25_res)
 
-            fused = reciprocal_rank_fusion(all_candidate_lists, top_n=top_k + 3) if all_candidate_lists else []
+            fused = reciprocal_rank_fusion(all_candidate_lists, top_n=top_k + 4) if all_candidate_lists else []
 
             # Only fallback to first chunks if it's a summary query (never for specific questions, to avoid hallucinations!)
             if not fused and active_pool and is_summary_query:
                 fused = active_pool[: min(top_k, len(active_pool))]
 
-        # 3. Cross-Encoder style Entity & Numeric Reranking on fused candidates
-        if fused and required_entities and not is_summary_query:
-            def _rerank_score(idx_and_doc: tuple[int, dict[str, Any]]) -> float:
-                rank_idx, d = idx_and_doc
-                base_rrf = 1.0 / (rank_idx + 1)
-                txt_l = str(d.get("text", "")).lower()
-                ent_matches = sum(1 for e in required_entities if e.lower() in txt_l)
-                return base_rrf + 0.35 * ent_matches
-
-            indexed_fused = list(enumerate(fused))
-            indexed_fused.sort(key=_rerank_score, reverse=True)
-            fused = [d for _, d in indexed_fused[:top_k]]
+        # 3. Structural Equation/Table & Entity Reranking on fused candidates
+        if fused and not is_summary_query:
+            fused = boost_entities_tables_and_equations(
+                str(state.get("resolved_query") or clean_q), fused, required_entities, top_k
+            )
         else:
             fused = fused[: max(top_k, 8)]
 
@@ -199,8 +203,13 @@ class CPUMaxRetrievalAgent(BaseAgent):
             "cpu_max_retrieval_completed",
             {
                 "engine": "STORM_Hybrid_RRF_EntityRerank",
+                "strategy_used": "sparse",
+                "top_k": top_k,
                 "scoped_to_selected_pdfs": len(pdf_paths),
                 "is_summary_query": is_summary_query,
+                "cross_lingual_queries": build_cross_lingual_subqueries(str(state.get("resolved_query") or clean_q), active_pool),
+                "dense": {"status": "disabled"},
+                "rerank": {"status": "disabled"},
                 "queries_executed": len(combined_queries),
                 "retrieved_count": len(fresh_docs),
                 "perspectives_count": len(perspectives),
