@@ -20,6 +20,7 @@ GPU 1 (16GB VRAM):
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import math
@@ -29,7 +30,7 @@ import time
 from contextlib import nullcontext
 from pathlib import Path
 from threading import Lock
-from typing import Annotated, Any, Dict, List, Optional
+from typing import Annotated, Any, Dict, List, Literal, Optional
 from fastapi import FastAPI, HTTPException, Response
 from pydantic import BaseModel, Field, StringConstraints
 import torch
@@ -46,6 +47,7 @@ _retrieval_model_lock = Lock()
 _qwen_model_name = "qwen-base"
 _qwen_revision: str | None = None
 _adapter_revisions: dict[str, str | None] = {}
+_factcheck_model_name = "research-finetuned-nli"
 _factcheck_revision: str | None = None
 _embedding_revision: str | None = None
 _reranker_revision: str | None = None
@@ -259,7 +261,9 @@ def generate_with_qwen(
 
         adapter_context = nullcontext()
         use_base_instruct = os.getenv("QWEN_USE_BASE_INSTRUCT", "false").strip().lower() in ("true", "1", "yes")
+        active_adapter = adapter
         if adapter == "none" or (use_base_instruct and adapter not in _loaded_adapters):
+            active_adapter = "none"
             if _loaded_adapters and hasattr(model, "disable_adapter"):
                 adapter_context = model.disable_adapter()
         elif adapter in _loaded_adapters:
@@ -297,7 +301,7 @@ def generate_with_qwen(
         text = tokenizer.decode(generated, skip_special_tokens=True).strip()
         _token_headers(response, prompt_tokens, len(generated))
         if response is not None:
-            _model_headers(response, _qwen_model_name, _qwen_revision, adapter)
+            _model_headers(response, _qwen_model_name, _qwen_revision, active_adapter)
         return text
 
 
@@ -306,7 +310,7 @@ def generate_with_qwen(
 # =====================================================================
 
 def load_factcheck_model():
-    global _factcheck_revision
+    global _factcheck_model_name, _factcheck_revision
     with _factcheck_load_lock:
         if "factcheck" in _models:
             return _models["factcheck"], _tokenizers["factcheck"]
@@ -349,9 +353,14 @@ def load_factcheck_model():
                 )
                 model.eval()
                 if is_local_dir:
+                    _factcheck_model_name = "research-finetuned-nli"
                     _factcheck_revision = _checkpoint_sha256(Path(source_id))
                 else:
-                    _factcheck_revision = rev_kwargs.get("revision") or hashlib.sha256(source_id.encode("utf-8")).hexdigest()
+                    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,95}(?:/[A-Za-z0-9][A-Za-z0-9_.-]{0,95})?", source_id):
+                        _factcheck_model_name = source_id
+                    else:
+                        _factcheck_model_name = "research-finetuned-nli"
+                    _factcheck_revision = rev_kwargs.get("revision")
                 _models["factcheck"] = model
                 _tokenizers["factcheck"] = tokenizer
                 return model, tokenizer
@@ -407,9 +416,21 @@ class RerankRequest(BaseModel):
     query: RetrievalText
     candidates: list[RetrievalText] = Field(min_length=1, max_length=15)
 
+class LayoutImagePayload(BaseModel):
+    page_no: int = Field(default=1, ge=1)
+    kind: Literal["crop", "full_page"] = "full_page"
+    image_b64: str = Field(min_length=16, max_length=16_000_000)
+    bbox_hint: Optional[list[float]] = None
+
+
 class LayoutRequest(BaseModel):
-    pdf_path: str
+    pdf_path: str = ""
     pages: list[int] = []
+    images: list[LayoutImagePayload] = []
+    include_full_page_context: bool = False
+
+
+ReaderLayoutRequest = LayoutRequest
 
 class GenerateRequest(BaseModel):
     prompt: str
@@ -423,31 +444,48 @@ def _get_worker_profile() -> str:
     return (os.getenv("KAGGLE_WORKER_PROFILE", "gpu_finetune") or "gpu_finetune").strip().lower()
 
 
+def _canonical_worker_profile(profile: str) -> str:
+    mapping = {
+        "ingest": "ingest",
+        "qa_dual_gpu": "qa_dual_gpu",
+        "gpu_finetune": "qa_dual_gpu",
+        "hybrid_specialist": "qa_dual_gpu",
+        "32b_tp2": "32b_tp2",
+        "gpu_max": "32b_tp2",
+    }
+    return mapping.get(profile, profile)
+
+
 @app.on_event("startup")
 def warmup_all_gpus():
     profile = _get_worker_profile()
-    load_qwen = profile != "hybrid_specialist" or os.getenv("HYBRID_LOAD_QWEN_FALLBACK", "false").strip().lower() == "true"
+    load_qwen = (
+        profile not in ("hybrid_specialist", "ingest")
+        or (profile == "hybrid_specialist" and os.getenv("HYBRID_LOAD_QWEN_FALLBACK", "false").strip().lower() == "true")
+    )
     preload_retrieval = os.getenv("PRELOAD_RETRIEVAL_MODELS", "false").strip().lower() == "true"
 
     print("\n" + "=" * 65)
-    print(f"🔥 [STARTUP] KHỞI ĐỘNG GPU WORKER (profile={profile})...")
+    print(f"🔥 [STARTUP] KHỞI ĐỘNG GPU WORKER (profile={profile}, canonical={_canonical_worker_profile(profile)})...")
     print("=" * 65)
     if load_qwen:
-        print("[GPU 0] Nạp Base Qwen2.5-7B (4-bit NF4) + 4 LoRA Adapters...")
+        print("[GPU 0] Nạp Base Qwen2.5-7B / Qwen3-8B (4-bit NF4)...")
         load_qwen_lora_cluster()
         if torch.cuda.is_available() and torch.cuda.device_count() >= 1:
             vram0 = torch.cuda.memory_allocated(0) / (1024 ** 3)
             print(f"✅ GPU 0 SẴN SÀNG! VRAM chiếm dụng: {vram0:.2f} GB")
     else:
-        print("[GPU 0] Bỏ qua Qwen 7B warmup ở profile hybrid_specialist (Gemini đảm nhận LLM reasoning).")
+        print(f"[GPU 0] Bỏ qua Qwen warmup ở profile '{profile}' (tối ưu headroom VRAM cho ingest/hybrid).")
 
-    # GPU 1: Fact-Checker NLI Head (always mandatory)
-    print("\n[GPU 1] Nạp Agent 4 Fact-Checker NLI Head...")
-    load_factcheck_model()
-    if preload_retrieval:
+    # GPU 1: Fact-Checker NLI Head (skipped for pure ingest profile unless explicitly requested)
+    if profile != "ingest":
+        print("\n[GPU 1] Nạp Agent 4 Fact-Checker NLI Head...")
+        load_factcheck_model()
+    if preload_retrieval or profile == "ingest":
         print("[GPU 1] Preload BGE-M3 Embedding & Cross-Encoder Reranker...")
         load_embedding_model()
-        load_reranker_model()
+        if profile != "ingest":
+            load_reranker_model()
     if torch.cuda.is_available() and torch.cuda.device_count() >= 2:
         vram1 = torch.cuda.memory_allocated(1) / (1024 ** 3)
         print(f"✅ GPU 1 SẴN SÀNG! VRAM chiếm dụng: {vram1:.2f} GB")
@@ -461,20 +499,27 @@ def warmup_all_gpus():
 @app.get("/health")
 def healthcheck():
     profile = _get_worker_profile()
+    canonical_profile = _canonical_worker_profile(profile)
     gpu_info = {}
     if torch.cuda.is_available():
         for i in range(torch.cuda.device_count()):
+            peak_fn = getattr(torch.cuda, "max_memory_allocated", None)
+            peak_gb = round(peak_fn(i) / (1024 ** 3), 2) if callable(peak_fn) else round(torch.cuda.memory_allocated(i) / (1024 ** 3), 2)
             gpu_info[f"gpu_{i}"] = {
                 "name": torch.cuda.get_device_name(i),
                 "vram_used_gb": round(torch.cuda.memory_allocated(i) / (1024 ** 3), 2),
+                "vram_peak_gb": peak_gb,
                 "vram_total_gb": round(torch.cuda.get_device_properties(i).total_memory / (1024 ** 3), 2),
             }
 
     active_models = list(_models.keys())
     loaded_adapters = list(_loaded_adapters)
     use_base_instruct = os.getenv("QWEN_USE_BASE_INSTRUCT", "false").strip().lower() in ("true", "1", "yes")
-    if profile == "hybrid_specialist":
+    if profile == "ingest":
         mandatory_adapters: list[str] = []
+        mandatory_models: list[str] = []
+    elif profile == "hybrid_specialist":
+        mandatory_adapters = []
         mandatory_models = ["factcheck"]
     elif use_base_instruct:
         mandatory_adapters = []
@@ -494,6 +539,8 @@ def healthcheck():
         "ready": mandatory_ready,
         "mandatory_ready": mandatory_ready,
         "worker_profile": profile,
+        "canonical_profile": canonical_profile,
+        "git_commit_sha": (os.getenv("ACTIVE_GIT_COMMIT_SHA") or os.getenv("GIT_COMMIT_SHA") or "unpinned").strip(),
         "pipeline": "gpu_finetune_7_models",
         "gpus_available": torch.cuda.device_count() if torch.cuda.is_available() else 0,
         "loaded_adapters": loaded_adapters,
@@ -507,6 +554,7 @@ def healthcheck():
             "factcheck": "factcheck" in active_models,
             "embedding": "embedding" in active_models,
             "reranker": "reranker" in active_models,
+            "layout_reader": True,
         },
         "gpus": gpu_info,
     }
@@ -649,9 +697,167 @@ def factcheck_endpoint(req: FactCheckRequest, response: Response = None):
         })
 
     if evaluations and response is not None:
-        _model_headers(response, "research-finetuned-nli", _factcheck_revision)
+        _model_headers(response, _factcheck_model_name, _factcheck_revision)
     _token_headers(response, prompt_tokens)
     return {"evaluations": evaluations}
+
+
+def _segment_png_layout_regions(png_bytes: bytes, *, page_no: int, kind: str, bbox_hint: Optional[list[float]]) -> list[dict[str, Any]]:
+    """
+    Validates PNG image payload and detects foreground layout bounding boxes `[x0, y0, x1, y1]`
+    on crop or full-page renders (with optional custom model hook in `_models['layout_reader']`).
+    """
+    if not png_bytes.startswith(b"\x89PNG\r\n\x1a\n") or len(png_bytes) < 24:
+        raise ValueError("Invalid PNG image payload")
+    width = int.from_bytes(png_bytes[16:20], "big")
+    height = int.from_bytes(png_bytes[20:24], "big")
+    if width <= 0 or height <= 0 or width * height > 20_000_000:
+        raise ValueError("PNG dimensions out of bounds")
+
+    crop_sha = hashlib.sha256(png_bytes).hexdigest()
+    custom_handler = _models.get("layout_reader")
+    if callable(custom_handler):
+        raw_regions = custom_handler(png_bytes, page_no=page_no, kind=kind, bbox_hint=bbox_hint)
+        if isinstance(raw_regions, list) and raw_regions:
+            return raw_regions
+
+    # Geometric foreground band detector via Pillow / PyMuPDF when available
+    detected_boxes: list[tuple[float, float, float, float, str]] = []
+    try:
+        import fitz as _fitz
+
+        pix = _fitz.Pixmap(png_bytes)
+        # Sample coarse grid to locate non-white horizontal/vertical bands accurately
+        step_y = max(1, pix.height // 64)
+        step_x = max(1, pix.width // 64)
+        active_rows: list[tuple[int, int, int]] = []
+        for y in range(0, pix.height, step_y):
+            row_min_x = pix.width
+            row_max_x = -1
+            for x in range(0, pix.width, step_x):
+                p = pix.pixel(x, y)
+                if len(p) >= 3 and (p[0] < 245 or p[1] < 245 or p[2] < 245):
+                    if x < row_min_x:
+                        row_min_x = x
+                    if x > row_max_x:
+                        row_max_x = x
+            if row_max_x >= row_min_x:
+                active_rows.append((y, row_min_x, row_max_x))
+
+        # Group contiguous active rows into distinct 2D layout regions
+        if active_rows:
+            cur_y0, cur_x0, cur_x1 = active_rows[0]
+            cur_y1 = cur_y0 + step_y
+            for y, rx0, rx1 in active_rows[1:]:
+                if y - cur_y1 <= step_y * 2:
+                    cur_y1 = y + step_y
+                    cur_x0 = min(cur_x0, rx0)
+                    cur_x1 = max(cur_x1, rx1)
+                else:
+                    if cur_x1 > cur_x0 and cur_y1 > cur_y0:
+                        detected_boxes.append((float(cur_x0), float(cur_y0), float(min(pix.width, cur_x1 + step_x)), float(min(pix.height, cur_y1)), ""))
+                    cur_y0, cur_x0, cur_x1 = y, rx0, rx1
+                    cur_y1 = y + step_y
+            if cur_x1 > cur_x0 and cur_y1 > cur_y0:
+                detected_boxes.append((float(cur_x0), float(cur_y0), float(min(pix.width, cur_x1 + step_x)), float(min(pix.height, cur_y1)), ""))
+    except Exception:
+        detected_boxes = []
+
+    if not detected_boxes:
+        if bbox_hint and len(bbox_hint) == 4 and float(bbox_hint[2]) > float(bbox_hint[0]) and float(bbox_hint[3]) > float(bbox_hint[1]):
+            bx = [round(float(v), 2) for v in bbox_hint[:4]]
+        else:
+            bx = [0.0, 0.0, float(width), float(height)]
+        return [{
+            "page_no": page_no,
+            "kind": kind,
+            "unit_type": "figure_crop" if kind == "crop" else "page_layout",
+            "bbox": bx,
+            "image_size": [width, height],
+            "crop_sha256": crop_sha,
+            "text": "",
+            "confidence": 0.85,
+        }]
+
+    regions_out: list[dict[str, Any]] = []
+    for rx0, ry0, rx1, ry1, rtxt in detected_boxes[:16]:
+        if bbox_hint and len(bbox_hint) == 4 and kind == "crop":
+            hx0, hy0, hx1, hy1 = (float(bbox_hint[0]), float(bbox_hint[1]), float(bbox_hint[2]), float(bbox_hint[3]))
+            hw, hh = max(hx1 - hx0, 1.0), max(hy1 - hy0, 1.0)
+            mapped_box = [
+                round(hx0 + (rx0 / width) * hw, 2),
+                round(hy0 + (ry0 / height) * hh, 2),
+                round(hx0 + (rx1 / width) * hw, 2),
+                round(hy0 + (ry1 / height) * hh, 2),
+            ]
+        else:
+            mapped_box = [round(rx0, 2), round(ry0, 2), round(rx1, 2), round(ry1, 2)]
+        regions_out.append({
+            "page_no": page_no,
+            "kind": kind,
+            "unit_type": "layout_region",
+            "bbox": mapped_box,
+            "image_size": [width, height],
+            "crop_sha256": crop_sha,
+            "text": rtxt,
+            "confidence": 0.92,
+        })
+    return regions_out
+
+
+@app.post("/api/reader/layout")
+def reader_layout_endpoint(req: LayoutRequest, response: Response = None):
+    layout_enabled = (
+        "layout_reader" in _models
+        or os.getenv("ENABLE_LAYOUT_READER", "false").strip().lower() in {"true", "1", "yes"}
+    )
+    if not layout_enabled or not req.images:
+        raise HTTPException(
+            501,
+            detail="layout_reader endpoint requires region image/crop payload and loaded layout model",
+        )
+
+    all_regions: list[dict[str, Any]] = []
+    extracted_tables: list[dict[str, Any]] = []
+    for item in req.images[:8]:
+        try:
+            raw_bytes = base64.b64decode(item.image_b64, validate=True)
+            item_regions = _segment_png_layout_regions(
+                raw_bytes,
+                page_no=item.page_no,
+                kind=item.kind,
+                bbox_hint=item.bbox_hint,
+            )
+            all_regions.extend(item_regions)
+            for reg in item_regions:
+                if reg.get("unit_type") == "table" and reg.get("text"):
+                    extracted_tables.append({
+                        "page_no": reg["page_no"],
+                        "bbox": reg["bbox"],
+                        "text": reg["text"],
+                    })
+        except Exception as exc:
+            raise HTTPException(422, detail=f"Invalid layout image payload on page {item.page_no}: {exc}") from exc
+
+    layout_model_id = str(os.getenv("LAYOUT_READER_MODEL_ID") or "pymupdf-2d-layout-v1")
+    layout_rev = hashlib.sha256(layout_model_id.encode("utf-8")).hexdigest()
+    if response is not None:
+        _model_headers(response, layout_model_id, layout_rev)
+        _token_headers(response, 0)
+
+    return {
+        "status": "ok",
+        "model": layout_model_id,
+        "revision": layout_rev,
+        "regions": all_regions,
+        "extracted_tables": extracted_tables,
+        "document_schema": {
+            "layout_engine": layout_model_id,
+            "pages_processed": sorted({r["page_no"] for r in all_regions}),
+            "full_page_context_used": any(img.kind == "full_page" for img in req.images),
+            "crop_count": sum(1 for img in req.images if img.kind == "crop"),
+        },
+    }
 
 
 @app.post("/api/writer")

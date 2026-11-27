@@ -95,17 +95,26 @@ async def check_inference_rate_limit(request: Request):
         _client_request_history[client_ip] = active_timestamps
 
 
+def _require_separate_tokens() -> bool:
+    return os.environ.get("SEPARATE_ADMIN_INFERENCE_TOKENS", "false").strip().lower() in ("true", "1", "yes")
+
+
 def _active_admin_token() -> str:
     return (ADMIN_TOKEN or os.environ.get("SUPERVISOR_ADMIN_TOKEN") or os.environ.get("ADMIN_API_KEY") or "").strip()
 
 
 def _active_inference_token() -> str:
-    return (
+    explicit = (
         INFERENCE_TOKEN
         or os.environ.get("SUPERVISOR_API_TOKEN")
         or os.environ.get("REMOTE_INFERENCE_TOKEN")
-        or _active_admin_token()
+        or ""
     ).strip()
+    if explicit:
+        return explicit
+    if _require_separate_tokens():
+        return ""
+    return _active_admin_token()
 
 
 def _is_public_tunnel() -> bool:
@@ -127,11 +136,29 @@ def _check_bearer_token(request: Request, expected: str, *, role_label: str) -> 
         )
 
 
+def _enforce_token_separation_if_enabled() -> tuple[str, str]:
+    admin_tok = _active_admin_token()
+    inf_tok = _active_inference_token()
+    if _require_separate_tokens():
+        if not admin_tok or not inf_tok:
+            raise HTTPException(
+                status_code=503,
+                detail="Chế độ tách token (SEPARATE_ADMIN_INFERENCE_TOKENS=true) yêu cầu cấu hình đủ SUPERVISOR_ADMIN_TOKEN và SUPERVISOR_API_TOKEN riêng biệt.",
+            )
+        if hmac.compare_digest(admin_tok, inf_tok):
+            raise HTTPException(
+                status_code=503,
+                detail="Cấu hình bảo mật không hợp lệ: SUPERVISOR_ADMIN_TOKEN và SUPERVISOR_API_TOKEN không được trùng nhau.",
+            )
+    return admin_tok, inf_tok
+
+
 def verify_admin_auth(request: Request):
     """
     Guards admin endpoints with Bearer Token auth (mandatory when PUBLIC_TUNNEL=true or token is set).
+    Rejects inference tokens on admin endpoints whenever distinct tokens or strict separation is active.
     """
-    expected = _active_admin_token()
+    expected, _ = _enforce_token_separation_if_enabled()
     if not expected:
         if _is_public_tunnel():
             raise HTTPException(
@@ -147,7 +174,7 @@ def verify_inference_auth(request: Request):
     Guards reverse-proxy inference endpoints with Bearer Token auth.
     Mandatory whenever SUPERVISOR_API_TOKEN / REMOTE_INFERENCE_TOKEN is configured or PUBLIC_TUNNEL=true.
     """
-    expected = _active_inference_token()
+    _, expected = _enforce_token_separation_if_enabled()
     if not expected:
         if _is_public_tunnel():
             raise HTTPException(
@@ -415,8 +442,11 @@ async def proxy_all(request: Request, path: str):
                             prompt = body_json.get("prompt") or body_json.get("query") or ""
                             sys_inst = body_json.get("system_instruction") or "Bạn là Đại Mô Hình Nghiên Cứu Khoa Học 32B."
 
+                        configured_max_model = (
+                            os.environ.get("GPU_MAX_MODEL_ID") or "Qwen/Qwen2.5-32B-Instruct-AWQ"
+                        ).strip()
                         vllm_payload = {
-                            "model": "Qwen/Qwen2.5-32B-Instruct-AWQ",
+                            "model": configured_max_model,
                             "messages": [
                                 {"role": "system", "content": sys_inst},
                                 {"role": "user", "content": prompt}
@@ -431,6 +461,8 @@ async def proxy_all(request: Request, path: str):
                         )
                         data = resp.json()
                         text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                        served_model = str(data.get("model") or "").strip() or configured_max_model
+                        short_model_name = served_model.split("/")[-1]
                         usage = data.get("usage")
                         usage = usage if isinstance(usage, dict) else {}
                         prompt_tokens, completion_tokens = usage.get("prompt_tokens"), usage.get("completion_tokens")
@@ -443,6 +475,9 @@ async def proxy_all(request: Request, path: str):
                                 "X-Research-Input-Tokens": str(prompt_tokens),
                                 "X-Research-Output-Tokens": str(completion_tokens),
                             }
+                        if isinstance(data.get("model"), str) and data["model"].strip():
+                            token_headers["X-Research-Model"] = served_model
+                            token_headers["X-Research-Adapter"] = "none"
 
                         # For JSON endpoints, parse text into structured dict if valid
                         if path in ("api/router", "router", "api/summarize/generator", "summarize/generator", "api/summarize/critic", "summarize/critic"):
@@ -451,7 +486,7 @@ async def proxy_all(request: Request, path: str):
                                 if m:
                                     parsed = py_json.loads(m.group(0))
                                     if isinstance(parsed, dict):
-                                        parsed.setdefault("model", "Qwen2.5-32B-Instruct-AWQ")
+                                        parsed.setdefault("model", short_model_name)
                                         parsed.setdefault("text", text)
                                         parsed.setdefault("output", text)
                                     return JSONResponse(content=parsed, status_code=resp.status_code, headers=token_headers)
@@ -460,13 +495,13 @@ async def proxy_all(request: Request, path: str):
 
                         if path in ("api/writer", "writer"):
                             return JSONResponse(
-                                content={"report": text, "metadata": {"model": "Qwen2.5-32B-Instruct-AWQ"}},
+                                content={"report": text, "metadata": {"model": short_model_name}},
                                 status_code=resp.status_code,
                                 headers=token_headers,
                             )
 
                         return JSONResponse(
-                            content={"text": text, "output": text, "response": text, "model": "Qwen2.5-32B-Instruct-AWQ"},
+                            content={"text": text, "output": text, "response": text, "model": short_model_name},
                             status_code=resp.status_code,
                             headers=token_headers,
                         )

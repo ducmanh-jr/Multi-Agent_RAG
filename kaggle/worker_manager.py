@@ -304,12 +304,97 @@ class WorkerManager:
         self._pgid: Optional[int] = None
         self._last_switch_time: float = time.time()
 
-        # Baseline VRAM Record
+        # Baseline & Peak VRAM Records (per GPU index, MB)
         self.baseline_vram: Dict[int, Dict[str, float]] = GPUVRAMProbe.get_vram_info()
+        self._peak_vram_mb: Dict[int, float] = {
+            idx: float(info.get("used_mb", 0.0)) for idx, info in self.baseline_vram.items()
+        }
 
         # Load & Validate Manifest (Fail-Fast Cryptographic Verification)
         self.manifest = self._load_manifest()
         self.validated_capabilities = self.validate_manifest_checkpoints(verify_sha256=True)
+        self._live_probed_capabilities: Dict[str, bool] = {"layout_reader": False}
+
+    def _record_vram_sample(self, vram_info: Dict[int, Dict[str, float]]) -> None:
+        for idx, info in (vram_info or {}).items():
+            used = float(info.get("used_mb", 0.0))
+            if idx not in self._peak_vram_mb or used > self._peak_vram_mb[idx]:
+                self._peak_vram_mb[idx] = used
+
+    def resolve_runtime_manifest(self) -> Dict[str, Any]:
+        """
+        Builds a deterministic, secret-free runtime manifest for reproducibility verification
+        across independent Kaggle sessions (pinned Git commit SHA, profile, model revisions, CUDA/Python).
+        """
+        import platform as _platform
+        import re as _re
+
+        git_sha = (
+            os.environ.get("ACTIVE_GIT_COMMIT_SHA")
+            or os.environ.get("GIT_COMMIT_SHA")
+            or ""
+        ).strip()
+        if not _re.fullmatch(r"[0-9a-fA-F]{40}", git_sha):
+            try:
+                proc = subprocess.run(
+                    ["git", "-C", self.project_dir, "rev-parse", "HEAD"],
+                    capture_output=True,
+                    text=True,
+                    timeout=3,
+                    check=False,
+                )
+                candidate = (proc.stdout or "").strip()
+                if _re.fullmatch(r"[0-9a-fA-F]{40}", candidate):
+                    git_sha = candidate
+            except Exception:
+                pass
+        if not git_sha:
+            git_sha = "unpinned"
+
+        raw_profile = (os.environ.get("KAGGLE_WORKER_PROFILE", "gpu_finetune") or "gpu_finetune").strip().lower()
+        profile_map = {
+            "ingest": "ingest",
+            "qa_dual_gpu": "qa_dual_gpu",
+            "gpu_finetune": "qa_dual_gpu",
+            "hybrid_specialist": "qa_dual_gpu",
+            "32b_tp2": "32b_tp2",
+            "gpu_max": "32b_tp2",
+        }
+        canonical_profile = profile_map.get(raw_profile, raw_profile)
+
+        cuda_version = None
+        try:
+            import torch as _torch
+            cuda_version = getattr(getattr(_torch, "version", None), "cuda", None)
+        except Exception:
+            cuda_version = None
+
+        pinned_base_models = {}
+        for k, spec in sorted((self.manifest.get("base_models") or {}).items()):
+            if isinstance(spec, dict):
+                pinned_base_models[k] = {
+                    "model_id": spec.get("model_id"),
+                    "revision": spec.get("revision"),
+                }
+
+        return {
+            "git_commit_sha": git_sha.lower() if git_sha != "unpinned" else "unpinned",
+            "git_commit_pinned": bool(_re.fullmatch(r"[0-9a-fA-F]{40}", git_sha)),
+            "worker_profile": raw_profile,
+            "canonical_profile": canonical_profile,
+            "configured_models": {
+                "base_qwen_model_id": os.environ.get("BASE_QWEN_MODEL_ID") or pinned_base_models.get("qwen_7b_base", {}).get("model_id"),
+                "gpu_max_model_id": os.environ.get("GPU_MAX_MODEL_ID") or pinned_base_models.get("qwen_32b_awq", {}).get("model_id"),
+                "factcheck_model_id": os.environ.get("FACTCHECK_MODEL_ID") or "MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7",
+                "reranker_model_id": os.environ.get("RERANKER_MODEL") or "BAAI/bge-reranker-v2-m3",
+            },
+            "pinned_base_models": pinned_base_models,
+            "token_separation_enforced": os.environ.get("SEPARATE_ADMIN_INFERENCE_TOKENS", "false").strip().lower() in ("true", "1", "yes"),
+            "software": {
+                "python": _platform.python_version(),
+                "cuda": cuda_version,
+            },
+        }
 
     def _load_manifest(self) -> Dict[str, Any]:
         manifest_path = Path(self.project_dir) / "kaggle" / "weights_manifest.json"
@@ -443,6 +528,7 @@ class WorkerManager:
         self.transition_state = "stopping"
         if self._proc is None and self._pgid is None:
             self.active_worker = None
+            self._live_probed_capabilities = {"layout_reader": False}
             if target_worker:
                 self.transition_state = "reclaiming_vram"
                 await self._verify_vram_reclaimed(target_worker=target_worker)
@@ -507,6 +593,7 @@ class WorkerManager:
         self._proc = None
         self._pgid = None
         self.active_worker = None
+        self._live_probed_capabilities = {"layout_reader": False}
 
         if hasattr(self, "_log_file") and self._log_file:
             try:
@@ -648,6 +735,11 @@ class WorkerManager:
            and validates inference via test probe to /api/router.
         4. For gpu_max: queries /v1/models and verifies the exact 32B model ID is served.
         """
+        if self._proc is not None and self._proc.poll() is not None:
+            exit_code = self._proc.returncode
+            print(f"[WorkerManager] Fail-fast: Tiến trình worker {target_worker} đã chết bất ngờ (exit code={exit_code}).")
+            return False
+
         import httpx
 
         async with httpx.AsyncClient(timeout=3.0) as client:
@@ -735,6 +827,15 @@ class WorkerManager:
                                         timeout=30.0
                                     )
                                     if test_resp.status_code == 200:
+                                        # Only advertise layout_reader=True after a live PNG request succeeds!
+                                        if (
+                                            "layout_reader" in active_models
+                                            or data.get("layout_reader_ready")
+                                            or os.environ.get("ENABLE_LAYOUT_READER", "").strip().lower() in ("true", "1", "yes")
+                                        ):
+                                            await self._probe_layout_reader_capability(client, url)
+                                        else:
+                                            self._live_probed_capabilities["layout_reader"] = False
                                         return True
                                 except Exception:
                                     # If probe ping times out or errors, continue polling
@@ -744,6 +845,62 @@ class WorkerManager:
 
                 await asyncio.sleep(1.2)
 
+        return False
+
+    async def _probe_layout_reader_capability(self, client: Any, url: str) -> bool:
+        """
+        Verifies `/api/reader/layout` with a real PNG test image before advertising
+        `layout_reader: True` in `active_worker_capabilities`.
+        """
+        import base64
+        import struct
+        import zlib
+
+        def _tiny_test_png() -> str:
+            width, height = 16, 16
+            raw_rows = []
+            for y in range(height):
+                row = bytearray([0])  # filter type 0
+                for x in range(width):
+                    val = 20 if (4 <= x <= 11 and 4 <= y <= 11) else 255
+                    row.extend((val, val, val))
+                raw_rows.append(bytes(row))
+            compressed = zlib.compress(b"".join(raw_rows))
+
+            def _chunk(tag: bytes, data: bytes) -> bytes:
+                return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+
+            ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+            png = b"\x89PNG\r\n\x1a\n" + _chunk(b"IHDR", ihdr) + _chunk(b"IDAT", compressed) + _chunk(b"IEND", b"")
+            return base64.b64encode(png).decode("ascii")
+
+        try:
+            resp = await client.post(
+                f"{url.rstrip('/')}/api/reader/layout",
+                json={
+                    "pdf_path": "capability_probe.pdf",
+                    "pages": [1],
+                    "images": [{"page_no": 1, "kind": "crop", "image_b64": _tiny_test_png(), "bbox_hint": [10.0, 10.0, 90.0, 60.0]}],
+                },
+                timeout=10.0,
+            )
+            if resp.status_code == 200:
+                body = resp.json()
+                regions = body.get("regions") if isinstance(body, dict) else None
+                if isinstance(regions, list) and regions:
+                    bbox = regions[0].get("bbox")
+                    if (
+                        isinstance(bbox, list)
+                        and len(bbox) == 4
+                        and all(isinstance(v, (int, float)) for v in bbox)
+                        and float(bbox[2]) > float(bbox[0])
+                        and float(bbox[3]) > float(bbox[1])
+                    ):
+                        self._live_probed_capabilities["layout_reader"] = True
+                        return True
+        except Exception:
+            pass
+        self._live_probed_capabilities["layout_reader"] = False
         return False
 
     async def request_switch_mode(self, target_mode: str) -> Dict[str, Any]:
@@ -915,6 +1072,7 @@ class WorkerManager:
 
             # Post-startup VRAM & health verification
             post_vram = GPUVRAMProbe.get_vram_info()
+            self._record_vram_sample(post_vram)
             if post_vram:
                 for idx, info in post_vram.items():
                     print(f"[WorkerManager] Post-startup GPU {idx}: used={info['used_mb']:.1f} MB, free={info['free_mb']:.1f} MB")
@@ -977,9 +1135,12 @@ class WorkerManager:
                     v_ok, _ = GPUVRAMProbe.check_vram_against_profile(previous_worker, self.manifest)
                     if v_ok:
                         if previous_worker == "gpu_max":
+                            prev_max_model = (
+                                os.environ.get("GPU_MAX_MODEL_ID") or "Qwen/Qwen2.5-32B-Instruct-AWQ"
+                            ).strip()
                             p_cmd = [
                                 sys.executable, "-m", "vllm.entrypoints.openai.api_server",
-                                "--model", "Qwen/Qwen2.5-32B-Instruct-AWQ",
+                                "--model", prev_max_model,
                                 "--tensor-parallel-size", "2",
                                 "--dtype", "float16",
                                 "--quantization", "awq",
@@ -1033,13 +1194,19 @@ class WorkerManager:
         Matches AGENT.md and evaluation audit contract.
         """
         vram_info = GPUVRAMProbe.get_vram_info()
+        self._record_vram_sample(vram_info)
         vram_display = {
             f"gpu_{idx}": {
                 "used_gb": round(info["used_mb"] / 1024, 2),
+                "peak_gb": round(self._peak_vram_mb.get(idx, info["used_mb"]) / 1024, 2),
                 "total_gb": round(info["total_mb"] / 1024, 2),
                 "free_gb": round(info["free_mb"] / 1024, 2),
             }
             for idx, info in vram_info.items()
+        }
+        vram_peak_gb = {
+            f"gpu_{idx}": round(peak_mb / 1024, 2)
+            for idx, peak_mb in sorted(self._peak_vram_mb.items())
         }
 
         # Check profiles availability based on manifest & dependencies
@@ -1083,7 +1250,7 @@ class WorkerManager:
                 "critic": self.validated_capabilities.get("critic", False),
                 "writer": self.validated_capabilities.get("writer", False),
                 "fact_checker_nli": self.validated_capabilities.get("fact_checker_nli", False),
-                "layout_reader": False,
+                "layout_reader": bool(self._live_probed_capabilities.get("layout_reader", False)),
                 "embedding": False,
                 "reranker": False,
                 "vllm_32b_awq": False,
@@ -1101,6 +1268,7 @@ class WorkerManager:
             "queue_depth": self.queue_depth,
             "is_switching": self.transition_state in ("draining", "stopping", "reclaiming_vram", "spawning"),
             "vram_allocation": vram_display,
+            "vram_peak_gb": vram_peak_gb,
             "vram_probe": {
                 "source": GPUVRAMProbe.last_probe.source,
                 "is_valid": GPUVRAMProbe.last_probe.is_valid,
@@ -1109,6 +1277,10 @@ class WorkerManager:
             "worker_profiles_available": {
                 "gpu_finetune": finetune_available,
                 "gpu_max": gpu_max_available,
+                "qa_dual_gpu": finetune_available,
+                "ingest": True,
+                "32b_tp2": gpu_max_available,
             },
             "active_worker_capabilities": capabilities,
+            "runtime_manifest": self.resolve_runtime_manifest(),
         }

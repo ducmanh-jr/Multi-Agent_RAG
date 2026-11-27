@@ -35,6 +35,111 @@ def load_kaggle_secret_into_env(secret_name: str, env_var: str = None) -> bool:
     return False
 
 
+WORKER_PROFILE_SPECS = {
+    "qa_dual_gpu": {
+        "canonical_profile": "qa_dual_gpu",
+        "initial_mode": "gpu_finetune",
+        "server_profile": "qa_dual_gpu",
+        "prefetch_qwen": True,
+        "description": "Dual-T4 online QA (GPU 0: Qwen3-8B NF4, GPU 1: BGE-M3 + Reranker + mDeBERTa-v3 NLI)",
+    },
+    "ingest": {
+        "canonical_profile": "ingest",
+        "initial_mode": "gpu_finetune",
+        "server_profile": "ingest",
+        "prefetch_qwen": False,
+        "description": "Dedicated heavy PDF OCR/Layout/Embedding ingest worker (skips Qwen 8B to maximize OCR VRAM)",
+    },
+    "32b_tp2": {
+        "canonical_profile": "32b_tp2",
+        "initial_mode": "gpu_max",
+        "server_profile": "32b_tp2",
+        "prefetch_qwen": False,
+        "description": "Dual-T4 Tensor Parallel=2 vLLM Qwen3-32B-AWQ generator",
+    },
+    # Backward-compatible aliases
+    "gpu_finetune": {
+        "canonical_profile": "qa_dual_gpu",
+        "initial_mode": "gpu_finetune",
+        "server_profile": "gpu_finetune",
+        "prefetch_qwen": True,
+        "description": "Legacy alias for qa_dual_gpu",
+    },
+    "hybrid_specialist": {
+        "canonical_profile": "qa_dual_gpu",
+        "initial_mode": "gpu_finetune",
+        "server_profile": "hybrid_specialist",
+        "prefetch_qwen": False,
+        "description": "Hybrid specialist worker (GPU 1 retrieval/NLI without GPU 0 Qwen unless fallback enabled)",
+    },
+    "gpu_max": {
+        "canonical_profile": "32b_tp2",
+        "initial_mode": "gpu_max",
+        "server_profile": "32b_tp2",
+        "prefetch_qwen": False,
+        "description": "Legacy alias for 32b_tp2",
+    },
+}
+
+
+def normalize_worker_profile(raw_profile: str | None) -> dict:
+    key = (raw_profile or "qa_dual_gpu").strip().lower()
+    if key in WORKER_PROFILE_SPECS:
+        return dict(WORKER_PROFILE_SPECS[key])
+    raise ValueError(
+        f"Unsupported KAGGLE_WORKER_PROFILE={raw_profile!r}. "
+        f"Expected one of: {', '.join(sorted(WORKER_PROFILE_SPECS))}."
+    )
+
+
+def configure_runtime_tokens(env: dict | None = None, secret_loader=None) -> dict:
+    """
+    Loads or generates strictly SEPARATE admin (`SUPERVISOR_ADMIN_TOKEN`) and
+    inference (`SUPERVISOR_API_TOKEN`) tokens so inference clients never hold admin privileges.
+    Never logs or returns secret values in public telemetry.
+    """
+    import hmac
+    import secrets as _secrets
+
+    target_env = os.environ if env is None else env
+    loader = load_kaggle_secret_into_env if secret_loader is None else secret_loader
+
+    loaded_admin = bool(loader("SUPERVISOR_ADMIN_TOKEN")) if not target_env.get("SUPERVISOR_ADMIN_TOKEN") else True
+    loaded_api = bool(loader("SUPERVISOR_API_TOKEN")) if not target_env.get("SUPERVISOR_API_TOKEN") else True
+
+    admin_token = (target_env.get("SUPERVISOR_ADMIN_TOKEN") or "").strip()
+    api_token = (target_env.get("SUPERVISOR_API_TOKEN") or "").strip()
+
+    admin_auto_generated = False
+    api_auto_generated = False
+    if not admin_token:
+        admin_token = _secrets.token_hex(16)
+        target_env["SUPERVISOR_ADMIN_TOKEN"] = admin_token
+        admin_auto_generated = True
+    if not api_token:
+        api_token = _secrets.token_hex(16)
+        while hmac.compare_digest(api_token, admin_token):
+            api_token = _secrets.token_hex(16)
+        target_env["SUPERVISOR_API_TOKEN"] = api_token
+        api_auto_generated = True
+
+    require_separate = target_env.get("SEPARATE_ADMIN_INFERENCE_TOKENS", "true").strip().lower() in ("true", "1", "yes")
+    if require_separate and hmac.compare_digest(admin_token, api_token):
+        raise RuntimeError(
+            "SUPERVISOR_ADMIN_TOKEN và SUPERVISOR_API_TOKEN không được trùng nhau khi SEPARATE_ADMIN_INFERENCE_TOKENS=true."
+        )
+
+    target_env["SEPARATE_ADMIN_INFERENCE_TOKENS"] = "true" if require_separate else "false"
+    return {
+        "loaded_admin_secret": loaded_admin and not admin_auto_generated,
+        "loaded_api_secret": loaded_api and not api_auto_generated,
+        "admin_auto_generated": admin_auto_generated,
+        "api_auto_generated": api_auto_generated,
+        "tokens_distinct": not hmac.compare_digest(admin_token, api_token),
+        "separation_enforced": require_separate,
+    }
+
+
 def format_bytes(size):
     for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
         if size < 1024.0:
@@ -374,10 +479,13 @@ def run():
     # -------------------------------------------------------------------------
     # Pre-fetch Base & Specialist Models into local HF cache so Step 4 startup is fast
     # -------------------------------------------------------------------------
-    worker_profile = os.environ.get("KAGGLE_WORKER_PROFILE", "gpu_finetune").strip().lower()
+    worker_profile_raw = os.environ.get("KAGGLE_WORKER_PROFILE", "qa_dual_gpu").strip().lower()
+    profile_spec = normalize_worker_profile(worker_profile_raw)
+    worker_profile = profile_spec["canonical_profile"]
     load_qwen_fallback = os.environ.get("HYBRID_LOAD_QWEN_FALLBACK", "false").strip().lower() in ("true", "1", "yes")
-    if worker_profile == "hybrid_specialist" and not load_qwen_fallback:
-        print(f"\n    ⚡ Profile 'hybrid_specialist' (HYBRID_LOAD_QWEN_FALLBACK=false): Bỏ qua tải trước {base_model_id} (~15 GB) để khởi động nhanh.")
+    should_prefetch_qwen = profile_spec["prefetch_qwen"] or (worker_profile_raw == "hybrid_specialist" and load_qwen_fallback)
+    if not should_prefetch_qwen:
+        print(f"\n    ⚡ Profile '{worker_profile_raw}' (canonical={worker_profile}): Bỏ qua tải trước {base_model_id} (~15 GB) để tối ưu VRAM/khởi động nhanh.")
     else:
         print(f"\n    🌐 Đồng bộ Base Model {base_model_id} (GPU 0) từ Hugging Face Hub:")
         try:
@@ -394,12 +502,12 @@ def run():
 
     # Pre-fetch GPU 1 Specialist Models (BGE-M3, BGE-Reranker-v2-M3, Multilingual NLI)
     gpu1_hf_models = []
-    if os.environ.get("PRELOAD_RETRIEVAL_MODELS", "false").strip().lower() in ("true", "1", "yes"):
+    if os.environ.get("PRELOAD_RETRIEVAL_MODELS", "false").strip().lower() in ("true", "1", "yes") or worker_profile == "ingest":
         gpu1_hf_models.extend([
             ("BAAI/bge-m3", "Dense Vector Embedding 1024-dim"),
             (os.environ.get("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3"), "Cross-Encoder Reranker"),
         ])
-    if os.environ.get("PREFER_HF_SOTA_NLI", "false").strip().lower() in ("true", "1", "yes"):
+    if worker_profile != "ingest" and os.environ.get("PREFER_HF_SOTA_NLI", "false").strip().lower() in ("true", "1", "yes"):
         nli_id = os.environ.get("FACTCHECK_MODEL_ID", "MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7")
         gpu1_hf_models.append((nli_id, "Multilingual 3-Class Fact-Check NLI"))
 
@@ -422,24 +530,16 @@ def run():
     # 4. Start Master Supervisor Gateway & Load Dual GPU VRAM
     # -------------------------------------------------------------------------
     print("\n🚀 [BƯỚC 4/4] KHỞI CHẠY TIẾN TRÌNH SUPERVISOR GATEWAY & NẠP VRAM DUAL T4:")
-    os.environ["INITIAL_MODE"] = "gpu_finetune"
+    os.environ["INITIAL_MODE"] = profile_spec["initial_mode"]
     os.environ["PROJECT_DIR"] = repo_dir
 
-    # Load optional tokens from Kaggle Secrets (never printed/logged) and enforce public tunnel auth
-    loaded_admin_secret = load_kaggle_secret_into_env("SUPERVISOR_ADMIN_TOKEN")
-    loaded_api_secret = load_kaggle_secret_into_env("SUPERVISOR_API_TOKEN")
+    # Load strictly separate Admin & Inference tokens from Kaggle Secrets (never printed/logged)
     if os.environ.get("WORKER_LOAD_GEMINI_SECRET", "false").strip().lower() == "true":
         load_kaggle_secret_into_env("GEMINI_API_KEY")
 
-    admin_token = os.environ.get("SUPERVISOR_ADMIN_TOKEN")
-    token_auto_generated = False
-    if not admin_token:
-        import secrets
-        admin_token = secrets.token_hex(16)
-        os.environ["SUPERVISOR_ADMIN_TOKEN"] = admin_token
-        token_auto_generated = True
-    if not os.environ.get("SUPERVISOR_API_TOKEN"):
-        os.environ["SUPERVISOR_API_TOKEN"] = admin_token
+    token_info = configure_runtime_tokens()
+    inference_token = os.environ["SUPERVISOR_API_TOKEN"]
+    token_auto_generated = bool(token_info["api_auto_generated"])
     os.environ.setdefault("PUBLIC_TUNNEL", "true")
 
     print("    ⚙️  Đang khởi động Master Gateway trên cổng 8000...")
@@ -540,7 +640,8 @@ def run():
     # -------------------------------------------------------------------------
     # 6. Beautiful Link Output Banner
     # -------------------------------------------------------------------------
-    display_token = admin_token if token_auto_generated else "<da nap tu Kaggle Secrets / env>"
+    display_token = inference_token if token_auto_generated else "<da nap tu Kaggle Secrets / env>"
+    active_git_sha = (os.environ.get("ACTIVE_GIT_COMMIT_SHA") or os.environ.get("GIT_COMMIT_SHA") or "unpinned").strip()
     print("\n" + "╔" + "═" * 76 + "╗")
     print("║  🚀 THÔNG TIN KẾT NỐI CHO MULTI-AGENT RAG (HÃY SAO CHÉP CÁC DÒNG DƯỚI)   ║")
     print("╠" + "═" * 76 + "╣")
@@ -552,12 +653,12 @@ def run():
     print("\n📌 HƯỚNG DẪN TIẾP THEO:")
     print(f"  1. Sao chép dòng: REMOTE_INFERENCE_URL={tunnel_url}")
     if token_auto_generated:
-        print(f"  2. Sao chép dòng: REMOTE_INFERENCE_TOKEN={admin_token}")
+        print(f"  2. Sao chép dòng: REMOTE_INFERENCE_TOKEN={inference_token} (chỉ dùng cho suy luận, tách riêng Admin token)")
     else:
-        print("  2. Dùng đúng SUPERVISOR_API_TOKEN (hoặc SUPERVISOR_ADMIN_TOKEN) đã đặt trong Kaggle Secrets cho REMOTE_INFERENCE_TOKEN.")
+        print("  2. Dùng đúng SUPERVISOR_API_TOKEN đã đặt trong Kaggle Secrets cho REMOTE_INFERENCE_TOKEN (không dùng Admin token).")
     print(f"  3. Dán vào file .env trên máy của bạn (hoặc dán trực tiếp trên Web Demo2).")
-    print(f"  4. Profile đang chạy: {worker_profile} trên Dual T4.")
-    print(f"  5. Muốn đổi sang Đại Mô Hình 32B AWQ: Chỉ cần 1-click trên Web Demo2!")
+    print(f"  4. Profile đang chạy: {worker_profile} ({worker_profile_raw}) | Git SHA: {active_git_sha}")
+    print(f"  5. Quyền Admin (/api/admin/*) dùng SUPERVISOR_ADMIN_TOKEN tách biệt hoàn toàn.")
     print("─" * 78)
     print("🟢 Máy chủ đang giữ kết nối... Vui lòng để ô code này tiếp tục chạy.\n")
 
