@@ -33,9 +33,15 @@ class RemoteDenseRetriever:
         self._cache: OrderedDict[str, np.ndarray] = OrderedDict()
         self._lock = threading.RLock()
 
+    ALLOWED_QWEN3_EMBEDDING_MODELS = frozenset({
+        "Qwen/Qwen3-Embedding-8B",
+        "Qwen/Qwen3-Embedding-4B",
+        "Qwen/Qwen3-Embedding-0.6B",
+    })
+
     def _embed(
         self, client: httpx.Client, url: str, model: str, texts: list[str], deadline: float,
-    ) -> tuple[str, np.ndarray]:
+    ) -> tuple[str, str, np.ndarray]:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise DenseRetrievalError("embedding_timeout")
@@ -59,7 +65,8 @@ class RemoteDenseRetriever:
 
         try:
             data = response.json()
-            if data["model"] != model:
+            worker_model = data["model"]
+            if worker_model != model and worker_model not in self.ALLOWED_QWEN3_EMBEDDING_MODELS:
                 raise DenseRetrievalError("embedding_model_mismatch")
             revision = data["revision"]
             if not isinstance(revision, str) or not re.fullmatch(r"[a-f0-9]{40}", revision):
@@ -77,7 +84,7 @@ class RemoteDenseRetriever:
                 raise ValueError("Invalid embedding norm")
         except (KeyError, ValueError, TypeError, OverflowError) as exc:
             raise DenseRetrievalError("invalid_embedding_response") from exc
-        return revision, vectors / norms
+        return str(worker_model), revision, vectors / norms
 
     def rank(
         self, query: str, passages: list[dict[str, Any]], *, top_k: int, client: httpx.Client,
@@ -90,8 +97,8 @@ class RemoteDenseRetriever:
 
         deadline = time.monotonic() + timeout
         url = url.rstrip("/")
-        revision, query_vectors = self._embed(client, url, model, [query.strip()[:self.MAX_TEXT_LENGTH]], deadline)
-        identity = (url, model, revision)
+        worker_model, revision, query_vectors = self._embed(client, url, model, [query.strip()[:self.MAX_TEXT_LENGTH]], deadline)
+        identity = (url, worker_model, revision)
 
         unique_texts = dict.fromkeys(text for _, text in candidates)
         # Serialize cache lookup + missing-passage embedding across parallel DAG branches so the same PDF
@@ -104,8 +111,8 @@ class RemoteDenseRetriever:
             missing_texts = [text for text in unique_texts if text not in vectors]
             for start in range(0, len(missing_texts), self.BATCH_SIZE):
                 batch = missing_texts[start:start + self.BATCH_SIZE]
-                batch_revision, batch_vectors = self._embed(client, url, model, batch, deadline)
-                if batch_revision != revision:
+                batch_model, batch_revision, batch_vectors = self._embed(client, url, model, batch, deadline)
+                if batch_revision != revision or batch_model != worker_model:
                     raise DenseRetrievalError("embedding_revision_changed")
                 vectors.update(zip(batch, batch_vectors, strict=True))
             for text, vector in vectors.items():

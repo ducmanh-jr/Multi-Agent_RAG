@@ -14,6 +14,13 @@ MAX_CANDIDATES = 15
 MAX_TEXT_LENGTH = 4096
 
 
+ALLOWED_QWEN3_RERANKER_MODELS = frozenset({
+    "Qwen/Qwen3-Reranker-8B",
+    "Qwen/Qwen3-Reranker-4B",
+    "Qwen/Qwen3-Reranker-0.6B",
+})
+
+
 class RerankError(RuntimeError):
     """The caller can keep the original retrieval ranking."""
 
@@ -43,7 +50,7 @@ def rerank_passages(
         raise RerankError(f"reranker_http_{response.status_code}")
     try:
         data = response.json()
-        if data["model"] != model:
+        if data["model"] != model and data["model"] not in ALLOWED_QWEN3_RERANKER_MODELS:
             raise RerankError("reranker_model_mismatch")
         revision, scores, indices = data["revision"], data["scores"], data["ranked_indices"]
         if not isinstance(revision, str) or not re.fullmatch(r"[a-f0-9]{40}", revision):

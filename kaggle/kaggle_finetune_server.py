@@ -51,7 +51,7 @@ _factcheck_model_name = "research-finetuned-nli"
 _factcheck_revision: str | None = None
 _embedding_revision: str | None = None
 _reranker_revision: str | None = None
-EMBEDDING_MODEL = "BAAI/bge-m3"
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
 EMBEDDING_REVISION = "89f985cb2fe1bfbb76fd16333196e4593a048dbd"
 EMBEDDING_DIMENSION = 1024
 EMBEDDING_MAX_TOKENS = 512
@@ -64,6 +64,33 @@ RERANKER_REVISIONS = {
 RERANKER_BATCH_SIZE = 4
 RERANKER_MAX_TOKENS = 512
 DEFAULT_HF_FACTCHECK_MODEL = "MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7"
+QWEN_RETRIEVAL_INSTRUCT = "Given a scientific research query, retrieve relevant passages that answer the query"
+
+
+def _active_embedding_model() -> str:
+    return (os.getenv("KAGGLE_EMBEDDING_MODEL") or os.getenv("EMBEDDING_MODEL") or EMBEDDING_MODEL).strip()
+
+
+def _active_reranker_model() -> str:
+    return (os.getenv("KAGGLE_RERANKER_MODEL") or os.getenv("RERANKER_MODEL") or RERANKER_MODEL).strip()
+
+
+def _is_qwen3_embedding(model_id: str) -> bool:
+    return "qwen3-embedding" in (model_id or "").lower()
+
+
+def _is_causal_llm_reranker(model_id: str) -> bool:
+    return "qwen3-reranker" in (model_id or "").lower()
+
+
+def _should_quantize_4bit(model_id: str, env_flag: str) -> bool:
+    raw = os.getenv(env_flag, "").strip().lower()
+    if raw in ("true", "1", "yes"):
+        return True
+    if raw in ("false", "0", "no"):
+        return False
+    low = (model_id or "").lower()
+    return any(sz in low for sz in ("-4b", "-8b", "-14b"))
 
 
 def find_weight_path(sub_path: str) -> Optional[str]:
@@ -332,11 +359,15 @@ def load_factcheck_model():
             return None, None
 
         for source_id, is_local_dir in candidates:
-            print(f"[Worker] Loading Agent 4 Fact-Checker NLI Head from {source_id} on cuda:1...")
+            has_cuda = bool(getattr(torch, "cuda", None) and torch.cuda.is_available())
+            gpu_cnt = torch.cuda.device_count() if has_cuda else 0
+            # When GPU 1 hosts heavy 8B+8B Qwen3 Embedding & Reranker, place lightweight NLI on GPU 0 alongside Qwen3-14B
+            heavy_gpu1_retrieval = _is_qwen3_embedding(_active_embedding_model()) and "8b" in _active_embedding_model().lower()
+            default_fc_gpu = 0 if (gpu_cnt >= 2 and heavy_gpu1_retrieval) else (1 if gpu_cnt >= 2 else 0)
+            target_device = int(os.getenv("FACTCHECK_GPU_INDEX", str(default_fc_gpu))) if gpu_cnt >= 1 else 0
+            print(f"[Worker] Loading Agent 4 Fact-Checker NLI Head from {source_id} on cuda:{target_device}...")
             try:
                 from transformers import AutoModelForSequenceClassification, AutoTokenizer
-                target_device = 1 if torch.cuda.device_count() >= 2 else 0
-                has_cuda = bool(getattr(torch, "cuda", None) and torch.cuda.is_available())
                 dtype = torch.float16 if has_cuda else getattr(torch, "float32", torch.float16)
                 rev_kwargs: dict[str, Any] = {}
                 if not is_local_dir:
@@ -881,26 +912,74 @@ def writer_endpoint(req: WriterRequest, response: Response = None):
 
 
 def load_reranker_model():
-    """Lazily load the pinned cross-encoder on the retrieval device."""
+    """Lazily load Cross-Encoder or Causal-LLM Reranker (`Qwen3-Reranker-8B/4B/0.6B` or `BAAI/bge-reranker-v2-m3`) on GPU 1."""
     global _reranker_revision
     if "reranker" in _models:
         return _models["reranker"], _tokenizers["reranker"], _reranker_revision
 
+    active_model = _active_reranker_model()
+    gpu_count = torch.cuda.device_count() if getattr(torch, "cuda", None) and torch.cuda.is_available() else 0
+    target_gpu = int(os.getenv("RERANKER_GPU_INDEX", str(1 if gpu_count >= 2 else 0))) if gpu_count else 0
+    device = f"cuda:{target_gpu}" if gpu_count else "cpu"
+    dtype = torch.float16 if gpu_count else torch.float32
+
+    if _is_causal_llm_reranker(active_model):
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+
+        revision = os.getenv("RERANKER_REVISION") or _hub_revision(active_model) or hashlib.sha256(active_model.encode("utf-8")).hexdigest()
+        if not re.fullmatch(r"[a-f0-9]{40}", revision):
+            raise ValueError("Reranker revision must be a full commit SHA")
+        rev_kw = {"revision": revision} if os.getenv("RERANKER_REVISION") or _hub_revision(active_model) else {}
+        use_4bit = bool(gpu_count and _should_quantize_4bit(active_model, "RERANKER_4BIT"))
+        bnb_cfg = get_bnb_config() if use_4bit else None
+        print(f"[Worker] Loading Qwen3 Causal Reranker '{active_model}' on {device} (4bit={use_4bit})...")
+        tokenizer = AutoTokenizer.from_pretrained(active_model, padding_side="left", trust_remote_code=True, **rev_kw)
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+        if bnb_cfg is not None:
+            model = AutoModelForCausalLM.from_pretrained(
+                active_model,
+                quantization_config=bnb_cfg,
+                device_map={"": target_gpu},
+                torch_dtype=dtype,
+                trust_remote_code=True,
+                **rev_kw,
+            )
+        else:
+            model = AutoModelForCausalLM.from_pretrained(
+                active_model, torch_dtype=dtype, trust_remote_code=True, **rev_kw
+            ).to(device)
+
+        skip_lora = os.getenv("SKIP_DRIVE_LORA_BUNDLE", "false").strip().lower() in ("true", "1", "yes")
+        lora_dir = None if skip_lora else (find_weight_path("07_reranker_qwen3") or find_weight_path("07_reranker_lora"))
+        if lora_dir and os.path.isdir(lora_dir):
+            try:
+                from peft import PeftModel
+                model = PeftModel.from_pretrained(model, lora_dir)
+                print(f"[Worker] Attached fine-tuned Reranker LoRA from {lora_dir}")
+            except Exception as exc:
+                print(f"[Worker WARNING] Skipping Reranker LoRA ({exc})")
+
+        model.eval()
+        model._qwen_yes_id = tokenizer.convert_tokens_to_ids("yes")
+        model._qwen_no_id = tokenizer.convert_tokens_to_ids("no")
+        _models["reranker"] = model
+        _tokenizers["reranker"] = tokenizer
+        _reranker_revision = revision
+        return model, tokenizer, revision
+
     from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
-    if RERANKER_MODEL not in RERANKER_REVISIONS:
+    if active_model not in RERANKER_REVISIONS:
         raise ValueError("Unsupported reranker model")
     revision = os.getenv("RERANKER_REVISION") or (
-        os.getenv("BGE_RERANKER_REVISION") if RERANKER_MODEL == DEFAULT_RERANKER_MODEL else None
-    ) or RERANKER_REVISIONS[RERANKER_MODEL]
+        os.getenv("BGE_RERANKER_REVISION") if active_model == DEFAULT_RERANKER_MODEL else None
+    ) or RERANKER_REVISIONS[active_model]
     if not re.fullmatch(r"[a-f0-9]{40}", revision):
         raise ValueError("Reranker revision must be a full commit SHA")
-    gpu_count = torch.cuda.device_count()
-    device = f"cuda:{1 if gpu_count >= 2 else 0}" if gpu_count else "cpu"
-    dtype = torch.float16 if gpu_count else torch.float32
-    tokenizer = AutoTokenizer.from_pretrained(RERANKER_MODEL, revision=revision)
+    tokenizer = AutoTokenizer.from_pretrained(active_model, revision=revision)
     model = AutoModelForSequenceClassification.from_pretrained(
-        RERANKER_MODEL, revision=revision, torch_dtype=dtype, use_safetensors=True,
+        active_model, revision=revision, torch_dtype=dtype, use_safetensors=True,
     ).to(device)
     if model.config.num_labels != 1:
         raise ValueError("Reranker checkpoint must emit one relevance logit per pair")
@@ -912,8 +991,44 @@ def load_reranker_model():
 
 
 def score_candidate_pairs(model, tokenizer, query: str, candidates: list[str]) -> tuple[list[float], int]:
-    scores = []
+    scores: list[float] = []
     prompt_tokens = 0
+    yes_id = getattr(model, "_qwen_yes_id", None)
+    no_id = getattr(model, "_qwen_no_id", None)
+
+    if yes_id is not None and no_id is not None:
+        prefix = (
+            '<|im_start|>system\nJudge whether the Document meets the requirements based on the Query and the '
+            'Instruct provided. Note that the answer can only be "yes" or "no".<|im_end|>\n<|im_start|>user\n'
+        )
+        suffix = "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
+        prefix_ids = tokenizer.encode(prefix, add_special_tokens=False)
+        suffix_ids = tokenizer.encode(suffix, add_special_tokens=False)
+        max_body = max(128, RERANKER_MAX_TOKENS - len(prefix_ids) - len(suffix_ids))
+        qwen_bs = max(1, int(os.getenv("QWEN_RERANK_BATCH_SIZE", "2")))
+
+        with torch.inference_mode():
+            for start in range(0, len(candidates), qwen_bs):
+                batch = candidates[start : start + qwen_bs]
+                pair_ids = []
+                for doc in batch:
+                    body = f"<Instruct>: {QWEN_RETRIEVAL_INSTRUCT}\n<Query>: {query}\n<Document>: {doc}"
+                    body_ids = tokenizer.encode(body, add_special_tokens=False)[:max_body]
+                    pair_ids.append(prefix_ids + body_ids + suffix_ids)
+                padded = tokenizer.pad(
+                    {"input_ids": pair_ids},
+                    padding=True,
+                    return_tensors="pt",
+                ).to(model.device)
+                prompt_tokens += int(padded["attention_mask"].sum().item())
+                logits = model(**padded).logits[:, -1, :]
+                true_vec = logits[:, yes_id].float()
+                false_vec = logits[:, no_id].float()
+                stacked = torch.stack([false_vec, true_vec], dim=1)
+                probs = torch.nn.functional.log_softmax(stacked, dim=1)[:, 1].exp()
+                scores.extend(probs.cpu().tolist())
+        return scores, prompt_tokens
+
     with torch.inference_mode():
         for start in range(0, len(candidates), RERANKER_BATCH_SIZE):
             batch = candidates[start:start + RERANKER_BATCH_SIZE]
@@ -931,6 +1046,7 @@ def score_candidate_pairs(model, tokenizer, query: str, candidates: list[str]) -
 
 @app.post("/api/rerank")
 def rerank_endpoint(req: RerankRequest, response: Response = None):
+    active_model = _active_reranker_model()
     try:
         with _retrieval_model_lock:
             model, tokenizer, revision = load_reranker_model()
@@ -942,26 +1058,83 @@ def rerank_endpoint(req: RerankRequest, response: Response = None):
         raise HTTPException(503, detail="Cross-encoder reranker unavailable") from exc
     ranked = sorted(range(len(scores)), key=scores.__getitem__, reverse=True)
     _token_headers(response, prompt_tokens)
-    return {"model": RERANKER_MODEL, "revision": revision, "scores": scores, "ranked_indices": ranked}
+    return {"model": active_model, "revision": revision, "scores": scores, "ranked_indices": ranked}
+
+
+def _last_token_pool(last_hidden_states: Any, attention_mask: Any) -> Any:
+    left_padding = bool((attention_mask[:, -1].sum() == attention_mask.shape[0]).item())
+    if left_padding:
+        return last_hidden_states[:, -1]
+    seq_lens = attention_mask.sum(dim=1) - 1
+    batch_idx = torch.arange(last_hidden_states.shape[0], device=last_hidden_states.device)
+    return last_hidden_states[batch_idx, seq_lens]
 
 
 def load_embedding_model():
-    """Load a pinned dense encoder on the second GPU when available."""
+    """Load Dense Encoder (`Qwen3-Embedding-8B/4B/0.6B` with MRL-1024 or `BAAI/bge-m3`) on GPU 1."""
     global _embedding_revision
     if "embedding" in _models:
         return _models["embedding"], _tokenizers["embedding"], _embedding_revision
 
     from transformers import AutoModel, AutoTokenizer
 
+    active_model = _active_embedding_model()
+    gpu_count = torch.cuda.device_count() if getattr(torch, "cuda", None) and torch.cuda.is_available() else 0
+    target_gpu = int(os.getenv("EMBEDDING_GPU_INDEX", str(1 if gpu_count >= 2 else 0))) if gpu_count else 0
+    device = f"cuda:{target_gpu}" if gpu_count else "cpu"
+    dtype = torch.float16 if gpu_count else torch.float32
+
+    if _is_qwen3_embedding(active_model):
+        revision = os.getenv("EMBEDDING_REVISION") or _hub_revision(active_model) or hashlib.sha256(active_model.encode("utf-8")).hexdigest()
+        if not re.fullmatch(r"[a-f0-9]{40}", revision):
+            raise ValueError("EMBEDDING_REVISION must be a full commit SHA")
+        rev_kw = {"revision": revision} if os.getenv("EMBEDDING_REVISION") or _hub_revision(active_model) else {}
+        use_4bit = bool(gpu_count and _should_quantize_4bit(active_model, "EMBEDDING_4BIT"))
+        bnb_cfg = get_bnb_config() if use_4bit else None
+        print(f"[Worker] Loading Qwen3 Dense Embedding '{active_model}' on {device} (4bit={use_4bit}, MRL={EMBEDDING_DIMENSION}d)...")
+        tokenizer = AutoTokenizer.from_pretrained(active_model, padding_side="left", trust_remote_code=True, **rev_kw)
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+        if bnb_cfg is not None:
+            model = AutoModel.from_pretrained(
+                active_model,
+                quantization_config=bnb_cfg,
+                device_map={"": target_gpu},
+                torch_dtype=dtype,
+                trust_remote_code=True,
+                **rev_kw,
+            )
+        else:
+            model = AutoModel.from_pretrained(
+                active_model, torch_dtype=dtype, trust_remote_code=True, **rev_kw
+            ).to(device)
+
+        if int(getattr(model.config, "hidden_size", 0)) < EMBEDDING_DIMENSION:
+            raise ValueError("Embedding hidden_size smaller than required Matryoshka dimension")
+
+        skip_lora = os.getenv("SKIP_DRIVE_LORA_BUNDLE", "false").strip().lower() in ("true", "1", "yes")
+        lora_dir = None if skip_lora else (find_weight_path("06_embedding_qwen3") or find_weight_path("06_embedding_lora"))
+        if lora_dir and os.path.isdir(lora_dir):
+            try:
+                from peft import PeftModel
+                model = PeftModel.from_pretrained(model, lora_dir)
+                print(f"[Worker] Attached fine-tuned Embedding LoRA from {lora_dir}")
+            except Exception as exc:
+                print(f"[Worker WARNING] Skipping Embedding LoRA ({exc})")
+
+        model.eval()
+        model._is_qwen3_embedding = True
+        _models["embedding"] = model
+        _tokenizers["embedding"] = tokenizer
+        _embedding_revision = revision
+        return model, tokenizer, revision
+
     revision = os.getenv("BGE_M3_REVISION", EMBEDDING_REVISION)
     if not re.fullmatch(r"[a-f0-9]{40}", revision):
         raise ValueError("BGE_M3_REVISION must be a full commit SHA")
-    gpu_count = torch.cuda.device_count()
-    device = f"cuda:{1 if gpu_count >= 2 else 0}" if gpu_count else "cpu"
-    dtype = torch.float16 if gpu_count else torch.float32
-    tokenizer = AutoTokenizer.from_pretrained(EMBEDDING_MODEL, revision=revision)
+    tokenizer = AutoTokenizer.from_pretrained(active_model, revision=revision)
     model = AutoModel.from_pretrained(
-        EMBEDDING_MODEL, revision=revision, torch_dtype=dtype, use_safetensors=True,
+        active_model, revision=revision, torch_dtype=dtype, use_safetensors=True,
     ).to(device)
     if model.config.hidden_size != EMBEDDING_DIMENSION:
         raise ValueError("Unexpected BGE-M3 embedding dimension")
@@ -973,6 +1146,31 @@ def load_embedding_model():
 
 
 def encode_dense_embeddings(model, tokenizer, texts: list[str]) -> tuple[list[list[float]], int]:
+    if getattr(model, "_is_qwen3_embedding", False):
+        # Single short input corresponds to a query in RemoteDenseRetriever.rank(); passages arrive in batches or full chunks
+        if len(texts) == 1 and len(texts[0]) <= 360 and "\n|" not in texts[0]:
+            prepared = [f"Instruct: {QWEN_RETRIEVAL_INSTRUCT}\nQuery:{texts[0]}"]
+        else:
+            prepared = list(texts)
+
+        emb_bs = max(1, int(os.getenv("EMBEDDING_BATCH_SIZE", "4")))
+        all_vecs: list[list[float]] = []
+        total_tokens = 0
+        with torch.inference_mode():
+            for start in range(0, len(prepared), emb_bs):
+                sub = prepared[start : start + emb_bs]
+                inputs = tokenizer(
+                    sub, padding=True, truncation=True, max_length=EMBEDDING_MAX_TOKENS, return_tensors="pt",
+                ).to(model.device)
+                total_tokens += int(inputs["attention_mask"].sum().item())
+                hidden = model(**inputs).last_hidden_state
+                pooled = _last_token_pool(hidden, inputs["attention_mask"])[:, :EMBEDDING_DIMENSION].float()
+                normed = torch.nn.functional.normalize(pooled, p=2, dim=1)
+                if not torch.isfinite(normed).all() or (normed.norm(dim=1) == 0).any():
+                    raise ValueError("Invalid Qwen3-Embedding output")
+                all_vecs.extend(normed.cpu().tolist())
+        return all_vecs, total_tokens
+
     inputs = tokenizer(
         texts, padding=True, truncation=True, max_length=EMBEDDING_MAX_TOKENS, return_tensors="pt",
     ).to(model.device)
@@ -986,15 +1184,16 @@ def encode_dense_embeddings(model, tokenizer, texts: list[str]) -> tuple[list[li
 
 @app.post("/api/embed")
 def embed_endpoint(req: EmbedRequest, response: Response = None):
+    active_model = _active_embedding_model()
     try:
         with _retrieval_model_lock:
             model, tokenizer, revision = load_embedding_model()
             embeddings, prompt_tokens = encode_dense_embeddings(model, tokenizer, req.texts)
     except Exception as exc:
-        print(f"[Worker ERROR] BGE-M3 unavailable: {type(exc).__name__}: {exc}")
-        raise HTTPException(503, detail="BGE-M3 embedding unavailable") from exc
+        print(f"[Worker ERROR] Dense embedding unavailable ({active_model}): {type(exc).__name__}: {exc}")
+        raise HTTPException(503, detail="Dense embedding unavailable") from exc
     _token_headers(response, prompt_tokens)
-    return {"model": EMBEDDING_MODEL, "revision": revision, "embeddings": embeddings}
+    return {"model": active_model, "revision": revision, "embeddings": embeddings}
 
 
 @app.post("/generate")
