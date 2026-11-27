@@ -48,10 +48,11 @@ class GPUFinetuneSummarizerAgent(BaseAgent):
         )
 
         clean_q = query.strip()
-        is_ood, ood_reason = check_out_of_domain(clean_q, source_units)
+        effective_q = str(state.get("resolved_query") or clean_q).strip() or clean_q
+        is_ood, ood_reason = check_out_of_domain(effective_q, source_units)
         if is_ood:
             self.logger.info(f"[GPU Finetune Summarizer] Zero-Hallucination Guard triggered: {ood_reason}")
-            res = build_out_of_domain_response(clean_q, model_family="gpu_finetune_guard")
+            res = build_out_of_domain_response(clean_q, model_family="gpu_finetune_guard", answer_language=state.get("answer_language"))
             trace = self.log_action("gpu_finetune_summarization_completed", {"status": "out_of_domain", "reason": ood_reason})
             res["reasoning_trace"] = [trace]
             return res
@@ -68,13 +69,14 @@ class GPUFinetuneSummarizerAgent(BaseAgent):
         critic_action = "lower_confidence"
         critique_text = ""
         critic_out = None
+        gen_status: str | None = None
 
         while internal_attempts <= self.max_internal_retry:
             internal_attempts += 1
 
             # 1. Generator Pass: Call Remote fine-tuned Generator QLoRA
             feedback = "\n\n".join(part for part in (revision, last_critic_feedback) if part)
-            gen_prompt = f"User Question: {clean_q}\n\n"
+            gen_prompt = f"User Question: {effective_q}\n\n"
             if feedback:
                 gen_prompt += f"[Previous Critic Feedback to Address]:\n{feedback}\n\n"
             gen_prompt += f"Context:\n{context_str}\n\n"
@@ -82,13 +84,16 @@ class GPUFinetuneSummarizerAgent(BaseAgent):
             try:
                 gen_dict = llm_client.call_kaggle_specialist(
                     endpoint="api/summarize/generator",
-                    payload={"query": clean_q, "context": context_str, "feedback": feedback, "adapter": "generator"},
+                    payload={"query": effective_q, "context": context_str, "feedback": feedback, "adapter": "generator"},
                     fallback_prompt=gen_prompt,
                     fallback_system=TRAINING_LAB_GENERATOR_SYSTEM_PROMPT,
                     adapter="generator",
                     timeout=float(self.settings.REMOTE_TIMEOUT_SECONDS or 90.0),
                 )
-                gen_out = SummarizerGeneratorOutput.from_dict(gen_dict, default_query=clean_q)
+                raw_status = str(gen_dict.get("answer_status") or "").strip().upper() if isinstance(gen_dict, dict) else ""
+                if raw_status in {"NOT_FOUND_IN_DOCUMENT", "INSUFFICIENT_EVIDENCE", "CLARIFICATION_NEEDED"}:
+                    gen_status = raw_status
+                gen_out = SummarizerGeneratorOutput.from_dict(gen_dict, default_query=effective_q)
                 current_answer = gen_out.answer
                 current_claims = gen_out.claims
                 current_spans_raw = gen_out.evidence_spans
@@ -96,6 +101,22 @@ class GPUFinetuneSummarizerAgent(BaseAgent):
                 self.logger.warning(f"[GPU Finetune Summarizer] Remote generator fallback to local: {e}")
                 result = self.cpu_engine.run(state)
                 return {**result, "generator_model_family": "gpu_finetune_cpu_fallback"}
+
+            if gen_status in {"NOT_FOUND_IN_DOCUMENT", "INSUFFICIENT_EVIDENCE", "CLARIFICATION_NEEDED"} and current_answer:
+                trace = self.log_action(
+                    "gpu_finetune_summarization_completed",
+                    {"attempts": internal_attempts, "critic_action": "request_more_context", "status": gen_status, "claims_count": 0},
+                )
+                return {
+                    "answer": current_answer,
+                    "answer_status": gen_status,
+                    "claims": [],
+                    "evidence_spans": [],
+                    "critic_action": "request_more_context" if gen_status != "CLARIFICATION_NEEDED" else "lower_confidence",
+                    "critic_feedback": {"action": "request_more_context", "missing_key_points": [clean_q]},
+                    "generator_model_family": "gpu_finetune_dual_qlora",
+                    "reasoning_trace": [trace],
+                }
 
             refined_spans = bind_evidence_spans(current_spans_raw, included)
             claims = bind_summary_claims(current_claims or [s["quote"] for s in refined_spans], refined_spans)

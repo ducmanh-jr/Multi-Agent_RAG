@@ -95,7 +95,7 @@ class GPUFinetuneWriterAgent(BaseAgent):
         final_report, report_data = build_academic_report(
             query=query, verified_claims=verified_claims, rejected_claims=rejected_claims,
             retrieved_docs=retrieved_docs, answer=answer, answer_status=state.get("answer_status"),
-            evidence_spans=evidence_spans,
+            evidence_spans=evidence_spans, answer_language=state.get("answer_language"),
         )
         report_data["engine"] = engine
         trace = self.log_action("gpu_finetune_report_written", {"length": len(final_report), "model": engine})

@@ -21,15 +21,23 @@ from typing import Any
 
 from agents.agent1_retrieval.tools.bm25 import SimpleBM25
 from core.base_agent import BaseAgent
+from core.claim_semantics import (
+    extract_entity_quantity_bindings,
+    has_clause_negation,
+    strip_html_tags_preserve_math,
+    verify_derived_claim,
+)
 from core.handoff_inputs import focus_matches, revision_terms
 from core.state import AgentState, AtomicClaim, EvidenceSpan
 from core.verifier import evaluate_inner_critic_fast
+from utils.bilingual import expand_bilingual_tokens
 from utils.domain_guard import (
     check_out_of_domain,
     build_out_of_domain_response,
     _has_phrase,
     strip_accents,
 )
+from utils.language import detect_language, has_vietnamese_diacritics, normalize_language_code
 
 
 def strip_accents(text: str) -> str:
@@ -47,6 +55,10 @@ VIETNAMESE_STOP_WORDS = {
     "đâu", "đến", "từ", "lại", "đã", "đang", "sẽ", "các", "những", "một", "số", "về",
     "trong", "để", "bởi", "thì", "mà", "nhất", "nhì", "này", "đó", "kia", "hãy",
     "biết", "hỏi", "thông", "tin", "chi", "tiết", "tại", "sao",
+    # English function words so English queries rank content tokens (e.g. 'water', 'drip') over 'the'/'was'
+    "the", "was", "were", "are", "is", "be", "been", "what", "which", "where", "when",
+    "who", "how", "many", "much", "did", "does", "for", "with", "from", "into", "that",
+    "this", "these", "those", "and", "in", "on", "of", "to", "by", "at", "an",
 }
 
 
@@ -54,9 +66,8 @@ def clean_vietnamese_text(text: str) -> str:
     """Thoroughly cleans PDF extract artifacts, HTML line breaks, stuck words, and punctuation."""
     if not text:
         return ""
-    # 1. Replace HTML line breaks and tags
-    s = re.sub(r"<br\s*/?>", " ", text, flags=re.I)
-    s = re.sub(r"<[^>]+>", " ", s)
+    # 1. Replace HTML line breaks and tags safely without stripping math inequalities like 'x < 3 and y > 2'
+    s = strip_html_tags_preserve_math(text)
 
     # 2. Fix markdown underscores in words (e.g. _Báo Thủ đô_ -> Báo Thủ đô), PRESERVING snake_case and LaTeX subscripts like L_{total}
     s = re.sub(r"(?<![A-Za-z0-9\\}])_+(?![{A-Za-z0-9])", "", s)
@@ -118,6 +129,15 @@ def extract_clean_sentences(text: str) -> list[str]:
     for l in lines:
         if not l:
             continue
+        # Keep Markdown table rows intact as standalone lines (skip separator rows like | --- | --- |)
+        if l.startswith("|") and l.endswith("|"):
+            if re.match(r"^[\s|:\-]+$", l):
+                continue
+            unwrapped.append(l)
+            continue
+        if unwrapped and unwrapped[-1].startswith("|") and unwrapped[-1].endswith("|"):
+            unwrapped.append(l)
+            continue
         if unwrapped and (
             brace_depth > 0
             or unwrapped[-1][-1] not in ".!?;\"”}"
@@ -160,23 +180,28 @@ def extract_clean_sentences(text: str) -> list[str]:
     }
 
     for s in raw_sentences:
-        s_clean = clean_vietnamese_text(s)
-        # Strip leading photo / source / caption metadata e.g. (Ảnh: ...)
-        s_clean = re.sub(
-            r"^[\(\[\{][^\)\]\}]*(?:Ảnh|Nguồn|TTXVN|PV|Tư liệu|Theo)[^\)\]\}]*[\)\]\}]\s*",
-            "",
-            s_clean,
-        )
-        s_clean = s_clean.strip()
+        s_raw_strip = s.strip()
+        if s_raw_strip.startswith("|") and s_raw_strip.endswith("|") and s_raw_strip.count("|") >= 3:
+            s_clean = re.sub(r"\s+", " ", s_raw_strip).strip()
+        else:
+            s_clean = clean_vietnamese_text(s)
+            # Strip leading photo / source / caption metadata e.g. (Ảnh: ...)
+            s_clean = re.sub(
+                r"^[\(\[\{][^\)\]\}]*(?:Ảnh|Nguồn|TTXVN|PV|Tư liệu|Theo)[^\)\]\}]*[\)\]\}]\s*",
+                "",
+                s_clean,
+            )
+            s_clean = s_clean.strip()
         is_eq_line = any(op in s_clean for op in ("=", "≈", "≤", "≥", "∑", "∫", "√", "softmax("))
+        is_table_row = s_clean.startswith("|") and s_clean.endswith("|") and s_clean.count("|") >= 3
 
-        if len(s_clean) < 20 and not (is_eq_line and len(s_clean) >= 5):
+        if len(s_clean) < 20 and not (is_eq_line and len(s_clean) >= 5) and not is_table_row:
             continue
         if s_clean.startswith("#") or s_clean.startswith("---"):
             continue
-        # Filter table artifacts and metadata banners
-        if re.match(
-            r"^\*{0,2}(?:Task|Người thực hiện|Ước lượng|Point|Bảng|STT|Tác giả|Năm xuất bản|Nguồn công bố|Liên kết|Quyền riêng tư|Ảnh:|Theo tư liệu)\b",
+        # Filter table artifacts and metadata banners (preserve numbered data table captions like 'Bảng 1: ...')
+        if not is_table_row and re.match(
+            r"^\*{0,2}(?:Task|Người thực hiện|Ước lượng|Point|STT|Tác giả|Năm xuất bản|Nguồn công bố|Liên kết|Quyền riêng tư|Ảnh:|Theo tư liệu)\b",
             s_clean,
             re.I,
         ):
@@ -194,10 +219,11 @@ def extract_clean_sentences(text: str) -> list[str]:
             continue
         if re.search(r"\b(?:Journal of|Trường Đại học|Khoa Công nghệ|Tác giả liên hệ|Corresponding author|ISSN|ISBN)\b", s_clean, re.I):
             continue
-        # Allow technical lines, code blocks, mathematical equations, semicolon configurations and standard punctuation
-        valid_endings = ('.', '!', '?', ':', ';', '}', '{', ')', ']', '"', '”', '`', '$')
+        # Allow technical lines, code blocks, mathematical equations, Markdown table rows, and standard punctuation
+        valid_endings = ('.', '!', '?', ':', ';', '}', '{', ')', ']', '"', '”', '`', '$', '|')
         if (
             not is_eq_line
+            and not is_table_row
             and s_clean[-1] not in valid_endings
             and not re.search(
                 r"\b(?:nginx|systemctl|curl|docker|openssl|certbot|server|upstream|proxy_pass)\b",
@@ -211,7 +237,9 @@ def extract_clean_sentences(text: str) -> list[str]:
         if words and words[-1].lower() in dangling_words:
             continue
         is_valid_start = (
-            s_clean[0].isupper()
+            is_table_row
+            or is_eq_line
+            or s_clean[0].isupper()
             or s_clean[0].isdigit()
             or s_clean[0] in '"“\'[('
             or ":" in s_clean
@@ -240,6 +268,17 @@ def build_contextual_passage(sents: list[str], idx_s: int, max_chars: int = 620,
     if not sents or idx_s < 0 or idx_s >= len(sents):
         return "", []
     base = sents[idx_s].strip()
+    if base.startswith("|") and base.endswith("|"):
+        # Preserve Markdown table row integrity: attach header row if present, never merge unrelated rows
+        header_row = ""
+        for h_idx in range(idx_s - 1, -1, -1):
+            cand_h = sents[h_idx].strip()
+            if not (cand_h.startswith("|") and cand_h.endswith("|")):
+                break
+            header_row = cand_h
+        if header_row and header_row != base:
+            return f"{header_row}\n{base}", [idx_s]
+        return base, [idx_s]
     consumed = [idx_s]
     parts = [base]
     total_len = len(base)
@@ -291,7 +330,7 @@ def extract_topic_heading(text: str, fallback_idx: int = 1) -> tuple[str, str]:
     # Clean leading section numbers e.g. "2.4. Upstream..." -> "Upstream..."
     s = re.sub(r"^(?:\d+(?:\.\d+)*\.?\s*)", "", s).strip()
 
-    # Check for explicit 'Label: Body' or 'Label — Body' within first 75 chars (excluding URLs/ports)
+    # Check for explicit 'Label: Body' or 'Label — Body' within first 75 chars (excluding URLs/ports and negated matrix clauses)
     m_colon = re.match(r"^([^:]{3,72}?)\s*:\s+(.+)$", s, flags=re.DOTALL)
     if m_colon:
         label = m_colon.group(1).strip().strip("*_")
@@ -302,6 +341,7 @@ def extract_topic_heading(text: str, fallback_idx: int = 1) -> tuple[str, str]:
             not label.lower().startswith(("http", "https"))
             and "{" not in label
             and ";" not in label
+            and not has_clause_negation(label)
             and len(label.split()) <= 12
             and len(body) >= 15
         ):
@@ -506,19 +546,131 @@ class CPUMinSummarizerAgent(BaseAgent):
 
         self.logger.info(f"[CPU Summarizer] Synthesizing comprehensive answer for query: '{clean_q}' ({len(source_units)} units)")
 
+        ans_lang = normalize_language_code(state.get("answer_language")) or detect_language(clean_q, default="vi")
         is_ood, ood_reason = check_out_of_domain(clean_q, source_units)
         if is_ood:
             self.logger.info(f"[CPU Summarizer] Zero-Hallucination Guard triggered: {ood_reason}")
-            res = build_out_of_domain_response(clean_q, model_family="cpu_min_guard")
+            res = build_out_of_domain_response(clean_q, model_family="cpu_min_guard", answer_language=ans_lang)
             trace = self.log_action("cpu_min_summarization_completed", {"status": "out_of_domain", "reason": ood_reason})
             res["reasoning_trace"] = [trace]
             return res
 
         # Kịch bản 2: Khi kho tài liệu không có văn bản nào được tải
         if not source_units:
-            res = build_out_of_domain_response(clean_q, model_family="cpu_min_extractive")
+            res = build_out_of_domain_response(clean_q, model_family="cpu_min_extractive", answer_language=ans_lang)
             res["reasoning_trace"] = [self.log_action("cpu_min_summarization_completed", {"status": "out_of_domain"})]
             return res
+
+        # 0b. Deterministic Derived Percentage-Point / Difference Synthesis (when user asks comparative difference)
+        is_pp_diff_q = bool(
+            re.search(
+                r"(?:bao\s+nhiêu\s+điểm\s+phần\s+trăm|bao\s+nhieu\s+diem\s+phan\s+tram|"
+                r"chênh\s+lệch\s+bao\s+nhiêu\s+điểm\s+phần\s+trăm|how\s+many\s+percentage\s+points?)",
+                clean_q,
+                re.IGNORECASE,
+            )
+        )
+        if is_pp_diff_q:
+            all_bindings: list[tuple[dict[str, Any], dict[str, Any]]] = []
+            for u in source_units:
+                for b in extract_entity_quantity_bindings(str(u.get("text") or ""), source_id=str(u.get("id") or "doc_1")):
+                    if b["unit"] == "%":
+                        all_bindings.append((b, u))
+            # Match two distinct entities mentioned in the query sharing the same evaluation split
+            q_low = clean_q.lower()
+            matched_b = [
+                (b, u)
+                for b, u in all_bindings
+                if re.search(rf"(?<!\w){re.escape(b['entity_key'])}(?!\w)", q_low)
+            ]
+            if len(matched_b) >= 2:
+                chosen_pair = None
+                for i in range(len(matched_b)):
+                    for j in range(i + 1, len(matched_b)):
+                        b1, u1 = matched_b[i]
+                        b2, u2 = matched_b[j]
+                        if b1["entity_key"] != b2["entity_key"] and b1["split"] == b2["split"]:
+                            chosen_pair = ((b1, u1), (b2, u2))
+                            break
+                    if chosen_pair:
+                        break
+                if chosen_pair is not None:
+                    (b1, u1), (b2, u2) = chosen_pair
+                    (hi_b, hi_u), (lo_b, lo_u) = ((b1, u1), (b2, u2)) if b1["value"] >= b2["value"] else ((b2, u2), (b1, u1))
+                    diff_val = round(hi_b["value"] - lo_b["value"], 4)
+                    diff_str = str(int(diff_val)) if float(diff_val).is_integer() else f"{diff_val:g}"
+                    hi_val_str = str(int(hi_b["value"])) if float(hi_b["value"]).is_integer() else f"{hi_b['value']:g}"
+                    lo_val_str = str(int(lo_b["value"])) if float(lo_b["value"]).is_integer() else f"{lo_b['value']:g}"
+                    if ans_lang == "en":
+                        claim_txt = (
+                            f"{hi_b['entity']} exceeds {lo_b['entity']} by {diff_str} percentage points "
+                            f"({hi_val_str}% vs {lo_val_str}%)."
+                        )
+                    else:
+                        claim_txt = (
+                            f"{hi_b['entity']} cao hơn {lo_b['entity']} {diff_str} điểm phần trăm "
+                            f"({hi_val_str}% so với {lo_val_str}%)."
+                        )
+                    deriv_spec = {
+                        "op": "diff_pp",
+                        "result": diff_val,
+                        "unit": "pp",
+                        "operands": [
+                            {
+                                "entity": hi_b["entity"],
+                                "split": hi_b["split"],
+                                "value": hi_b["value"],
+                                "unit": "%",
+                                "evidence_id": "ev_1",
+                            },
+                            {
+                                "entity": lo_b["entity"],
+                                "split": lo_b["split"],
+                                "value": lo_b["value"],
+                                "unit": "%",
+                                "evidence_id": "ev_1" if lo_u.get("id") == hi_u.get("id") else "ev_2",
+                            },
+                        ],
+                    }
+                    spans_out = [
+                        EvidenceSpan(
+                            id="ev_1",
+                            quote=str(hi_u.get("text") or "")[:500],
+                            source_unit_id=str(hi_u.get("id") or "doc_1"),
+                            doc_id=str(hi_u.get("doc_id") or "doc"),
+                            page_no=int(hi_u.get("page_no", 1)),
+                        ).to_dict()
+                    ]
+                    ev_ids = ["ev_1"]
+                    if lo_u.get("id") != hi_u.get("id"):
+                        spans_out.append(
+                            EvidenceSpan(
+                                id="ev_2",
+                                quote=str(lo_u.get("text") or "")[:500],
+                                source_unit_id=str(lo_u.get("id") or "doc_2"),
+                                doc_id=str(lo_u.get("doc_id") or "doc"),
+                                page_no=int(lo_u.get("page_no", 1)),
+                            ).to_dict()
+                        )
+                        ev_ids.append("ev_2")
+                    if verify_derived_claim(claim_txt, deriv_spec, spans_out).get("passed"):
+                        d_claim = AtomicClaim(
+                            id="claim_1",
+                            text=claim_txt,
+                            evidence_ids=ev_ids,
+                            claim_type="derived_claim",
+                            derivation=deriv_spec,
+                        ).to_dict()
+                        return {
+                            "answer": f"{claim_txt} [1]",
+                            "claims": [d_claim],
+                            "evidence_spans": spans_out,
+                            "critic_action": "approve",
+                            "critic_feedback": {"action": "approve", "confidence": 1.0, "is_supported": True},
+                            "generator_model_family": "cpu_min_derived_calc",
+                            "answer_language": ans_lang,
+                            "reasoning_trace": [self.log_action("cpu_min_derived_claim_synthesized", {"diff_pp": diff_val})],
+                        }
 
         # 1. Intent analysis (supporting both accented and unaccented Vietnamese)
         clean_q_unaccent = strip_accents(clean_q.lower())
@@ -618,17 +770,27 @@ class CPUMinSummarizerAgent(BaseAgent):
                 }
 
         # 3. Extract core non-stopword tokens, bigrams, technical identifiers, and proper noun phrases
-        q_tokens = [w for w in re.findall(r"\w+", clean_q.lower()) if w not in VIETNAMESE_STOP_WORDS and len(w) > 1]
+        # Incorporate resolved conversational context (`resolved_query` + `inherited_entities`) when present.
+        scoring_q = str(state.get("resolved_query") or clean_q).strip() or clean_q
+        inherited_ents = [str(e).strip() for e in (state.get("inherited_entities") or []) if str(e).strip()]
+        if inherited_ents:
+            required_entities = list(dict.fromkeys([*required_entities, *inherited_ents]))
+        q_tokens_raw = [w for w in re.findall(r"\w+", scoring_q.lower()) if w not in VIETNAMESE_STOP_WORDS and len(w) > 1]
+        q_bilingual_extra = [
+            tok for tok in sorted(expand_bilingual_tokens(scoring_q, set(q_tokens_raw)) - set(q_tokens_raw))
+            if tok not in VIETNAMESE_STOP_WORDS and len(tok) > 1
+        ]
+        q_tokens = list(dict.fromkeys([*q_tokens_raw, *q_bilingual_extra[:14]]))
         tech_identifiers = [
             t.lower()
-            for t in re.findall(r"\b[a-zA-Z0-9_./-]{3,}\b", clean_q)
-            if not re.search(r"[à-ỹÀ-Ỹ]", t)
+            for t in re.findall(r"\b[a-zA-Z0-9_./-]{3,}\b", scoring_q)
+            if not has_vietnamese_diacritics(t)
             and t.lower() not in VIETNAMESE_STOP_WORDS
-            and t.lower() not in {"file", "trong", "của", "cho", "với", "khi", "nào", "như", "thế"}
+            and t.lower() not in {"file", "trong", "của", "cho", "với", "khi", "nào", "như", "thế", "table", "figure", "page", "section"}
         ]
-        proper_noun_phrases = re.findall(r"\b[A-ZĐ][a-zà-ỹ0-9_-]+(?:\s+[A-ZĐ][a-zà-ỹ0-9_-]+)+\b", clean_q)
-        cap_words = re.findall(r"\b[A-ZĐ][a-zà-ỹ0-9_-]+\b", clean_q)
-        first_word_match = re.match(r"^\s*([A-ZĐ][a-zà-ỹ0-9_-]+)\b", clean_q)
+        proper_noun_phrases = re.findall(r"\b[A-ZĐ][a-zà-ỹ0-9_-]+(?:\s+[A-ZĐ][a-zà-ỹ0-9_-]+)+\b", scoring_q)
+        cap_words = re.findall(r"\b[A-ZĐ][a-zà-ỹ0-9_-]+\b", scoring_q)
+        first_word_match = re.match(r"^\s*([A-ZĐ][a-zà-ỹ0-9_-]+)\b", scoring_q)
         first_word = first_word_match.group(1) if first_word_match else ""
         entities = [p.lower() for p in proper_noun_phrases if p.lower() not in VIETNAMESE_STOP_WORDS]
         if not entities:
@@ -637,9 +799,21 @@ class CPUMinSummarizerAgent(BaseAgent):
                 for c in cap_words
                 if (c != first_word or c.isupper()) and c.lower() not in VIETNAMESE_STOP_WORDS and len(c) > 2
             ]
-        for tid in tech_identifiers:
-            if tid not in entities:
+        for tid in [*tech_identifiers, *(e.lower() for e in inherited_ents)]:
+            if tid and tid not in entities:
                 entities.append(tid)
+        # Bilingual entity aliases for Method/Model/System designators (e.g. 'Method B' <-> 'phương pháp b')
+        for ent_val in list(entities):
+            m_en = re.match(r"^(method|model|system|group|algorithm)\s+([a-z0-9_-]+)$", ent_val)
+            if m_en:
+                vi_alias = f"phương pháp {m_en.group(2)}"
+                if vi_alias not in entities:
+                    entities.append(vi_alias)
+            m_vi = re.match(r"^(?:phương pháp|phuong phap|mô hình|mo hinh)\s+([a-z0-9_-]+)$", ent_val)
+            if m_vi:
+                en_alias = f"method {m_vi.group(1)}"
+                if en_alias not in entities:
+                    entities.append(en_alias)
 
         q_bigrams = [f"{q_tokens[i]} {q_tokens[i+1]}" for i in range(len(q_tokens) - 1)] if len(q_tokens) >= 2 else []
 
@@ -709,6 +883,7 @@ class CPUMinSummarizerAgent(BaseAgent):
                         source_unit_id=core_u.get("id", "doc"),
                         doc_id=d_id,
                         page_no=core_p,
+                        bbox=core_u.get("bbox"),
                     ).to_dict()
                 )
 
@@ -729,6 +904,7 @@ class CPUMinSummarizerAgent(BaseAgent):
                                 source_unit_id=u_obj.get("id", "doc"),
                                 doc_id=d_id,
                                 page_no=p_no,
+                                bbox=u_obj.get("bbox"),
                             ).to_dict()
                         )
                         if len(sub_bullets) >= 4:
@@ -848,6 +1024,7 @@ class CPUMinSummarizerAgent(BaseAgent):
                             source_unit_id=u_ref.get("id", "doc"),
                             doc_id=single_doc_id,
                             page_no=p_no,
+                            bbox=u_ref.get("bbox"),
                         ).to_dict()
                     )
                     ref_counter += 1
@@ -898,18 +1075,18 @@ class CPUMinSummarizerAgent(BaseAgent):
                 s_lower = s.lower()
                 s_lower_unaccent = strip_accents(s_lower)
                 token_hits = sum(
-                    1 for t in q_tokens if _has_phrase(t, s_lower, s_lower_unaccent, bool(re.search(r"[à-ỹÀ-Ỹ]", t)))
+                    1 for t in q_tokens if _has_phrase(t, s_lower, s_lower_unaccent, has_vietnamese_diacritics(t))
                 )
                 bigram_hits = sum(
-                    1 for b in q_bigrams if _has_phrase(b, s_lower, s_lower_unaccent, bool(re.search(r"[à-ỹÀ-Ỹ]", b)))
+                    1 for b in q_bigrams if _has_phrase(b, s_lower, s_lower_unaccent, has_vietnamese_diacritics(b))
                 )
                 ent_hits = sum(
-                    1 for e in entities if _has_phrase(e, s_lower, s_lower_unaccent, bool(re.search(r"[à-ỹÀ-Ỹ]", e)))
+                    1 for e in entities if _has_phrase(e, s_lower, s_lower_unaccent, has_vietnamese_diacritics(e))
                 )
                 req_ent_hits = sum(
                     1
                     for r_ent in required_entities
-                    if _has_phrase(r_ent, s_lower, s_lower_unaccent, bool(re.search(r"[à-ỹÀ-Ỹ]", r_ent)))
+                    if _has_phrase(r_ent, s_lower, s_lower_unaccent, has_vietnamese_diacritics(r_ent))
                 )
                 tech_hits = sum(
                     1 for tid in tech_identifiers if _has_phrase(tid, s_lower, s_lower_unaccent, False)
@@ -923,7 +1100,7 @@ class CPUMinSummarizerAgent(BaseAgent):
                 has_num = bool(re.search(r"\b\d+(?:[.,]\d+)?%?\b", s))
 
                 quote_hits = sum(
-                    1 for qt in quotes_in_q if _has_phrase(qt, s_lower, s_lower_unaccent, bool(re.search(r"[à-ỹÀ-Ỹ]", qt)))
+                    1 for qt in quotes_in_q if _has_phrase(qt, s_lower, s_lower_unaccent, has_vietnamese_diacritics(qt))
                 )
                 score = (
                     token_hits * 3
@@ -962,6 +1139,9 @@ class CPUMinSummarizerAgent(BaseAgent):
 
                 richness = 4 if 70 <= len(s) <= 450 else 1
                 score += richness
+                is_pipe_row = s.startswith("|") and s.endswith("|") and s.count("|") >= 3
+                if is_pipe_row and not has_num:
+                    score -= 10
 
                 # Negative filtering of noise / meta / syllabus items (Đúng và Đủ - không thừa thãi)
                 is_meta_noise = False
@@ -979,7 +1159,10 @@ class CPUMinSummarizerAgent(BaseAgent):
                     continue
 
                 if score >= 3 and (bigram_hits >= 1 or token_hits >= 1 or ent_hits >= 1 or tech_hits >= 1 or is_general_summary):
-                    passage, consumed_indices = build_contextual_passage(sents, idx_s, max_chars=620, max_extra_sents=3)
+                    if is_pipe_row:
+                        passage, consumed_indices = s, [idx_s]
+                    else:
+                        passage, consumed_indices = build_contextual_passage(sents, idx_s, max_chars=620, max_extra_sents=3)
                     all_candidates.append(
                         {
                             "sentence": s,
@@ -1021,21 +1204,9 @@ class CPUMinSummarizerAgent(BaseAgent):
 
         is_strict_group_q = bool(re.search(r"\b(\d+\s+nhóm|mấy\s+nhóm|các\s+nhóm)\b", clean_q, re.I))
         if not selected_candidates or (is_strict_group_q and not any(c.get("has_list") for c in selected_candidates)):
-            no_doc_msg = (
-                f"Dựa trên các bài báo/tài liệu hiện có trong hệ thống, thông tin về \"{clean_q}\" "
-                f"**hoàn toàn không được đề cập**.\n\n"
-                f"**Gợi ý**: Bạn có thể tải thêm file PDF hoặc bài báo liên quan đến vấn đề này lên hệ thống "
-                f"để tôi đọc và phân tích cho bạn."
-            )
-            return {
-                "answer": no_doc_msg,
-                "claims": [{"id": "claim_1", "text": f"Tài liệu hiện có không đề cập đến '{clean_q}'.", "unit_id": None}],
-                "evidence_spans": [],
-                "critic_action": "approve",
-                "critic_feedback": {"action": "approve", "confidence": 1.0, "reason": "out_of_domain"},
-                "generator_model_family": "cpu_min_extractive",
-                "reasoning_trace": [self.log_action("cpu_min_summarization_completed", {"status": "out_of_domain"})],
-            }
+            res = build_out_of_domain_response(clean_q, model_family="cpu_min_extractive", answer_language=ans_lang)
+            res["reasoning_trace"] = [self.log_action("cpu_min_summarization_completed", {"status": "out_of_domain"})]
+            return res
 
         top_cand = selected_candidates[0]
         top_u = top_cand["unit"]
@@ -1048,11 +1219,16 @@ class CPUMinSummarizerAgent(BaseAgent):
         evidence_spans: list[dict[str, Any]] = []
 
         # 8. Formulate Complete, Comprehensive Answer (bỏ câu trả lời nhanh, trình bày hoàn thiện & chi tiết)
-        # CASE A: LIST / ENUMERATION SYNTHESIS
-        if is_list_q and ":" in top_sent and (
-            ";" in top_sent
-            or "thứ" in top_sent.lower()
-            or any(":" in c.get("sentence", "") for c in selected_candidates[1:5])
+        # CASE A: LIST / ENUMERATION SYNTHESIS (never split negated matrix clauses)
+        if (
+            is_list_q
+            and ":" in top_sent
+            and not has_clause_negation(top_sent.split(":", 1)[0])
+            and (
+                ";" in top_sent
+                or "thứ" in top_sent.lower()
+                or any(":" in c.get("sentence", "") for c in selected_candidates[1:5])
+            )
         ):
             prefix, list_part = top_sent.split(":", 1)
             prefix_clean = prefix.strip()
@@ -1306,6 +1482,7 @@ class CPUMinSummarizerAgent(BaseAgent):
                         source_unit_id=u.get("id", "doc_1"),
                         doc_id=u.get("doc_id", "doc"),
                         page_no=u.get("page_no", 1),
+                        bbox=u.get("bbox"),
                     ).to_dict()
                 )
 

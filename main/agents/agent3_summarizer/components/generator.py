@@ -80,11 +80,16 @@ def _quote_matches_unit_text(normalized_quote: str, unit_text: str) -> bool:
         u_de = re.sub(r"-\s+", repl, u_norm)
         if re.search(prefix + re.escape(q_de) + suffix, u_de):
             return True
-    # Handle Unicode math symbols, NFKC ligatures (ﬁ -> fi), and superscripts/subscripts (x² <-> x^2)
-    q_math = re.sub(r"[\^_]\s*\{?(\d+)\}?", r"\1", unicodedata.normalize("NFKC", normalized_quote).translate(_MATH_QUOTE_MAP))
-    u_math = re.sub(r"[\^_]\s*\{?(\d+)\}?", r"\1", unicodedata.normalize("NFKC", u_norm).translate(_MATH_QUOTE_MAP))
-    if q_math and re.search(prefix + re.escape(q_math) + suffix, u_math):
-        return True
+    # Handle Unicode math symbols, NFKC ligatures (ﬁ -> fi), and superscripts/subscripts while keeping ^ vs _ distinct!
+    from core.claim_semantics import normalize_math_preserving_structure
+
+    q_math = normalize_math_preserving_structure(normalized_quote)
+    u_math = normalize_math_preserving_structure(u_norm)
+    if q_math:
+        m_pre = r"(?<!\w)" if q_math[0].isalnum() else ""
+        m_suf = r"(?!\w)" if q_math[-1].isalnum() else ""
+        if re.search(m_pre + re.escape(q_math) + m_suf, u_math):
+            return True
     return False
 
 
@@ -141,9 +146,14 @@ def bind_summary_claims(raw_claims: list, spans: list[dict]) -> list[dict]:
             matches = [span for span in spans if text.strip() == span["quote"]]
         if not matches or len({span["source_unit_id"] for span in matches}) != 1:
             continue
-        claims.append(AtomicClaim(id=f"claim_{len(claims)+1}", text=text.strip(),
-                                  evidence_ids=[span["id"] for span in matches],
-                                  unit_id=matches[0]["source_unit_id"]).to_dict())
+        claims.append(AtomicClaim(
+            id=f"claim_{len(claims)+1}",
+            text=text.strip(),
+            evidence_ids=[span["id"] for span in matches],
+            unit_id=matches[0]["source_unit_id"],
+            claim_type=item.get("claim_type"),
+            derivation=item.get("derivation") or item.get("derivation_spec"),
+        ).to_dict())
     return claims
 
 

@@ -16,6 +16,7 @@ from agents.agent5_writer.components.gap_analyzer import (
 )
 from core.citation_audit import citation_location, evidence_quote
 from core.citation_audit import claim_text as get_claim_text
+from utils.language import detect_language, localized_status_message, normalize_language_code
 
 
 _RAW_CITATION_MARKERS = re.compile(
@@ -39,21 +40,64 @@ def _claim_evidence_ids(claim: dict[str, Any]) -> list[str]:
     return [evidence_id for evidence_id in ids if isinstance(evidence_id, str) and evidence_id.strip()]
 
 
+def _normalized_bbox(raw_bbox: Any) -> list[float] | None:
+    if not isinstance(raw_bbox, (list, tuple)) or len(raw_bbox) < 4:
+        return None
+    try:
+        x0, y0, x1, y1 = (float(raw_bbox[0]), float(raw_bbox[1]), float(raw_bbox[2]), float(raw_bbox[3]))
+    except (TypeError, ValueError):
+        return None
+    if x1 <= x0 or y1 <= y0:
+        return None
+    return [round(x0, 2), round(y0, 2), round(x1, 2), round(y1, 2)]
+
+
+def citation_region_key(span: dict[str, Any]) -> tuple[Any, ...] | None:
+    """
+    Distinguishes distinct bounding-box regions (e.g. two equations or table shards on the
+    same page) while keeping `None` for legacy page-only spans (`bbox=None`).
+    """
+    bbox = _normalized_bbox(span.get("bbox"))
+    if bbox is not None:
+        return ("bbox", round(bbox[0], 1), round(bbox[1], 1), round(bbox[2], 1), round(bbox[3], 1))
+    region_id = span.get("region_id")
+    if isinstance(region_id, str) and region_id.strip():
+        return ("region", region_id.strip())
+    return None
+
+
+def citation_target_key(span: dict[str, Any]) -> tuple[str, int, Any] | None:
+    loc = citation_location(span)
+    if loc is None:
+        return None
+    return (loc[0], loc[1], citation_region_key(span))
+
+
 def build_citation_references(evidence_spans: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Number source pages in the order of the supplied linked evidence."""
-    references = {}
+    """
+    Number source regions/pages in the order of the supplied linked evidence.
+    Two distinct `bbox` regions on the same page receive distinct `[1]`, `[2]` ref_ids,
+    while legacy page-only spans (`bbox=None`) group cleanly per `(doc_id, page)`.
+    """
+    references: dict[tuple[str, int, Any], dict[str, Any]] = {}
     for span in evidence_spans:
-        location = citation_location(span)
+        target_key = citation_target_key(span)
         evidence_id = span.get("id")
-        if location is None or location in references or not evidence_id:
+        if target_key is None or target_key in references or not evidence_id:
             continue
-        document_id, page = location
-        references[location] = {
+        document_id, page, region_key = target_key
+        entry: dict[str, Any] = {
             "ref_id": len(references) + 1,
             "document_id": document_id,
             "page": page,
             "evidence_id": evidence_id,
         }
+        bbox = _normalized_bbox(span.get("bbox"))
+        if region_key is not None and bbox is not None:
+            entry["bbox"] = bbox
+            if span.get("page_rotation"):
+                entry["page_rotation"] = int(span["page_rotation"])
+        references[target_key] = entry
     return list(references.values())
 
 
@@ -68,13 +112,15 @@ def build_academic_report(
     evidence_spans: Optional[list[dict[str, Any]]] = None,
     statistical_audit: Optional[dict[str, Any]] = None,
     code_verification: Optional[dict[str, Any]] = None,
+    answer_language: Optional[str] = None,
 ) -> tuple[str, dict[str, Any]]:
     """
     Returns:
       - markdown_report: fully formatted scientific report with comprehensive synthesis
       - report_data: structured metadata
     """
-    title = f"Báo cáo Nghiên cứu: {query}"
+    lang = normalize_language_code(answer_language) or detect_language(query, default="vi")
+    title = f"Research Report: {query}" if lang == "en" else f"Báo cáo Nghiên cứu: {query}"
     verified_claims = [
         c if isinstance(c, dict) else (c.to_dict() if hasattr(c, "to_dict") else {"claim": str(c), "claim_text": str(c), "text": str(c)})
         for c in (verified_claims or [])
@@ -87,9 +133,10 @@ def build_academic_report(
     # A contradicted refusal must go through the same evidence checks as other drafts.
     terminal = answer_status if not rejected_claims else None
     if not terminal and not rejected_claims and not verified_claims:
-        if "hoàn toàn không được đề cập" in (answer or "").casefold():
+        ans_cf = (answer or "").casefold()
+        if "hoàn toàn không được đề cập" in ans_cf or "is not mentioned in the provided sources" in ans_cf:
             terminal = "NOT_FOUND_IN_DOCUMENT"
-        elif "vui lòng cung cấp thêm chi tiết" in (answer or "").casefold():
+        elif "vui lòng cung cấp thêm chi tiết" in ans_cf or "please clarify which specific aspect" in ans_cf:
             terminal = "CLARIFICATION_NEEDED"
     is_ood = terminal == "NOT_FOUND_IN_DOCUMENT"
     is_ambiguous = terminal == "CLARIFICATION_NEEDED"
@@ -135,7 +182,7 @@ def build_academic_report(
         if uid and uid in linked_ids and uid not in spans_by_id and (u.get("text") or u.get("content")):
             loc = citation_location(u)
             if loc:
-                spans_by_id[uid] = {
+                synth_span: dict[str, Any] = {
                     "id": uid,
                     "unit_id": uid,
                     "source_unit_id": uid,
@@ -143,10 +190,22 @@ def build_academic_report(
                     "page_no": loc[1],
                     "quote": (u.get("text") or u.get("content") or "").strip()[:500],
                 }
+                if u.get("bbox") is not None:
+                    synth_span["bbox"] = u.get("bbox")
+                if u.get("page_rotation"):
+                    synth_span["page_rotation"] = u.get("page_rotation")
+                spans_by_id[uid] = synth_span
 
     unique_spans = list({id(s): s for s in spans_by_id.values()}.values())
     citation_references = build_citation_references(unique_spans)
-    refs_by_page = {(ref["document_id"], ref["page"]): ref["ref_id"] for ref in citation_references}
+    refs_by_target = {
+        citation_target_key(spans_by_id[ref["evidence_id"]]): ref["ref_id"]
+        for ref in citation_references
+        if ref.get("evidence_id") in spans_by_id and citation_target_key(spans_by_id[ref["evidence_id"]]) is not None
+    }
+    refs_by_page: dict[tuple[str, int], int] = {}
+    for ref in citation_references:
+        refs_by_page.setdefault((ref["document_id"], ref["page"]), ref["ref_id"])
 
     doc_title_lookup = {}
     for doc in sources_to_process:
@@ -176,8 +235,17 @@ def build_academic_report(
     summary_lines = []
     for claim in verified_claims:
         text = get_claim_text(claim).strip()
-        refs = sorted({refs_by_page[citation_location(spans_by_id[eid])]
-                       for eid in _claim_evidence_ids(claim) if eid in spans_by_id and citation_location(spans_by_id[eid]) in refs_by_page})
+        claim_ref_ids: set[int] = set()
+        for eid in _claim_evidence_ids(claim):
+            if eid not in spans_by_id:
+                continue
+            sp = spans_by_id[eid]
+            t_key = citation_target_key(sp)
+            if t_key in refs_by_target:
+                claim_ref_ids.add(refs_by_target[t_key])
+            elif citation_location(sp) in refs_by_page:
+                claim_ref_ids.add(refs_by_page[citation_location(sp)])
+        refs = sorted(claim_ref_ids)
         if not refs:
             unlinked.append(claim)
             continue
@@ -185,22 +253,34 @@ def build_academic_report(
         marks = " ".join(f"[{ref}]" for ref in refs)
         line = f"{_escape_raw_citations(text)} {marks}"
         summary_lines.append(line)
-        findings_lines.append(f"- **Nhận định {len(findings_lines)+1}:** {line}")
+        finding_prefix = "Finding" if lang == "en" else "Nhận định"
+        findings_lines.append(f"- **{finding_prefix} {len(findings_lines)+1}:** {line}")
     verified_claims = supported
     if summary_lines:
         status_label = "ANSWERED_DIRECT_QUOTE"
         summary_narrative = "\n\n".join(dict.fromkeys(summary_lines))
     elif is_ood:
         status_label = "NOT_FOUND_IN_DOCUMENT"
-        summary_narrative = f'Dựa trên các tài liệu đã chọn, thông tin về "{_escape_raw_citations(query)}" không được đề cập.'
+        summary_narrative = localized_status_message(
+            "NOT_FOUND_IN_DOCUMENT",
+            language=lang,
+            query=_escape_raw_citations(query),
+        )
     elif is_ambiguous:
         status_label = "CLARIFICATION_NEEDED"
-        summary_narrative = _escape_raw_citations(answer or "Vui lòng cho biết tài liệu hoặc khía cạnh cần làm rõ.")
+        if answer and detect_language(answer, default=lang) == lang:
+            summary_narrative = _escape_raw_citations(answer)
+        else:
+            summary_narrative = localized_status_message("CLARIFICATION_NEEDED", language=lang, query=query)
     else:
         status_label = "INSUFFICIENT_EVIDENCE"
-        summary_narrative = "Chưa đủ bằng chứng trong tài liệu đã chọn để xác nhận câu trả lời."
+        summary_narrative = localized_status_message("INSUFFICIENT_EVIDENCE", language=lang, query=query)
 
-    findings_str = "\n".join(findings_lines) or "> *Chưa có nhận định được xác minh và gắn với trang nguồn.*"
+    findings_str = "\n".join(findings_lines) or (
+        "> *No verified findings linked to source pages.*"
+        if lang == "en"
+        else "> *Chưa có nhận định được xác minh và gắn với trang nguồn.*"
+    )
 
     # 4. Disclaimers for ungrounded / contradicted assertions
     disclaimer_block = ""
@@ -208,16 +288,33 @@ def build_academic_report(
         disclaimer_lines = [f"- {_escape_raw_citations(get_claim_text(c))} *(Trích dẫn chưa xác minh)*" for c in unlinked]
         for rc in rejected_claims:
             c_txt = get_claim_text(rc)
-            disclaimer_lines.append(f"- [Lưu ý] *{c_txt}* — Lý do: {rc.get('reason') or rc.get('reasoning') or 'Thiếu bằng chứng xác thực'}")
-        disclaimer_block = f"\n\n### [Lưu ý] Các điểm chưa đủ căn cứ hoặc bị bác bỏ:\n" + "\n".join(disclaimer_lines)
+            if lang == "en":
+                disclaimer_lines.append(
+                    f"- [Note] *{c_txt}* — Reason: {rc.get('reason') or rc.get('reasoning') or 'Insufficient supporting evidence'}"
+                )
+            else:
+                disclaimer_lines.append(
+                    f"- [Lưu ý] *{c_txt}* — Lý do: {rc.get('reason') or rc.get('reasoning') or 'Thiếu bằng chứng xác thực'}"
+                )
+        disclaimer_heading = (
+            "### [Note] Unverified or Rejected Assertions:"
+            if lang == "en"
+            else "### [Lưu ý] Các điểm chưa đủ căn cứ hoặc bị bác bỏ:"
+        )
+        disclaimer_block = f"\n\n{disclaimer_heading}\n" + "\n".join(disclaimer_lines)
 
     # 5. Bibliography block
     ref_lines = []
     for r in references:
         ref_title = _escape_raw_citations(r["title"])
         preview = _escape_raw_citations(r["preview"])
-        ref_lines.append(f"[{r['ref_id']}] **{ref_title}** (Trang {r['page_no']}). *\"{preview}...\"*")
-    bib_str = "\n".join(ref_lines) if ref_lines else "*Chưa có trích dẫn gắn với một nhận định đã xác minh.*"
+        page_label = "Page" if lang == "en" else "Trang"
+        ref_lines.append(f"[{r['ref_id']}] **{ref_title}** ({page_label} {r['page_no']}). *\"{preview}...\"*")
+    bib_str = "\n".join(ref_lines) if ref_lines else (
+        "*No citations linked to a verified finding.*"
+        if lang == "en"
+        else "*Chưa có trích dẫn gắn với một nhận định đã xác minh.*"
+    )
 
     status_tag = f"[`{status_label}`]"
 
@@ -226,16 +323,28 @@ def build_academic_report(
     if statistical_audit:
         score = statistical_audit.get("score", 7.0)
         rating = statistical_audit.get("rating", "MODERATE_RIGOR")
-        audit_lines.append(f"- **Điểm Liêm chính Thống kê (Statistical Rigor Score):** `{score}/10.0` — *{rating}*")
+        if lang == "en":
+            audit_lines.append(f"- **Statistical Rigor Score:** `{score}/10.0` — *{rating}*")
+        else:
+            audit_lines.append(f"- **Điểm Liêm chính Thống kê (Statistical Rigor Score):** `{score}/10.0` — *{rating}*")
         for finding in statistical_audit.get("findings", []):
             audit_lines.append(f"  - {finding}")
     else:
-        audit_lines.append("- **Kiểm toán phương pháp:** Chưa có kết quả kiểm toán thống kê.")
+        audit_lines.append(
+            "- **Methodology Audit:** No statistical audit available."
+            if lang == "en"
+            else "- **Kiểm toán phương pháp:** Chưa có kết quả kiểm toán thống kê."
+        )
 
     if code_verification and code_verification.get("status") == "PASS":
-        audit_lines.append(
-            f"- **Kiểm chứng Hình thức Mã nguồn (Python Sandbox REPL):** `[PASS - VERIFIED]` ({code_verification.get('execution_time_ms', 0)}ms)"
-        )
+        if lang == "en":
+            audit_lines.append(
+                f"- **Formal Code Verification (Python Sandbox REPL):** `[PASS - VERIFIED]` ({code_verification.get('execution_time_ms', 0)}ms)"
+            )
+        else:
+            audit_lines.append(
+                f"- **Kiểm chứng Hình thức Mã nguồn (Python Sandbox REPL):** `[PASS - VERIFIED]` ({code_verification.get('execution_time_ms', 0)}ms)"
+            )
         audit_lines.append(f"  ```text\n  {code_verification.get('output', '')}\n  ```")
 
     peer_review_body = "\n".join(audit_lines)
@@ -246,17 +355,64 @@ def build_academic_report(
         for d in (retrieved_docs or [])
         if str(d.get("title") or d.get("name") or d.get("doc_id") or "").strip()
     }
-    matrix_section_title = (
-        "## 4. Ma trận So sánh Đa bài báo (Cross-Paper Benchmark Matrix)"
-        if len(unique_doc_titles) >= 2
-        else "## 4. Ma trận Luận điểm Cốt lõi & Đối soát Bằng chứng (Core Claims & Evidence Verification Matrix)"
-    )
+    if lang == "en":
+        matrix_section_title = (
+            "## 4. Cross-Paper Benchmark Matrix"
+            if len(unique_doc_titles) >= 2
+            else "## 4. Core Claims & Evidence Verification Matrix"
+        )
+    else:
+        matrix_section_title = (
+            "## 4. Ma trận So sánh Đa bài báo (Cross-Paper Benchmark Matrix)"
+            if len(unique_doc_titles) >= 2
+            else "## 4. Ma trận Luận điểm Cốt lõi & Đối soát Bằng chứng (Core Claims & Evidence Verification Matrix)"
+        )
     cited_docs = [{**span, "text": evidence_quote(span)} for span in spans_by_id.values()]
     matrix_md = build_cross_paper_matrix(query, cited_docs, verified_claims) if verified_claims else findings_str
     gaps = detect_research_gaps_and_hypotheses(query, verified_claims, cited_docs) if cited_docs else []
-    gaps_md = format_gap_radar_markdown(gaps) if gaps else "Chưa có bằng chứng để đánh giá khoảng trống nghiên cứu."
+    if gaps:
+        gaps_md = format_gap_radar_markdown(gaps)
+    else:
+        gaps_md = (
+            "Insufficient grounded evidence to assess research gaps."
+            if lang == "en"
+            else "Chưa có bằng chứng để đánh giá khoảng trống nghiên cứu."
+        )
 
-    academic_report_md = f"""# {_escape_raw_citations(title)}
+    if lang == "en":
+        academic_report_md = f"""# {_escape_raw_citations(title)}
+
+> **Verification Status:** {status_tag}
+
+---
+
+## 1. Executive Summary
+{summary_narrative}
+
+## 2. Verified Findings
+{findings_str}
+
+## 3. Research Gap Radar
+{_escape_raw_citations(gaps_md)}
+
+## 4. Evidence References
+{bib_str}
+"""
+        audit_ledger_md = f"""# Audit & Verification Ledger
+
+> **Verification Status:** {status_tag} | {len(verified_claims)} independently verified findings
+
+---
+
+{matrix_section_title}
+{_escape_raw_citations(matrix_md)}
+
+## Senior Peer-Review Audit
+{_escape_raw_citations(peer_review_body)}
+{_escape_raw_citations(disclaimer_block)}
+"""
+    else:
+        academic_report_md = f"""# {_escape_raw_citations(title)}
 
 > **Trạng thái Thẩm định:** {status_tag}
 
@@ -275,7 +431,7 @@ def build_academic_report(
 {bib_str}
 """
 
-    audit_ledger_md = f"""# Sổ cái Thẩm định & Đối soát Bằng chứng (Audit & Verification Ledger)
+        audit_ledger_md = f"""# Sổ cái Thẩm định & Đối soát Bằng chứng (Audit & Verification Ledger)
 
 > **Trạng thái Xác thực:** {status_tag} | {len(verified_claims)} luận điểm đã đối soát độc lập
 
@@ -301,6 +457,7 @@ def build_academic_report(
         "answer": summary_narrative,
         "short_answer": summary_narrative,
         "status": status_label,
+        "answer_language": lang,
         "verified_claims": verified_claims,
         "rejected_claims": rejected_claims,
         "references": references,

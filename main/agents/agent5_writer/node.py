@@ -49,6 +49,7 @@ class WriterAgent(BaseAgent):
             evidence_spans=evidence_spans,
             statistical_audit=statistical_audit,
             code_verification=code_verification,
+            answer_language=state.get("answer_language"),
         )
 
         trace = self.log_action(

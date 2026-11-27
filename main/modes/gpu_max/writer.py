@@ -35,6 +35,7 @@ class GPUMaxWriterAgent(BaseAgent):
             answer=answer,
             answer_status=state.get("answer_status"),
             evidence_spans=evidence_spans,
+            answer_language=state.get("answer_language"),
         )
 
         trace = self.log_action("gpu_max_report_written", {"length": len(final_report)})

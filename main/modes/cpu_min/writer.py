@@ -38,6 +38,7 @@ class CPUMinWriterAgent(BaseAgent):
             answer=answer,
             answer_status=state.get("answer_status"),
             evidence_spans=evidence_spans,
+            answer_language=state.get("answer_language"),
         )
         report_data["engine"] = "CPU_Min_Extractive"
 

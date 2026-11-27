@@ -43,7 +43,11 @@ class CPUMaxSummarizerAgent(BaseAgent):
         is_ood, ood_reason = check_out_of_domain(clean_q, source_units)
         if is_ood:
             self.logger.info(f"[CPU Max Summarizer] Zero-Hallucination Guard triggered: {ood_reason}")
-            res = build_out_of_domain_response(clean_q, model_family="cpu_max_academic_engine")
+            res = build_out_of_domain_response(
+                clean_q,
+                model_family="cpu_max_academic_engine",
+                answer_language=state.get("answer_language"),
+            )
             trace = self.log_action("cpu_max_summarization_completed", {"status": "out_of_domain", "reason": ood_reason})
             res["reasoning_trace"] = [trace]
             return res

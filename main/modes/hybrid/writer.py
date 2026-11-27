@@ -73,6 +73,7 @@ class HybridWriterAgent(BaseAgent):
                     answer=answer,
                     answer_status=state.get("answer_status"),
                     evidence_spans=evidence_spans,
+                    answer_language=state.get("answer_language"),
                 )
                 writer_backend = "local_report_builder"
                 break
@@ -87,6 +88,7 @@ class HybridWriterAgent(BaseAgent):
                 answer=answer,
                 answer_status=state.get("answer_status"),
                 evidence_spans=evidence_spans,
+                answer_language=state.get("answer_language"),
             )
             writer_backend = "local_report_builder"
             writer_backend = "local_academic_report_builder"

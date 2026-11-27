@@ -33,7 +33,11 @@ class GeminiSummarizerAgent(BaseAgent):
         is_ood, ood_reason = check_out_of_domain(clean_q, source_units)
         if is_ood:
             self.logger.info(f"[Gemini Summarizer] Zero-Hallucination Guard triggered: {ood_reason}")
-            res = build_out_of_domain_response(clean_q, model_family="gemini_flash")
+            res = build_out_of_domain_response(
+                clean_q,
+                model_family="gemini_flash",
+                answer_language=state.get("answer_language"),
+            )
             trace = self.log_action("gemini_summarization_completed", {"status": "out_of_domain", "reason": ood_reason})
             res["reasoning_trace"] = [trace]
             return res

@@ -1,188 +1,126 @@
 """
-Gemini Mode - Citation-Grounded Writer Agent (L3-L4, Quota-Optimized).
-Compiles verified findings, synthesizes polished academic prose & comparison tables
-via Gemini API strictly grounded in audited source pages, and preserves [1], [2] citations.
+Gemini Mode - Citation-Grounded Writer Agent (M1 Locked Architecture).
+Enforces:
+  1. Never feeds raw `source_units` to the Writer LLM.
+  2. Orders approved `verified_claims` by relevance (`claim_order` JSON permutation) while
+     leaving citation numbering and prose rendering to the deterministic `build_academic_report`
+     and `write_with_citation_audit` post-Writer gate.
 """
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
 from agents.agent5_writer.components.report_builder import build_academic_report
 from core.base_agent import BaseAgent
-from core.citation_audit import citation_location, evidence_quote
+from core.citation_audit import claim_text
 from core.provider_router import is_gemini_permitted
 from core.state import AgentState
 from utils.llm_client import llm_client
 
-
-_EXEC_SUMMARY_RE = re.compile(
-    r"(## 1\. Tóm tắt Tổng quan \(Executive Summary\)\n)(.*?)(\n\n## 2\. Kết quả Nghiên cứu)",
-    re.DOTALL,
+GEMINI_WRITER_ORDER_SYSTEM_PROMPT = (
+    "Order all supplied verified findings by relevance to the user's question. "
+    "Return ONLY valid JSON with key 'claim_order', a permutation of the supplied integer indices. "
+    "Do not add, rewrite, summarize, or drop any finding."
 )
 
 
 class GeminiWriterAgent(BaseAgent):
-    """Writer Agent for Gemini Mode: High-precision academic report & citation compiler."""
+    """Writer Agent for Gemini Mode: Claim-ordering + deterministic span-level citation compiler."""
 
     def __init__(self, max_internal_retry: int = 2):
         super().__init__(name="GeminiWriterAgent", max_internal_retry=max_internal_retry)
 
-    def _synthesize_executive_summary(
+    def _order_verified_claims(
         self,
         *,
         query: str,
-        references: list[dict[str, Any]],
-        source_units: list[dict[str, Any]],
-        evidence_spans: list[dict[str, Any]],
         verified_claims: list[dict[str, Any]],
-    ) -> str | None:
-        if not references or not self.settings.GEMINI_API_KEY:
-            return None
-        if not is_gemini_permitted("gemini", role="writer"):
-            return None
+    ) -> tuple[list[dict[str, Any]], bool]:
+        if not self.settings.GEMINI_API_KEY or not is_gemini_permitted("gemini", role="writer"):
+            return verified_claims, False
 
-        allowed_ref_ids = {int(r["ref_id"]) for r in references if isinstance(r.get("ref_id"), int)}
-        refs_by_page = {
-            (str(r.get("doc_id") or "").strip(), int(r["page_no"])): int(r["ref_id"])
-            for r in references
-            if r.get("doc_id") and isinstance(r.get("page_no"), int) and isinstance(r.get("ref_id"), int)
-        }
-        # Collect full grounded passages from the exact audited pages so multi-part answers
-        # (e.g. comparing (a), (b), (c) on the same page) are synthesized completely.
-        evidence_blocks: list[str] = []
-        seen_texts: set[str] = set()
-        for unit in source_units:
-            if not isinstance(unit, dict):
-                continue
-            loc = citation_location(unit)
-            if not loc or loc not in refs_by_page:
-                continue
-            ref_id = refs_by_page[loc]
-            txt = evidence_quote(unit).strip()
-            if txt and txt not in seen_texts:
-                seen_texts.add(txt)
-                evidence_blocks.append(f"[{ref_id}] (Trang {loc[1]}): {txt[:2400]}")
+        candidates = [
+            {"index": idx, "claim_text": claim_text(claim)}
+            for idx, claim in enumerate(verified_claims)
+            if isinstance(claim, dict) and claim_text(claim).strip() and (claim.get("evidence_ids") or [])
+        ]
+        if len(candidates) <= 1:
+            return verified_claims, False
 
-        if not evidence_blocks:
-            for span in evidence_spans:
-                if not isinstance(span, dict):
-                    continue
-                loc = citation_location(span)
-                if not loc or loc not in refs_by_page:
-                    continue
-                ref_id = refs_by_page[loc]
-                txt = evidence_quote(span).strip()
-                if txt and txt not in seen_texts:
-                    seen_texts.add(txt)
-                    evidence_blocks.append(f"[{ref_id}] (Trang {loc[1]}): {txt[:1200]}")
-
-        if not evidence_blocks:
-            return None
-
-        allowed_markers = ", ".join(f"[{rid}]" for rid in sorted(allowed_ref_ids))
-        claims_preview = "\n".join(
-            f"- {c.get('claim_text') or c.get('claim') or c.get('text') or ''}"
-            for c in verified_claims[:8]
-            if isinstance(c, dict)
-        )
-        system_prompt = (
-            "Bạn là biên tập viên báo cáo nghiên cứu khoa học cấp cao (Academic Research Writer). "
-            "NHIỆM VỤ: Biên tập phần Tóm tắt Tổng quan (Executive Summary) trả lời ĐẦY ĐỦ, CHÍNH XÁC mọi vế trong câu hỏi "
-            "của người dùng bằng ngôn ngữ của câu hỏi (nếu câu hỏi tiếng Việt thì viết hoàn toàn bằng tiếng Việt học thuật, "
-            "giữ thuật ngữ chuyên ngành tiếng Anh trong ngoặc đơn khi cần).\n"
-            "QUY TẮC BẮT BUỘC (ZERO HALLUCINATION):\n"
-            "1. CHỈ sử dụng thông tin có trong các đoạn bằng chứng được cung cấp bên dưới. Tuyệt đối KHÔNG bịa số liệu hoặc kiến thức ngoài tài liệu.\n"
-            "2. Mọi luận điểm thực tế phải gắn trích dẫn số hợp lệ từ danh sách được phép: "
-            f"{allowed_markers}. Không được tự tạo số trích dẫn khác.\n"
-            "3. Nếu câu hỏi yêu cầu phân tích, đối chiếu hoặc so sánh nhiều mô hình/phương pháp, hãy trình bày rõ từng mục "
-            "và kèm một bảng so sánh Markdown ngắn gọn, súc tích.\n"
-            "4. Khi trình bày công thức toán học, đặt chuẩn trong ký hiệu LaTeX $...$ (nội dòng) hoặc $$...$$ (khối riêng) đúng theo bằng chứng gốc.\n"
-            "5. Không lặp lại tiêu đề '## 1. Tóm tắt Tổng quan', chỉ xuất nội dung phần tổng quan."
-        )
-        user_prompt = (
-            f"Câu hỏi nghiên cứu:\n{query}\n\n"
-            f"Các luận điểm đã thẩm định:\n{claims_preview}\n\n"
-            f"Bằng chứng gốc từ các trang đã xác minh:\n" + "\n\n".join(evidence_blocks[:6])
-        )
+        indices = {item["index"] for item in candidates}
+        user_prompt = json.dumps({"query": query, "claims": candidates}, ensure_ascii=False)
         try:
-            synthesized = llm_client.generate(
+            raw = llm_client.generate(
                 user_prompt,
-                system_instruction=system_prompt,
-                temperature=0.15,
-                max_tokens=1536,
+                system_instruction=GEMINI_WRITER_ORDER_SYSTEM_PROMPT,
+                temperature=0.0,
+                max_tokens=256,
                 agent="writer",
             )
-            cleaned = (synthesized or "").strip()
-            if len(cleaned) < 40:
-                return None
-            # Strip any out-of-range citation marker [k] so citation_audit stays 100% clean
-            cleaned = re.sub(
-                r"\[(\d+)\]",
-                lambda m: m.group(0) if int(m.group(1)) in allowed_ref_ids else "",
-                cleaned,
-            )
-            if not any(f"[{rid}]" in cleaned for rid in allowed_ref_ids):
-                cleaned = f"{cleaned} [{min(allowed_ref_ids)}]"
-            return cleaned.strip()
+            cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", (raw or "").strip(), flags=re.I)
+            match = re.search(r"\{[\s\S]*\}", cleaned)
+            if not match:
+                return verified_claims, False
+            parsed = json.loads(match.group(0))
+            order = parsed.get("claim_order") if isinstance(parsed, dict) else None
+            if (
+                isinstance(order, list)
+                and len(order) == len(indices)
+                and all(type(i) is int for i in order)
+                and set(order) == indices
+            ):
+                remaining = [c for i, c in enumerate(verified_claims) if i not in indices]
+                ordered = [verified_claims[i] for i in order] + remaining
+                return ordered, True
         except Exception as exc:
-            self.logger.warning(f"[Gemini Writer] Gemini synthesis skipped ({exc}); using deterministic report.")
-            return None
+            self.logger.warning(f"[Gemini Writer] Claim ordering skipped ({exc}); keeping verified finding order.")
+        return verified_claims, False
 
     def run(self, state: AgentState) -> dict[str, Any]:
         query = state.get("query", "")
         answer = state.get("answer", "")
-        verified_claims = state.get("verified_claims", []) or []
+        verified_claims = list(state.get("verified_claims", []) or [])
         rejected_claims = state.get("rejected_claims", []) or []
         retrieved_docs = state.get("retrieved_docs", []) or []
         evidence_spans = state.get("evidence_spans", []) or []
-        source_units = state.get("source_units", []) or []
 
         self.logger.info(
             f"[Gemini Writer] Compiling verified academic report for: '{query[:60]}' "
             f"({len(verified_claims)} verified claims)"
         )
 
-        final_report, report_data = build_academic_report(
+        ordered_claims, ordered_with_llm = self._order_verified_claims(
             query=query,
             verified_claims=verified_claims,
+        )
+
+        final_report, report_data = build_academic_report(
+            query=query,
+            verified_claims=ordered_claims,
             rejected_claims=rejected_claims,
             retrieved_docs=retrieved_docs,
             answer=answer,
             answer_status=state.get("answer_status"),
             evidence_spans=evidence_spans,
+            statistical_audit=state.get("statistical_audit"),
+            code_verification=state.get("code_verification"),
+            answer_language=state.get("answer_language"),
         )
 
-        synthesized_with_llm = False
-        if report_data.get("status") == "ANSWERED_DIRECT_QUOTE" and report_data.get("references"):
-            polished = self._synthesize_executive_summary(
-                query=query,
-                references=report_data["references"],
-                source_units=source_units,
-                evidence_spans=evidence_spans,
-                verified_claims=verified_claims,
-            )
-            if polished:
-                updated_report = _EXEC_SUMMARY_RE.sub(
-                    lambda m: f"{m.group(1)}{polished}{m.group(3)}",
-                    final_report,
-                    count=1,
-                )
-                if updated_report != final_report:
-                    final_report = updated_report
-                    report_data["answer"] = polished
-                    synthesized_with_llm = True
-
         report_data["engine"] = "Gemini_Cloud_Agentic"
-        report_data["synthesized_with_llm"] = synthesized_with_llm
+        report_data["synthesized_with_llm"] = False
+        report_data["ordered_with_llm"] = ordered_with_llm
 
         trace = self.log_action(
             "gemini_report_written",
             {
                 "length": len(final_report),
-                "verified_claims_count": len(verified_claims),
-                "synthesized_with_llm": synthesized_with_llm,
+                "verified_claims_count": len(report_data.get("verified_claims") or []),
+                "synthesized_with_llm": False,
+                "ordered_with_llm": ordered_with_llm,
             },
         )
 
