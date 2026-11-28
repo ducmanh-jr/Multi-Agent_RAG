@@ -22,6 +22,12 @@ def manifest_event(
         limit = reflection_limit({} if reflection_loops is None else {"max_reflection_loops": reflection_loops})
 
     agent_modes = resolve_agent_modes(config, mode)
+    parallel_pilot_enabled = bool(parallel_retrieval and agent_modes["retrieval"] == "cpu_min")
+    parallel_mode = (
+        "cpu_min_pilot"
+        if parallel_pilot_enabled
+        else ("research_dag" if parallel_retrieval else "disabled")
+    )
     # Allowlist replay metadata. RunConfig also contains provider credentials and private paths.
     return {
         "action": RUN_MANIFEST_ACTION,
@@ -46,8 +52,10 @@ def manifest_event(
                 "reranker": config.RERANKER_MODEL,
             },
             "retrieval": {
-                "parallel_requested": parallel_retrieval,
-                "parallel_enabled": parallel_retrieval and agent_modes["retrieval"] == "cpu_min",
+                "parallel_requested": bool(parallel_retrieval),
+                "parallel_enabled": bool(parallel_retrieval),
+                "parallel_mode": parallel_mode,
+                "parallel_pilot_cpu_min": parallel_pilot_enabled,
                 "dense_enabled": config.GPU_FINETUNE_DENSE_ENABLED,
                 "page_diversity_enabled": config.GPU_FINETUNE_PAGE_DIVERSITY_ENABLED,
                 "rerank_enabled": config.GPU_FINETUNE_RERANK_ENABLED,
@@ -155,6 +163,32 @@ def get_run_manifest(record: dict[str, Any]) -> dict[str, Any] | None:
             "complete": len(reported) == len(calls) and (record["status"] == "completed" or exhausted),
             "calls": calls,
         }
+    retrieval_schedules = [
+        event["details"] for event in trace if event.get("action") == "retrieval_task_schedule"
+    ]
+    parallel_dag_executions = [
+        {
+            "action": event.get("action"),
+            "status": event.get("status"),
+            "round_index": int(event.get("round_index", 0) or 0),
+            "branch_count": int(
+                event.get("branch_count")
+                or event.get("document_count")
+                or event.get("completed_branches")
+                or event.get("completed_documents")
+                or 0
+            ),
+            "completed_branches": int(
+                event.get("completed_branches")
+                or event.get("completed_documents")
+                or 0
+            ),
+            "merged_chunks": int(event.get("merged_chunks", 0) or 0),
+        }
+        for event in trace
+        if event.get("action") in {"research_dag_executed", "document_fanout_dag_executed"}
+        and event.get("status") != "skipped"
+    ]
     return {
         "schema_version": admission["schema_version"],
         "run_id": record["id"],
@@ -167,9 +201,9 @@ def get_run_manifest(record: dict[str, Any]) -> dict[str, Any] | None:
         "observed": {
             "token_usage": usage,
             "retrieval_attempts": _retrieval_attempts(trace),
-            "retrieval_schedules": [
-                event["details"] for event in trace if event.get("action") == "retrieval_task_schedule"
-            ],
+            "retrieval_schedules": retrieval_schedules,
+            "parallel_dag_executions": parallel_dag_executions,
+            "parallel_execution_observed": bool(retrieval_schedules or parallel_dag_executions),
             "comparison_schedules": [event["details"] for event in trace if event.get("action") == COMPARISON_SCHEDULE],
             "worker_inference": inferences,
             "provider_inference": provider_inferences,

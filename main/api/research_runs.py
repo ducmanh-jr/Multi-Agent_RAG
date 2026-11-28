@@ -345,6 +345,14 @@ class ResearchRunService:
         )
         traces = [admission]
         if request.resumed_from_run_id:
+            if isinstance(request.resume_state, dict):
+                prior_graph_traces = [
+                    deepcopy(entry)
+                    for entry in (request.resume_state.get("reasoning_trace") or [])
+                    if isinstance(entry, dict)
+                    and entry.get("action") not in {RUN_MANIFEST_ACTION, "run_resumed_from_checkpoint"}
+                ]
+                traces.extend(prior_graph_traces)
             traces.append({
                 "action": "run_resumed_from_checkpoint",
                 "source_run_id": request.resumed_from_run_id,
@@ -492,6 +500,13 @@ class ResearchRunService:
                     graph = await asyncio.to_thread(build_research_rag_graph, **graph_kwargs)
                     start_time = time.monotonic()
                     step_counter = int(request.resumed_from_step or 0)
+                    cumulative_graph_trace: list[dict[str, Any]] = [
+                        deepcopy(entry)
+                        for entry in (state.get("reasoning_trace") or [])
+                        if isinstance(entry, dict)
+                        and entry.get("action") not in {RUN_MANIFEST_ACTION, "run_resumed_from_checkpoint"}
+                    ]
+                    state["reasoning_trace"] = list(cumulative_graph_trace)
                     async with aclosing(graph.astream(state.copy(), stream_mode="updates")) as updates:
                         while await asyncio.to_thread(db.run_is_processing, run_id):
                             chunk = await anext(updates, None)
@@ -523,16 +538,19 @@ class ResearchRunService:
                                             sources = [*sources, *newly_added]
                                             paths = [source["path"] for source in sources]
                                             added = sources
-                                node_traces = [
+                                raw_node_traces = [
                                     deepcopy(trace) for trace in output.get("reasoning_trace") or []
                                     if isinstance(trace, dict)
                                 ]
+                                node_traces = deepcopy(raw_node_traces)
                                 catalogued = [source for source in sources if source["catalogued"]]
                                 pin_answer_figures(node_traces, catalogued, paths)
                                 for trace in node_traces:
                                     trace.update(duration=f"{elapsed}s", duration_sec=elapsed, timestamp=time.time())
                                 traces.extend(node_traces)
+                                cumulative_graph_trace.extend(raw_node_traces)
                                 state.update(output)
+                                state["reasoning_trace"] = list(cumulative_graph_trace)
                                 step_counter += 1
                                 schema_snap = state.get("document_schema") or {}
                                 checkpoint_state = {
