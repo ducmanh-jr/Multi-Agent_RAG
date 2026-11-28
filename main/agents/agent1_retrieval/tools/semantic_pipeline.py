@@ -10,9 +10,12 @@ Provides:
 
 from __future__ import annotations
 
+from collections import OrderedDict
 import math
 import os
 import re
+import threading
+import time
 from typing import Any, Iterable
 
 import httpx
@@ -96,6 +99,104 @@ def extract_searchable_figure_chunks(pdf_paths: Iterable[str | None]) -> list[di
 
 
 from utils.language import detect_corpus_language, is_vietnamese_text
+
+_SHARED_DENSE_RETRIEVER = RemoteDenseRetriever()
+MAX_REMOTE_DENSE_POOL = 80
+_GEMINI_EMBED_COOLDOWN_UNTIL: float = 0.0
+_LEXICAL_INDEX_LOCK = threading.RLock()
+_LEXICAL_INDEX_CACHE: OrderedDict[tuple[Any, ...], tuple[list[dict[str, Any]], Any, Any]] = OrderedDict()
+
+
+def build_cached_pdf_lexical_pool(pdf_paths: Iterable[str | None]) -> tuple[list[dict[str, Any]], Any, Any] | None:
+    """
+    Loads selected PDF chunks + searchable figure chunks and builds `(active_pool, active_fts, active_bm25)`
+    ONCE per document state, sharing the compiled C-Engine FTS5 and BM25 indexes across parallel DAG
+    sub-query branches and follow-up turns in 0ms.
+    """
+    from agents.agent1_retrieval.tools.bm25 import SimpleBM25
+    from agents.agent1_retrieval.tools.fts5_search import SQLiteFTS5Searcher
+    from core.tools import load_or_parse_selected_pdf
+
+    valid_paths = [str(p) for p in dict.fromkeys(p for p in pdf_paths if p)]
+    if not valid_paths:
+        return None
+
+    per_doc_lists: list[list[dict[str, Any]]] = []
+    sig_parts: list[Any] = []
+    for p in valid_paths:
+        chunks = load_or_parse_selected_pdf(p)
+        if chunks:
+            per_doc_lists.append(chunks)
+            sig_parts.append((os.path.abspath(p), id(chunks), len(chunks)))
+        else:
+            sig_parts.append((os.path.abspath(p), 0, 0))
+
+    cache_key = tuple(sig_parts)
+    with _LEXICAL_INDEX_LOCK:
+        if cache_key in _LEXICAL_INDEX_CACHE:
+            _LEXICAL_INDEX_CACHE.move_to_end(cache_key)
+            return _LEXICAL_INDEX_CACHE[cache_key]
+
+    pdf_chunks: list[dict[str, Any]] = []
+    for c_list in per_doc_lists:
+        pdf_chunks.extend(c_list)
+    figure_chunks = extract_searchable_figure_chunks(valid_paths)
+    if figure_chunks:
+        pdf_chunks.extend(figure_chunks)
+    if not pdf_chunks:
+        return None
+
+    active_fts = SQLiteFTS5Searcher()
+    active_bm25 = SimpleBM25()
+    active_fts.fit(pdf_chunks)
+    active_bm25.fit(pdf_chunks)
+
+    entry = (pdf_chunks, active_fts, active_bm25)
+    with _LEXICAL_INDEX_LOCK:
+        _LEXICAL_INDEX_CACHE[cache_key] = entry
+        _LEXICAL_INDEX_CACHE.move_to_end(cache_key)
+        while len(_LEXICAL_INDEX_CACHE) > 8:
+            _LEXICAL_INDEX_CACHE.popitem(last=False)
+    return entry
+
+
+def _select_dense_candidate_pool(
+    sparse_docs: list[dict[str, Any]],
+    active_pool: list[dict[str, Any]],
+    limit: int = MAX_REMOTE_DENSE_POOL,
+) -> list[dict[str, Any]]:
+    """
+    Bounds remote GPU embedding pool size on large PDFs (e.g. 70+ page surveys with 350+ chunks)
+    while preserving 100% of sparse lexical hits, structural units (equations/tables/figures),
+    and page-diverse coverage across the document.
+    """
+    if len(active_pool) <= limit:
+        return active_pool
+    selected: list[dict[str, Any]] = []
+    seen_keys: set[Any] = set()
+
+    def _add(chunk: dict[str, Any]) -> None:
+        key = chunk.get("id") or chunk.get("chunk_id") or id(chunk)
+        if key not in seen_keys:
+            seen_keys.add(key)
+            selected.append(chunk)
+
+    for doc in sparse_docs:
+        _add(doc)
+        if len(selected) >= limit:
+            return selected[:limit]
+
+    for doc in active_pool:
+        if str(doc.get("unit_type") or "text").lower() in {"figure", "ocr_scan", "table", "equation"}:
+            _add(doc)
+            if len(selected) >= limit:
+                return selected[:limit]
+
+    for doc in prefer_distinct_pages(active_pool):
+        _add(doc)
+        if len(selected) >= limit:
+            break
+    return selected[:limit]
 
 _TABLE_QUERY_RE = re.compile(
     r"\b(?:table|tab\.?|bảng|bang|so sánh|so sanh|compare|comparison|metric|score|accuracy|f1|bleu|rouge|ndcg|mrr|recall|"
@@ -302,7 +403,10 @@ def _embed_gemini_batch(
     client: httpx.Client,
     timeout: float = 20.0,
 ) -> list[list[float]]:
-    """Embeds a small batch of texts via Gemini batchEmbedContents API."""
+    """Embeds a small batch of texts via Gemini batchEmbedContents API with 429/404 cooldown."""
+    global _GEMINI_EMBED_COOLDOWN_UNTIL
+    if time.monotonic() < _GEMINI_EMBED_COOLDOWN_UNTIL:
+        raise DenseRetrievalError("gemini_embedding_quota_cooldown")
     clean_model = model if model.startswith("models/") else f"models/{model}"
     url = f"https://generativelanguage.googleapis.com/v1beta/{clean_model}:batchEmbedContents"
     requests_payload = [
@@ -319,6 +423,8 @@ def _embed_gemini_batch(
         json={"requests": requests_payload},
         timeout=timeout,
     )
+    if response.status_code in {404, 429, 503}:
+        _GEMINI_EMBED_COOLDOWN_UNTIL = time.monotonic() + (3600.0 if response.status_code == 404 else 300.0)
     response.raise_for_status()
     data = response.json()
     embeddings = data.get("embeddings") or []
@@ -354,15 +460,16 @@ def enhance_with_dense_and_rerank(
     fused = list(sparse_docs)
     dense_trace: dict[str, Any] = {"status": "disabled"}
 
-    # 1. Primary Dense: Kaggle Remote BGE-M3 Worker (/api/embed)
+    # 1. Primary Dense: Kaggle Remote BGE-M3 / Qwen3-Embedding Worker (/api/embed)
     if enable_kaggle_dense and active_pool:
-        retriever = dense_retriever or RemoteDenseRetriever()
+        retriever = dense_retriever or _SHARED_DENSE_RETRIEVER
         try:
             if not settings.REMOTE_INFERENCE_URL:
                 raise DenseRetrievalError("embedding_worker_not_configured")
+            bounded_kaggle_pool = _select_dense_candidate_pool(sparse_docs, active_pool)
             dense_docs, revision = retriever.rank(
                 query,
-                active_pool,
+                bounded_kaggle_pool,
                 top_k=candidate_limit,
                 client=http_client,
                 url=settings.REMOTE_INFERENCE_URL,

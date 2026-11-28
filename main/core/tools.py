@@ -396,6 +396,33 @@ def load_or_parse_selected_pdf(
         if cache_key in _PDF_CHUNK_CACHE:
             _PDF_CHUNK_CACHE.move_to_end(cache_key)
             return _PDF_CHUNK_CACHE[cache_key]
+        parse_locks = getattr(load_or_parse_selected_pdf, "_parse_locks", None)
+        if parse_locks is None:
+            parse_locks = {}
+            setattr(load_or_parse_selected_pdf, "_parse_locks", parse_locks)
+        file_lock = parse_locks.get(cache_key)
+        if file_lock is None:
+            file_lock = threading.Lock()
+            parse_locks[cache_key] = file_lock
+            if len(parse_locks) > 64:
+                oldest_k = next(iter(parse_locks))
+                if oldest_k != cache_key:
+                    parse_locks.pop(oldest_k, None)
+
+    # Single-flight per-file lock prevents 4 parallel DAG threads from parsing a 70-page PDF 4x concurrently
+    with file_lock:
+        with _PDF_CACHE_LOCK:
+            if cache_key in _PDF_CHUNK_CACHE:
+                _PDF_CHUNK_CACHE.move_to_end(cache_key)
+                return _PDF_CHUNK_CACHE[cache_key]
+        return _parse_and_cache_selected_pdf_locked(resolved, cache_key, chunk_size_words)
+
+
+def _parse_and_cache_selected_pdf_locked(
+    resolved: str,
+    cache_key: str,
+    chunk_size_words: int,
+) -> list[dict[str, Any]]:
 
     doc_title = Path(resolved).stem
     doc_title = re.sub(r"^[0-9a-f]{8}_", "", doc_title)

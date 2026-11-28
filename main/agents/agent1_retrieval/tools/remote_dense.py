@@ -31,6 +31,7 @@ class RemoteDenseRetriever:
     def __init__(self) -> None:
         self._identity: tuple[str, str, str] | None = None
         self._cache: OrderedDict[str, np.ndarray] = OrderedDict()
+        self._unreachable_until: dict[str, float] = {}
         self._lock = threading.RLock()
 
     ALLOWED_QWEN3_EMBEDDING_MODELS = frozenset({
@@ -42,7 +43,10 @@ class RemoteDenseRetriever:
     def _embed(
         self, client: httpx.Client, url: str, model: str, texts: list[str], deadline: float,
     ) -> tuple[str, str, np.ndarray]:
-        remaining = deadline - time.monotonic()
+        now = time.monotonic()
+        if self._unreachable_until.get(url, 0.0) > now:
+            raise DenseRetrievalError("embedding_worker_unreachable")
+        remaining = deadline - now
         if remaining <= 0:
             raise DenseRetrievalError("embedding_timeout")
         token = (getattr(get_run_settings(), "REMOTE_INFERENCE_TOKEN", "") or "").strip()
@@ -57,6 +61,7 @@ class RemoteDenseRetriever:
         except httpx.TimeoutException as exc:
             raise DenseRetrievalError("embedding_timeout") from exc
         except httpx.RequestError as exc:
+            self._unreachable_until[url] = time.monotonic() + 15.0
             raise DenseRetrievalError("embedding_worker_unreachable") from exc
         if time.monotonic() >= deadline:
             raise DenseRetrievalError("embedding_timeout")

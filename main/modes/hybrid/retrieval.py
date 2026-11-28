@@ -21,6 +21,7 @@ from agents.agent1_retrieval.tools.perspective import generate_research_perspect
 from agents.agent1_retrieval.tools.remote_dense import RemoteDenseRetriever
 from agents.agent1_retrieval.tools.semantic_pipeline import (
     boost_entities_and_tables,
+    build_cached_pdf_lexical_pool,
     build_cross_lingual_subqueries,
     enhance_with_dense_and_rerank,
     extract_searchable_figure_chunks,
@@ -100,12 +101,13 @@ class HybridRetrievalAgent(BaseAgent):
         seen_chunks = state.get("seen_chunks", []) or []
 
         # Default Tier 3 Plan: Local Supervisor
+        caller_supplied_subqueries = bool(state.get("sub_queries"))
         plan = supervisor_planner.plan_query(query, state.get("evidence_gaps"), retry_count)
         sub_queries = list(state.get("sub_queries") or plan.sub_queries)
         required_entities = list(state.get("required_entities") or plan.required_entities)
         top_k = int(state.get("top_k") or plan.top_k)
         alpha = float(state.get("alpha", plan.alpha))
-        planning_backend = "local_supervisor"
+        planning_backend = "dag_preplanned" if caller_supplied_subqueries else "local_supervisor"
 
         caps = probe_all_capabilities()
         from core.provider_router import provider_router
@@ -113,8 +115,8 @@ class HybridRetrievalAgent(BaseAgent):
         planner_chain = provider_router.resolve_chain("planner", state=state, caps=caps)
         is_gpu_online = caps.get("gpu_finetune", {}).get("online")
 
-        # Execute planner backends strictly in ProviderRouter policy order
-        if retry_count == 0:
+        # Execute planner backends strictly in ProviderRouter policy order ONLY when Supervisor/DAG hasn't pre-planned sub_queries
+        if retry_count == 0 and not caller_supplied_subqueries:
             for backend in planner_chain:
                 if backend == "gemini" and caps.get("gemini", {}).get("online"):
                     try:
@@ -149,10 +151,8 @@ class HybridRetrievalAgent(BaseAgent):
                 elif backend == "local":
                     break
 
-        # Generate STORM research perspectives only if Gemini/LLM is allowed in planner_chain
-        if planning_backend == "local_supervisor" and "gemini" not in planner_chain and not is_gpu_online:
-            perspectives, storm_subs = [], []
-        elif "gemini" not in planner_chain and not is_gpu_online:
+        # Generate STORM research perspectives only when not already expanded by DAG/Cloud Router
+        if caller_supplied_subqueries or planning_backend == "cloud_router" or ("gemini" not in planner_chain and not is_gpu_online):
             perspectives, storm_subs = [], []
         else:
             perspectives, storm_subs = generate_research_perspectives(query)
@@ -162,24 +162,20 @@ class HybridRetrievalAgent(BaseAgent):
         sub_queries = sub_queries[:5]
 
         # =====================================================================
-        # Scope strictly to user-selected PDF(s) if provided
+        # Scope strictly to user-selected PDF(s) if provided (with shared index cache)
         # =====================================================================
-        pdf_chunks = []
-        for p in pdf_paths:
-            if p:
-                chunks = load_or_parse_selected_pdf(p)
-                if chunks:
-                    pdf_chunks.extend(chunks)
-        figure_chunks = extract_searchable_figure_chunks(pdf_paths)
-        if figure_chunks:
-            pdf_chunks.extend(figure_chunks)
         if pdf_paths:
-            active_fts = SQLiteFTS5Searcher()
-            active_bm25 = SimpleBM25()
-            active_fts.fit(pdf_chunks)
-            active_bm25.fit(pdf_chunks)
-            active_pool = pdf_chunks
+            cached_lexical = build_cached_pdf_lexical_pool(pdf_paths)
+            if cached_lexical is not None:
+                active_pool, active_fts, active_bm25 = cached_lexical
+                pdf_chunks = active_pool
+            else:
+                active_fts = SQLiteFTS5Searcher()
+                active_bm25 = SimpleBM25()
+                active_pool = []
+                pdf_chunks = []
         else:
+            pdf_chunks = []
             active_fts = self.fts5_searcher
             active_bm25 = self.bm25_fallback
             active_pool = self.corpus_docs

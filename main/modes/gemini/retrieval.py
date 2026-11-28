@@ -17,6 +17,7 @@ from agents.agent1_retrieval.tools.fts5_search import SQLiteFTS5Searcher
 from agents.agent1_retrieval.tools.hybrid import reciprocal_rank_fusion
 from agents.agent1_retrieval.tools.semantic_pipeline import (
     boost_entities_and_tables,
+    build_cached_pdf_lexical_pool,
     build_cross_lingual_subqueries,
     enhance_with_dense_and_rerank,
     extract_searchable_figure_chunks,
@@ -76,23 +77,14 @@ class GeminiRetrievalAgent(BaseAgent):
         )
 
         pdf_paths = state.get("pdf_paths") or ([pdf_path] if pdf_path else [])
-        # 1. Scope strictly to user-selected PDF(s) if provided
-        pdf_chunks: list[dict[str, Any]] = []
-        for p in pdf_paths:
-            if p and os.path.exists(p):
-                chunks = load_or_parse_selected_pdf(p)
-                if chunks:
-                    pdf_chunks.extend(chunks)
-        figure_chunks = extract_searchable_figure_chunks(pdf_paths)
-        if figure_chunks:
-            pdf_chunks.extend(figure_chunks)
-        if pdf_chunks:
-            active_fts = SQLiteFTS5Searcher()
-            active_bm25 = SimpleBM25()
-            active_fts.fit(pdf_chunks)
-            active_bm25.fit(pdf_chunks)
-            active_pool = pdf_chunks
+        # 1. Scope strictly to user-selected PDF(s) if provided (with shared index cache)
+        existing_paths = [p for p in pdf_paths if p and os.path.exists(p)]
+        cached_lexical = build_cached_pdf_lexical_pool(existing_paths) if existing_paths else None
+        if cached_lexical is not None:
+            active_pool, active_fts, active_bm25 = cached_lexical
+            pdf_chunks = active_pool
         else:
+            pdf_chunks = []
             active_fts = self.fts5_searcher
             active_bm25 = self.bm25_fallback
             active_pool = self.corpus_docs

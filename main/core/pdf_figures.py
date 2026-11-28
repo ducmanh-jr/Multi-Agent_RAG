@@ -7,8 +7,11 @@ import hashlib
 import math
 from pathlib import Path
 import re
+import threading
 
 import fitz
+
+_FIGURE_INDEX_LOCK = threading.RLock()
 
 
 _CAPTION = re.compile(
@@ -187,9 +190,11 @@ def _figure_index(path: Path, version: tuple[int, int, int]):
 def extract_pdf_figures(pdf_path: str | Path) -> list[dict]:
     """Return descriptors with one-based pages and unrotated PDF point coordinates."""
     path = Path(pdf_path).resolve()
+    with _FIGURE_INDEX_LOCK:
+        indexed = _figure_index(path, _file_version(path))
     return [
         {**item, "bbox": list(item["bbox"])}
-        for item in _figure_index(path, _file_version(path)).values()
+        for item in indexed.values()
     ]
 
 
