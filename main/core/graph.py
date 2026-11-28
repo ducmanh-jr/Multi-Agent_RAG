@@ -581,7 +581,7 @@ def build_research_rag_graph(
         )
         dag_trace: dict[str, Any] | None = None
         if visual and role == "summarizer":
-            update = draft_visual_answer(inputs)
+            update = draft_visual_answer(inputs, mode=agent_modes["summarizer"])
         elif visual and role == "fact_checker":
             update = check_visual_answer(inputs)
         elif comparison is not None:

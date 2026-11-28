@@ -39,8 +39,15 @@ _GENERIC = set("""
 
 
 def _tokens(text: str) -> set[str]:
-    return {word for word in re.findall(r"[a-z0-9]+", _fold(text))
+    folded = _fold(text)
+    base = {word for word in re.findall(r"[a-z0-9]+", folded)
             if len(word) >= 2 and not word.isdigit() and word not in _GENERIC}
+    # Preserve single-letter math/matrix/panel identifiers (e.g. 'matrix A', 'ma tran B', '(a)')
+    for m in re.finditer(r"\b(?:matrix|ma\s+tran|vector|block|khoi|nhanh)\s+([a-z])\b", folded):
+        base.add(f"sym_{m.group(1)}")
+    for m in re.finditer(r"(?<![a-z0-9])([A-Z])(?:\s*=|\s+and\s+[A-Z]\b)", text or ""):
+        base.add(f"sym_{m.group(1).lower()}")
+    return base
 
 
 def _select(query: str, catalog: list[dict]) -> dict:
@@ -79,7 +86,7 @@ def _select(query: str, catalog: list[dict]) -> dict:
         all_labels = labels | ocr_extra
         title = _tokens(fig.get("doc_id", ""))
         return (len(terms & title), 3 * len(terms & caption) + 2 * len(terms & all_labels)
-                + len(translated & (caption | all_labels)))
+                + 2 * len(translated & caption) + len(translated & all_labels))
 
     ranked = sorted(catalog, key=lambda f: scores(f) if numbers else scores(f)[::-1], reverse=True)
     selected = []
@@ -96,11 +103,15 @@ def _select(query: str, catalog: list[dict]) -> dict:
             selected.append(matches[0])
     elif explicit:
         hits = [f for f in ranked if scores(f)[1] > 0]
+        wants_multi = bool(re.search(r"\b(?:list|all|cac hinh|liet ke|nhung hinh|hinh nao|figures|charts|diagrams)\b", normalized))
         if hits:
-            selected = hits[:2]
+            if not wants_multi and (len(hits) == 1 or scores(hits[0])[1] >= max(4, int(scores(hits[1])[1] * 1.5))):
+                selected = hits[:1]
+            else:
+                selected = hits[:2]
         elif len(ranked) == 1:
             selected = ranked
-        elif ranked and re.search(r"\b(?:list|all|cac hinh|liet ke|nhung hinh|hinh nao)\b", normalized):
+        elif ranked and wants_multi:
             selected = ranked[:3]
         else:
             status = "ambiguous" if ranked else "missing"
@@ -294,6 +305,7 @@ def add_figure_evidence(state: AgentState, update: dict, mode: str) -> dict:
 
     # Only original PDF text enters the quote verifier. OCR and model observations stay attributed.
     units = []
+    selected_fig_ids = {fig["figure_id"] for fig in context["figures"]}
     for fig in context["figures"]:
         for field in ("caption", "embedded_text"):
             text = (fig.get(field) or "").strip()[:1800]
@@ -304,10 +316,17 @@ def add_figure_evidence(state: AgentState, update: dict, mode: str) -> dict:
         if ref := fig.get("reference"):
             unit = SourceUnit(f'{fig["figure_id"]}:reference', ref["text"], fig["doc_id"], ref["page_no"], ref["bbox"])
             units.append({**unit.to_dict(), "figure_id": fig["figure_id"], "source_path": fig["source_path"]})
+    canon_unit_ids = {u["id"] for u in units}
+    deduped_existing = [
+        u for u in (update.get("source_units") or [])
+        if isinstance(u, dict)
+        and u.get("id") not in canon_unit_ids
+        and u.get("figure_id") not in selected_fig_ids
+    ]
     return {
         **update,
         "document_schema": {**(update.get("document_schema") or {}), "figure_evidence": context},
-        "source_units": [*units, *(update.get("source_units") or [])],
+        "source_units": [*units, *deduped_existing],
         "reasoning_trace": [*(update.get("reasoning_trace") or []), {
             "agent": "reader", "action": "figure_reading", "status": context["status"],
             "figures": [{
@@ -321,30 +340,158 @@ def add_figure_evidence(state: AgentState, update: dict, mode: str) -> dict:
 
 
 def _plain(text: str) -> str:
-    # Keep PDF text / OCR and model output in the text of the report, including in Markdown exports.
-    return re.sub(r"([\\\x60*_{}\[\]<>#!|])", r"\\\1", " ".join(text.split()))
+    # Escape opening '[' (never ']') so raw PDF citations like [149] never form LaTeX '\[149\]' display math.
+    return re.sub(r"([\\\x60*_{}\[<>#!|])", r"\\\1", " ".join(text.split()))
 
 
-def draft_visual_answer(state: AgentState) -> dict:
+def _clean_doc_display_name(doc_id: str) -> str:
+    cleaned = re.sub(r"^(?:doc|gemini)_[0-9a-f]{6,}_", "", str(doc_id or "").strip(), flags=re.IGNORECASE)
+    return cleaned or str(doc_id or "PDF")
+
+
+def _is_redundant_ocr(ocr_text: str, embedded_text: str) -> bool:
+    if not ocr_text or not embedded_text:
+        return False
+    ocr_toks = {w for w in re.findall(r"[a-z0-9]+", _fold(ocr_text)) if len(w) >= 2}
+    emb_toks = {w for w in re.findall(r"[a-z0-9]+", _fold(embedded_text)) if len(w) >= 2}
+    if not ocr_toks:
+        return True
+    return len(ocr_toks & emb_toks) / max(1, len(ocr_toks)) >= 0.65
+
+
+def _synthesize_natural_visual_answer(
+    query: str,
+    figures: list[dict],
+    spans: list[dict],
+    cross_check_notes: list[str],
+    answer_language: str | None = None,
+    mode: str | None = None,
+) -> str:
+    """
+    Synthesizes a clear, natural, reader-friendly answer in the user's language combining
+    verified PDF text units (both body text and figure captions/labels) and pixel readings,
+    using exact [k] citation numbers matching `build_citation_references(spans)`.
+    Returns empty string in offline/CPU-only modes so deterministic fallback runs untouched.
+    """
+    from agents.agent5_writer.components.report_builder import citation_target_key
+    from core.config import get_run_settings
+    from utils.language import detect_language, normalize_language_code
+    from utils.llm_client import llm_client
+
+    settings = get_run_settings()
+    target_mode = (mode or settings.get_inference_mode("summarizer") or "").lower()
+    if target_mode in {"", "cpu", "cpu_min", "cpu_max", "local_cpu"}:
+        return ""
+    if not settings.GEMINI_API_KEY and not settings.REMOTE_INFERENCE_URL:
+        return ""
+
+    lang = normalize_language_code(answer_language) or detect_language(query, default="vi")
+    refs = build_citation_references(spans)
+    span_by_id = {s["id"]: s for s in spans if isinstance(s, dict) and s.get("id")}
+    ref_by_target = {
+        citation_target_key(span_by_id[r["evidence_id"]]): r["ref_id"]
+        for r in refs
+        if r.get("evidence_id") in span_by_id and citation_target_key(span_by_id[r["evidence_id"]]) is not None
+    }
+
+    source_lines: list[str] = []
+    for sp in spans[:10]:
+        t_key = citation_target_key(sp)
+        ref_id = ref_by_target.get(t_key)
+        marker = f"[{ref_id}]" if ref_id else ""
+        quote = " ".join(str(sp.get("quote") or "").split())[:900]
+        doc_label = _clean_doc_display_name(str(sp.get("doc_id") or ""))
+        source_lines.append(f"{marker} ({doc_label}, trang {sp.get('page_no')}): {quote}")
+
+    visual_lines: list[str] = []
+    for fig in figures:
+        label = fig.get("label") or f"Hình trang {fig.get('page_no')}"
+        reading = fig.get("reading") or {}
+        method = reading.get("method") or "pdf_text"
+        r_text = " ".join(str(reading.get("text") or "").split())
+        if r_text and method in {"vision", "geometry", "ocr"}:
+            visual_lines.append(f"- {label} (trang {fig.get('page_no')}, nguồn đọc ảnh={method}): {r_text}")
+
+    lang_name = "Tiếng Việt tự nhiên, rõ ràng, chuẩn học thuật" if lang == "vi" else "clear, natural academic English"
+    system_instruction = (
+        f"Bạn là trợ lý nghiên cứu khoa học. Hãy trả lời câu hỏi của người dùng bằng {lang_name}.\n"
+        "QUY TẮC BẮT BUỘC:\n"
+        "1. Trả lời TRỰC TIẾP, MẠCH LẠC, DỄ ĐỌC ngay từ câu đầu tiên; giải quyết ĐẦY ĐỦ tất cả các vế trong câu hỏi "
+        "(kể cả phần hỏi về nội dung văn bản bài báo lẫn phần hỏi về chi tiết trong hình/biểu đồ).\n"
+        "2. TUYỆT ĐỐI KHÔNG xuất các nhãn kỹ thuật thô như 'Chú thích:', 'Chữ trong hình:', 'Chữ nhận dạng từ ảnh (OCR):', "
+        "KHÔNG chép nguyên đoạn tiếng Anh dài chưa dịch khi người dùng hỏi bằng tiếng Việt (hãy diễn đạt mượt mà sang tiếng Việt, "
+        "chỉ giữ tên riêng/thuật ngữ chuẩn trong ngoặc khi cần thiết).\n"
+        "3. Trình bày thoáng, dễ nhìn bằng gạch đầu dòng Markdown (`- **Ý chính:** ...`) khi câu hỏi có từ 2 ý trở lên.\n"
+        "4. Chỉ dùng thông tin có trong [Đoạn nguồn PDF] và [Quan sát từ ảnh gốc]. Gắn đúng ký hiệu trích dẫn `[1]`, `[2]` "
+        "cuối câu cho thông tin lấy từ [Đoạn nguồn PDF] (tuyệt đối không tự tạo số trích dẫn ngoài danh sách đã cho). "
+        "Với chi tiết thị giác chỉ đọc được từ điểm ảnh (như quân bài, màu sắc, biểu tượng góc ảnh), nêu rõ là quan sát trên hình.\n"
+        "5. Nếu có chi tiết quá nhỏ/mờ không đọc chắc chắn được từ cả chữ PDF lẫn quan sát ảnh, hãy nói thẳng một câu ngắn gọn thay vì đoán mò."
+    )
+    prompt = (
+        f"Câu hỏi: {query}\n\n"
+        "[Đoạn nguồn PDF đã xác thực]:\n"
+        + ("\n".join(source_lines) if source_lines else "(Không có)")
+        + "\n\n[Quan sát từ ảnh gốc]:\n"
+        + ("\n".join(visual_lines) if visual_lines else "(Chỉ có văn bản PDF gốc)")
+    )
+    if cross_check_notes:
+        prompt += "\n\n[Cảnh báo đối chiếu số liệu]:\n" + "\n".join(cross_check_notes)
+
+    try:
+        raw = llm_client.generate(
+            prompt=prompt,
+            system_instruction=system_instruction,
+            temperature=0.1,
+            max_tokens=1400,
+            json_mode=False,
+            agent="summarizer",
+        )
+        cleaned = re.sub(r"^```(?:markdown|md|text)?\s*|\s*```$", "", (raw or "").strip(), flags=re.I).strip()
+        # Strip any accidental raw citation brackets [99] that aren't in allowed ref_ids
+        allowed_ids = {int(r["ref_id"]) for r in refs if isinstance(r.get("ref_id"), int)}
+        cleaned = re.sub(
+            r"(?<!\\)\[(\d+)\](?!\()",
+            lambda m: m.group(0) if int(m.group(1)) in allowed_ids else f"\\[{m.group(1)}]",
+            cleaned,
+        )
+        if len(cleaned) >= 30:
+            if cross_check_notes:
+                cleaned += "\n\n" + "\n\n".join(f"> {note}" for note in cross_check_notes if note not in cleaned)
+            return cleaned
+    except Exception as exc:
+        logger.warning("Natural visual synthesis skipped (%s); using structured fallback.", type(exc).__name__)
+    return ""
+
+
+def draft_visual_answer(state: AgentState, mode: str | None = None) -> dict:
     context = figure_context(state)
-    blocks, claims, spans = [], [], []
+    blocks, claims, spans, cross_check_notes = [], [], [], []
     if context["status"] == "ambiguous":
-        names = "\n".join(f"- {_plain(name)}" for name in context["choices"])
+        names = "\n".join(f"- {_plain(_clean_doc_display_name(name))}" for name in context["choices"])
         blocks.append(f"Bạn muốn xem hình nào? Hãy cho biết tên tài liệu, số hình hoặc trang.\n\n{names}")
     elif context["status"] == "missing":
         blocks.append("Chưa định vị được hình theo yêu cầu trong PDF đã chọn. Bạn có thể chỉ rõ số trang hoặc tên hình.")
 
+    seen_unit_ids: set[str] = set()
     for fig in context["figures"]:
         label = fig.get("label") or ("Trang scan" if fig.get("kind") == "scan" else "Hình trong PDF")
-        heading = f'**{_plain(label)}** · {_plain(fig["doc_id"])} · trang {fig["page_no"]}'
+        doc_display = _clean_doc_display_name(fig.get("doc_id", ""))
+        heading = f'**{_plain(label)}** · {_plain(doc_display)} · trang {fig["page_no"]}'
         lines = [heading]
+        embedded_raw = ""
         for unit in state.get("source_units") or []:
             if unit.get("figure_id") != fig["figure_id"]:
                 continue
+            uid_cur = str(unit.get("id") or "")
+            if not uid_cur or uid_cur in seen_unit_ids:
+                continue
+            seen_unit_ids.add(uid_cur)
             span = EvidenceSpan(id=f'ev:{unit["id"]}', quote=unit["text"], source_unit_id=unit["id"],
                                 doc_id=unit["doc_id"], page_no=unit["page_no"], bbox=unit["bbox"])
             spans.append(span.to_dict())
             claims.append(AtomicClaim(id=f'claim:{unit["id"]}', text=unit["text"], evidence_ids=[span.id]).to_dict())
+            if unit["id"].endswith(":embedded_text"):
+                embedded_raw = unit["text"]
             prefix = "Chú thích" if unit["id"].endswith(":caption") else "Chữ trong hình"
             if unit["id"].endswith(":reference"):
                 prefix = f'Tác giả giải thích ở trang {unit["page_no"]}'
@@ -355,47 +502,117 @@ def draft_visual_answer(state: AgentState) -> dict:
                 lines.append(line)
         reading = fig.get("reading") or {}
         method = reading.get("method")
-        prefix = {"ocr": "Chữ nhận dạng từ ảnh (OCR)", "vision": "Diễn giải của mô hình thị giác",
+        prefix = {"ocr": "Chữ nhận dạng từ ảnh (OCR)", "vision": " Phân tích chi tiết hình ảnh",
                   "geometry": "So sánh trực tiếp trên ảnh"}.get(method)
         if prefix and reading.get("text"):
-            line = f'{prefix}: {_plain(reading["text"])}'
-            if method == "ocr" and fig.get("reference"):
-                lines.append(line)
-            else:
-                lines.insert(1, line)
+            if not (method == "ocr" and _is_redundant_ocr(reading["text"], embedded_raw)):
+                line = f'{prefix.strip()}: {_plain(reading["text"])}'
+                if method == "ocr" and fig.get("reference"):
+                    lines.append(line)
+                else:
+                    lines.insert(1, line)
         cross_check = fig.get("cross_check") or {}
         if cross_check.get("status") == "entity_value_conflict" and cross_check.get("conflicts"):
             conflict_str = "; ".join(str(c) for c in cross_check["conflicts"][:6])
-            lines.append(
+            warn_msg = (
                 f"Cảnh báo mâu thuẫn nhãn–trị số trên hình: kết quả đọc ảnh ({_plain(conflict_str)}) "
                 "bị đảo nhãn hoặc lệch với văn bản nguồn PDF — không dùng trị số bị đảo này làm kết luận."
             )
+            cross_check_notes.append(warn_msg)
+            lines.append(warn_msg)
         elif cross_check.get("status") in {"visual_only_numbers", "axis_estimated_values"} and cross_check.get("unverified_numbers"):
             unverified = ", ".join(str(n) for n in cross_check["unverified_numbers"][:8])
-            lines.append(
+            note_msg = (
                 f"Lưu ý đối chiếu ảnh–chữ: các giá trị ({_plain(unverified)}) chỉ đọc/ước lượng từ pixel ảnh, "
                 "chưa có trong phần chữ gốc/chú thích PDF — vui lòng kiểm tra trực tiếp trên hình bên dưới."
             )
+            cross_check_notes.append(note_msg)
+            lines.append(note_msg)
         if method not in {"geometry", "vision"}:
             lines.append("Có thể đối chiếu ảnh gốc bên dưới. Những chi tiết đồ họa vượt quá phần chữ đọc được cần được kiểm tra trên hình.")
         blocks.append("\n\n".join(lines))
+
+    # Include top retrieved body-text units ONLY on online multi-part (text + figure) queries
+    from core.config import get_run_settings as _get_settings
+
+    _eff_mode = (mode or _get_settings().get_inference_mode("summarizer") or "").lower()
+    _is_online = _eff_mode not in {"", "cpu", "cpu_min", "cpu_max", "local_cpu"} and bool(
+        _get_settings().GEMINI_API_KEY or _get_settings().REMOTE_INFERENCE_URL
+    )
+    _query_str = str(state.get("query") or "")
+    _is_mixed_query = len(state.get("sub_queries") or []) >= 2 or bool(
+        re.search(r"\b(?:và|so với|cùng với|đồng thời|ngoài ra|and|also|compared to|versus)\b", _query_str, re.IGNORECASE)
+    )
+    extra_span_ids: set[str] = set()
+    if _is_online and _is_mixed_query and context["status"] == "matched" and context["figures"]:
+        seen_quotes = {s["quote"] for s in spans}
+        extra_text_units = 0
+        for unit in state.get("source_units") or []:
+            if extra_text_units >= 6:
+                break
+            if not isinstance(unit, dict) or unit.get("figure_id"):
+                continue
+            uid = str(unit.get("id") or "").strip()
+            utext = str(unit.get("text") or "").strip()
+            udoc = str(unit.get("doc_id") or "").strip()
+            upage = unit.get("page_no")
+            if not uid or uid in seen_unit_ids or not utext or not udoc or type(upage) is not int or utext in seen_quotes:
+                continue
+            seen_unit_ids.add(uid)
+            seen_quotes.add(utext)
+            span = EvidenceSpan(
+                id=f"ev:{uid}",
+                quote=utext,
+                source_unit_id=uid,
+                doc_id=udoc,
+                page_no=upage,
+                bbox=unit.get("bbox"),
+            )
+            spans.append(span.to_dict())
+            claims.append(AtomicClaim(id=f"claim:{uid}", text=utext, evidence_ids=[span.id]).to_dict())
+            extra_span_ids.add(span.id)
+            extra_text_units += 1
+
+    synthesized = ""
+    if context["status"] == "matched" and context["figures"]:
+        synthesized = _synthesize_natural_visual_answer(
+            query=_query_str,
+            figures=context["figures"],
+            spans=spans,
+            cross_check_notes=cross_check_notes,
+            answer_language=state.get("answer_language"),
+            mode=mode,
+        )
+        if not synthesized and extra_span_ids:
+            spans = [s for s in spans if s["id"] not in extra_span_ids]
+            claims = [c for c in claims if not set(c.get("evidence_ids") or []).issubset(extra_span_ids)]
+
+    final_answer = synthesized or "\n\n".join(blocks)
     return {
-        "answer": "\n\n".join(blocks), "claims": claims, "evidence_spans": spans,
+        "answer": final_answer, "claims": claims, "evidence_spans": spans,
         "critic_action": "approve", "answer_status": "CLARIFICATION_NEEDED" if context["status"] == "ambiguous" else "FIGURE_RESPONSE",
-        "reasoning_trace": [{"agent": "summarizer", "action": "summarized_figure_evidence"}],
+        "reasoning_trace": [{"agent": "summarizer", "action": "summarized_figure_evidence", "natural_synthesis": bool(synthesized)}],
     }
 
 
 def check_visual_answer(state: AgentState) -> dict:
-    """Verify literal PDF claims against their exact figure unit. Pixel interpretations remain separate."""
-    units = {u["id"]: u for u in state.get("source_units") or [] if u.get("figure_id")}
+    """Verify literal PDF claims against their exact source unit. Pixel interpretations remain separate."""
+    from collections import defaultdict
+
+    units_by_id: dict[str, list[dict]] = defaultdict(list)
+    for u in state.get("source_units") or []:
+        if isinstance(u, dict) and u.get("id"):
+            units_by_id[u["id"]].append(u)
     spans = {s["id"]: s for s in state.get("evidence_spans") or []}
     verified, rejected = [], []
     for claim in state.get("claims") or []:
         span = spans.get(claim["evidence_ids"][0], {})
-        unit = units.get(span.get("source_unit_id"), {})
-        supported = (unit.get("text") == claim["text"] == span.get("quote")
-                     and (unit.get("doc_id"), unit.get("page_no")) == (span.get("doc_id"), span.get("page_no")))
+        candidates = units_by_id.get(span.get("source_unit_id"), [])
+        supported = any(
+            unit.get("text") == claim["text"] == span.get("quote")
+            and (unit.get("doc_id"), unit.get("page_no")) == (span.get("doc_id"), span.get("page_no"))
+            for unit in candidates
+        )
         verdict = {**claim, "status": "SUPPORT" if supported else "NOT_ENOUGH_INFO",
                    "reason": "Đã đối chiếu với văn bản trên trang nguồn của PDF." if supported else "Chưa xác nhận được đoạn chữ gốc."}
         (verified if supported else rejected).append(verdict)
@@ -409,12 +626,23 @@ def check_visual_answer(state: AgentState) -> dict:
 def write_visual_answer(state: AgentState) -> dict:
     linked = {eid for claim in state.get("verified_claims") or [] for eid in claim.get("evidence_ids", [])}
     refs = build_citation_references([s for s in state.get("evidence_spans") or [] if s["id"] in linked])
-    report = state["answer"]
-    if refs:
+    answer_body = state["answer"]
+    report = answer_body
+    if refs and not re.search(r"(?<!\\)\[\d+\]", answer_body):
         report += "\n\nNguồn PDF · " + " · ".join(f'[{r["ref_id"]}] (Trang {r["page"]})' for r in refs)
     # A verified caption does not establish the accuracy of a pixel interpretation.
-    return {"final_report": report, "confidence": "low",
-            "written_report_data": {"citation_renderer": "figure_report", "citation_references": refs}}
+    return {
+        "answer": answer_body,
+        "short_answer": answer_body,
+        "final_report": report,
+        "confidence": "low",
+        "written_report_data": {
+            "answer": answer_body,
+            "short_answer": answer_body,
+            "citation_renderer": "figure_report",
+            "citation_references": refs,
+        },
+    }
 
 
 def _illustrates_answer(figure: dict, spans: list, query_terms: set[str]) -> bool:
