@@ -89,6 +89,34 @@ WORKER_PROFILE_SPECS = {
         },
         "description": "Best pure-base Dual-T4 stack before fine-tuning (GPU 0: Qwen3-8B NF4, GPU 1: BGE-M3 + BGE-Reranker-v2-M3 + mDeBERTa-v3 NLI fp16)",
     },
+    "hybrid_sota_max": {
+        "canonical_profile": "qa_dual_gpu",
+        "initial_mode": "gpu_finetune",
+        "server_profile": "hybrid_sota_max",
+        "prefetch_qwen": True,
+        "env_defaults": {
+            "QWEN_USE_BASE_INSTRUCT": "true",
+            "BASE_QWEN_MODEL_ID": "unsloth/Qwen3-14B-bnb-4bit",
+            "PREFER_HF_SOTA_NLI": "true",
+            "FACTCHECK_MODEL_ID": "MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7",
+            "FACTCHECK_GPU_INDEX": "0",
+            "EMBEDDING_MODEL": "Qwen/Qwen3-Embedding-8B",
+            "KAGGLE_EMBEDDING_MODEL": "Qwen/Qwen3-Embedding-8B",
+            "EMBEDDING_GPU_INDEX": "1",
+            "EMBEDDING_4BIT": "true",
+            "EMBEDDING_BATCH_SIZE": "2",
+            "RERANKER_MODEL": "Qwen/Qwen3-Reranker-8B",
+            "KAGGLE_RERANKER_MODEL": "Qwen/Qwen3-Reranker-8B",
+            "RERANKER_GPU_INDEX": "1",
+            "RERANKER_4BIT": "true",
+            "QWEN_RERANK_BATCH_SIZE": "2",
+            "PRELOAD_RETRIEVAL_MODELS": "true",
+            "SKIP_DRIVE_LORA_BUNDLE": "true",
+            "RUNNER_STARTUP_TIMEOUT": "900",
+            "WORKER_FINETUNE_TIMEOUT": "900",
+        },
+        "description": "MAX-VRAM Dual-T4 SOTA stack (~23-27GB/30GB): GPU 0 Qwen3-14B NF4 + mDeBERTa-v3 NLI fp16, GPU 1 Qwen3-Embedding-8B NF4 + Qwen3-Reranker-8B NF4",
+    },
     "gpu_max": {
         "canonical_profile": "32b_tp2",
         "initial_mode": "gpu_max",
@@ -557,18 +585,26 @@ def run():
                 print("    Vui lòng kiểm tra lại gói trọng số hoặc kết nối mạng trước khi khởi động Supervisor.")
                 sys.exit(1)
 
-    # Ensure transformers >= 4.51.0 when running Qwen3 models
+    # Ensure transformers >= 4.51.0 when running any Qwen3 family model (Generator, Embedding, or Reranker)
     base_model_spec = m_data.get("base_models", {}).get("qwen_7b_base", {})
     base_model_id = os.environ.get("BASE_QWEN_MODEL_ID", base_model_spec.get("model_id", "Qwen/Qwen2.5-7B-Instruct"))
-    if "qwen3" in base_model_id.lower():
+    active_embed_id = (os.environ.get("KAGGLE_EMBEDDING_MODEL") or os.environ.get("EMBEDDING_MODEL") or "BAAI/bge-m3").strip()
+    active_rerank_id = (os.environ.get("KAGGLE_RERANKER_MODEL") or os.environ.get("RERANKER_MODEL") or "BAAI/bge-reranker-v2-m3").strip()
+    if any("qwen3" in mid.lower() for mid in (base_model_id, active_embed_id, active_rerank_id)):
         try:
             import transformers as _tf
             _ver = tuple(int(x) for x in _tf.__version__.split(".")[:2] if x.isdigit())
             if _ver < (4, 51):
-                print(f"    ⏳ Nâng cấp transformers ({_tf.__version__} -> >=4.51.0) để hỗ trợ {base_model_id}...")
+                print(f"    ⏳ Nâng cấp transformers ({_tf.__version__} -> >=4.51.0) để hỗ trợ cụm Qwen3...")
                 subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-U", "transformers>=4.51.0", "accelerate", "bitsandbytes"], check=False)
         except Exception:
             pass
+
+    try:
+        free_disk_gb = shutil.disk_usage("/").free / (1024 ** 3)
+        print(f"    💾 Dung lượng ổ đĩa trống (/): {free_disk_gb:.1f} GB")
+    except Exception:
+        pass
 
     # -------------------------------------------------------------------------
     # Pre-fetch Base & Specialist Models into local HF cache so Step 4 startup is fast
@@ -579,7 +615,7 @@ def run():
     load_qwen_fallback = os.environ.get("HYBRID_LOAD_QWEN_FALLBACK", "false").strip().lower() in ("true", "1", "yes")
     should_prefetch_qwen = profile_spec["prefetch_qwen"] or (worker_profile_raw == "hybrid_specialist" and load_qwen_fallback)
     if not should_prefetch_qwen:
-        print(f"\n    ⚡ Profile '{worker_profile_raw}' (canonical={worker_profile}): Bỏ qua tải trước {base_model_id} (~15 GB) để tối ưu VRAM/khởi động nhanh.")
+        print(f"\n    ⚡ Profile '{worker_profile_raw}' (canonical={worker_profile}): Bỏ qua tải trước {base_model_id} để tối ưu VRAM/khởi động nhanh.")
     else:
         print(f"\n    🌐 Đồng bộ Base Model {base_model_id} (GPU 0) từ Hugging Face Hub:")
         try:
@@ -594,12 +630,12 @@ def run():
         except Exception as e:
             print(f"      ⚠️ Cảnh báo tải trước Base Model: {e}. Tiến trình Worker sẽ tự tải khi khởi động.")
 
-    # Pre-fetch GPU 1 Specialist Models (BGE-M3, BGE-Reranker-v2-M3, Multilingual NLI)
+    # Pre-fetch Specialist Models (configured Embedding, Reranker, and Multilingual NLI)
     gpu1_hf_models = []
     if os.environ.get("PRELOAD_RETRIEVAL_MODELS", "false").strip().lower() in ("true", "1", "yes") or worker_profile == "ingest":
         gpu1_hf_models.extend([
-            ("BAAI/bge-m3", "Dense Vector Embedding 1024-dim"),
-            (os.environ.get("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3"), "Cross-Encoder Reranker"),
+            (active_embed_id, "Dense Vector Embedding 1024-dim"),
+            (active_rerank_id, "Cross-Encoder / Causal Reranker"),
         ])
     if worker_profile != "ingest" and os.environ.get("PREFER_HF_SOTA_NLI", "false").strip().lower() in ("true", "1", "yes"):
         nli_id = os.environ.get("FACTCHECK_MODEL_ID", "MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7")

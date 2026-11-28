@@ -357,6 +357,8 @@ class WorkerManager:
             "qa_dual_gpu": "qa_dual_gpu",
             "gpu_finetune": "qa_dual_gpu",
             "hybrid_specialist": "qa_dual_gpu",
+            "hybrid_sota_base": "qa_dual_gpu",
+            "hybrid_sota_max": "qa_dual_gpu",
             "32b_tp2": "32b_tp2",
             "gpu_max": "32b_tp2",
         }
@@ -386,7 +388,8 @@ class WorkerManager:
                 "base_qwen_model_id": os.environ.get("BASE_QWEN_MODEL_ID") or pinned_base_models.get("qwen_7b_base", {}).get("model_id"),
                 "gpu_max_model_id": os.environ.get("GPU_MAX_MODEL_ID") or pinned_base_models.get("qwen_32b_awq", {}).get("model_id"),
                 "factcheck_model_id": os.environ.get("FACTCHECK_MODEL_ID") or "MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7",
-                "reranker_model_id": os.environ.get("RERANKER_MODEL") or "BAAI/bge-reranker-v2-m3",
+                "embedding_model_id": os.environ.get("KAGGLE_EMBEDDING_MODEL") or os.environ.get("EMBEDDING_MODEL") or "BAAI/bge-m3",
+                "reranker_model_id": os.environ.get("KAGGLE_RERANKER_MODEL") or os.environ.get("RERANKER_MODEL") or "BAAI/bge-reranker-v2-m3",
             },
             "pinned_base_models": pinned_base_models,
             "token_separation_enforced": os.environ.get("SEPARATE_ADMIN_INFERENCE_TOKENS", "false").strip().lower() in ("true", "1", "yes"),
@@ -827,6 +830,26 @@ class WorkerManager:
                                         timeout=30.0
                                     )
                                     if test_resp.status_code == 200:
+                                        # Record truthful live capabilities from worker /health
+                                        worker_caps = data.get("capabilities") if isinstance(data.get("capabilities"), dict) else {}
+                                        use_base_instruct_live = (
+                                            os.environ.get("QWEN_USE_BASE_INSTRUCT", "false").strip().lower()
+                                            in ("true", "1", "yes")
+                                        )
+                                        qwen_ready = ("qwen_cluster" in active_models) or bool(worker_caps.get("qwen_cluster"))
+                                        for role_cap in ("router", "generator", "critic", "writer"):
+                                            self._live_probed_capabilities[role_cap] = bool(
+                                                qwen_ready and (use_base_instruct_live or role_cap in loaded_adapters)
+                                            )
+                                        self._live_probed_capabilities["fact_checker_nli"] = bool(
+                                            ("factcheck" in active_models) or worker_caps.get("factcheck")
+                                        )
+                                        self._live_probed_capabilities["embedding"] = bool(
+                                            ("embedding" in active_models) or worker_caps.get("embedding")
+                                        )
+                                        self._live_probed_capabilities["reranker"] = bool(
+                                            ("reranker" in active_models) or worker_caps.get("reranker")
+                                        )
                                         # Only advertise layout_reader=True after a live PNG request succeeds!
                                         if (
                                             "layout_reader" in active_models
@@ -1209,11 +1232,20 @@ class WorkerManager:
             for idx, peak_mb in sorted(self._peak_vram_mb.items())
         }
 
-        # Check profiles availability based on manifest & dependencies
-        finetune_available = all(
+        # Check profiles availability based on manifest & live probed worker capabilities
+        required_ft_caps = ["router", "generator", "critic", "fact_checker_nli", "writer"]
+        manifest_ft_available = all(
             self.validated_capabilities.get(req_cap, False)
-            for req_cap in ["router", "generator", "critic", "fact_checker_nli", "writer"]
+            for req_cap in required_ft_caps
         )
+        live_ft_available = (
+            self.active_worker == "gpu_finetune"
+            and all(
+                bool(self.validated_capabilities.get(req_cap, False) or self._live_probed_capabilities.get(req_cap, False))
+                for req_cap in required_ft_caps
+            )
+        )
+        finetune_available = bool(manifest_ft_available or live_ft_available)
 
         vllm_installed = importlib.util.find_spec("vllm") is not None
         has_dual_gpus = len(vram_info) >= 2 or "pytest" in sys.modules
@@ -1226,6 +1258,7 @@ class WorkerManager:
             "writer": False,
             "fact_checker_nli": False,
             "layout_reader": False,
+            "embedding": False,
             "reranker": False,
             "vllm_32b_awq": False,
         }
@@ -1243,16 +1276,16 @@ class WorkerManager:
                 "reranker": False,
             })
         elif self.active_worker == "gpu_finetune":
-            # Truthful capability reporting: Only capabilities actually loaded in kaggle_finetune_server
+            # Truthful capability reporting: manifest-verified checkpoints OR live-probed capabilities loaded in worker
             capabilities.update({
-                "router": self.validated_capabilities.get("router", False),
-                "generator": self.validated_capabilities.get("generator", False),
-                "critic": self.validated_capabilities.get("critic", False),
-                "writer": self.validated_capabilities.get("writer", False),
-                "fact_checker_nli": self.validated_capabilities.get("fact_checker_nli", False),
+                "router": bool(self.validated_capabilities.get("router", False) or self._live_probed_capabilities.get("router", False)),
+                "generator": bool(self.validated_capabilities.get("generator", False) or self._live_probed_capabilities.get("generator", False)),
+                "critic": bool(self.validated_capabilities.get("critic", False) or self._live_probed_capabilities.get("critic", False)),
+                "writer": bool(self.validated_capabilities.get("writer", False) or self._live_probed_capabilities.get("writer", False)),
+                "fact_checker_nli": bool(self.validated_capabilities.get("fact_checker_nli", False) or self._live_probed_capabilities.get("fact_checker_nli", False)),
                 "layout_reader": bool(self._live_probed_capabilities.get("layout_reader", False)),
-                "embedding": False,
-                "reranker": False,
+                "embedding": bool(self._live_probed_capabilities.get("embedding", False)),
+                "reranker": bool(self._live_probed_capabilities.get("reranker", False)),
                 "vllm_32b_awq": False,
             })
 

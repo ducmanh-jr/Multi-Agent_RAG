@@ -268,8 +268,51 @@ def _invoke_compiled_graph(
     trace = [e for e in (final_state.get("reasoning_trace") or []) if isinstance(e, dict)]
     handoffs = [e for e in trace if e.get("action") == "agent_handoff"]
     reader_handoffs = [e for e in handoffs if e.get("sender") == "reader"]
-    answer = final_state.get("final_report") or final_state.get("answer") or ""
-    evidence = final_state.get("source_units") or final_state.get("retrieved_docs") or []
+    report_data = final_state.get("written_report_data") if isinstance(final_state.get("written_report_data"), dict) else {}
+    # Score the audited Executive Summary narrative (matching eval/metrics.py) rather than
+    # speculative Research Gap Radar hypotheses and Audit Ledger Markdown boilerplate.
+    answer = (
+        report_data.get("answer")
+        or final_state.get("answer")
+        or final_state.get("final_report")
+        or ""
+    )
+    raw_evidence = list(final_state.get("source_units") or final_state.get("retrieved_docs") or [])
+    references = report_data.get("references") if isinstance(report_data.get("references"), list) else []
+    if references:
+        # Align positions 1..K to exact inline [1]..[K] bibliography references while retaining
+        # uncited retrieved source units afterwards so Recall still penalizes missed relevant sources.
+        ordered_refs = sorted(
+            (r for r in references if isinstance(r, dict)),
+            key=lambda r: int(r.get("ref_id") or 0),
+        )
+        aligned_evidence: List[Dict[str, Any]] = []
+        used_unit_indices: set[int] = set()
+        for ref in ordered_refs:
+            r_doc = str(ref.get("doc_id") or "").strip()
+            r_page = ref.get("page_no")
+            matched_idx: int | None = None
+            for u_idx, u in enumerate(raw_evidence):
+                if u_idx in used_unit_indices or not isinstance(u, dict):
+                    continue
+                if str(u.get("doc_id") or "").strip() == r_doc and u.get("page_no") == r_page:
+                    matched_idx = u_idx
+                    break
+            if matched_idx is not None:
+                used_unit_indices.add(matched_idx)
+                aligned_evidence.append(raw_evidence[matched_idx])
+            else:
+                aligned_evidence.append({
+                    "doc_id": r_doc,
+                    "page_no": r_page,
+                    "text": str(ref.get("preview") or ""),
+                })
+        for u_idx, u in enumerate(raw_evidence):
+            if u_idx not in used_unit_indices:
+                aligned_evidence.append(u)
+        evidence = aligned_evidence
+    else:
+        evidence = raw_evidence
 
     return {
         "answer": answer,

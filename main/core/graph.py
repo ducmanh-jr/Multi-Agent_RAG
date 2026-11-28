@@ -140,11 +140,12 @@ def orchestrator_router_node(
                 planning_source = "llm_refined"
 
         # Single-Planner consolidation: when Gemini didn't refine and Kaggle router tool is available
-        # in gpu_finetune/hybrid mode, Supervisor invokes `/api/router` directly so Retrieval never re-plans.
+        # in gpu_finetune/hybrid mode, Supervisor invokes `/api/router` ONLY for HIGH-complexity queries
+        # (multi-hop / multi-document comparison / synthesis) so simple/medium single-doc queries stay fast.
         if (
             planning_source == "deterministic"
             and retry_count == 0
-            and base_plan.complexity in {"MEDIUM", "HIGH"}
+            and base_plan.complexity == "HIGH"
             and active_mode in {"gpu_finetune", "hybrid"}
             and bool(getattr(run_settings, "REMOTE_INFERENCE_URL", ""))
         ):
@@ -153,9 +154,9 @@ def orchestrator_router_node(
 
                 router_res = llm_client.call_kaggle_specialist(
                     endpoint="api/router",
-                    payload={"query": resolved_query, "adapter": "router"},
+                    payload={"query": resolved_query, "adapter": "router", "max_new_tokens": 160},
                     adapter="router",
-                    timeout=15.0,
+                    timeout=25.0,
                     allow_generate_fallback=False,
                 )
                 if isinstance(router_res, dict) and router_res:

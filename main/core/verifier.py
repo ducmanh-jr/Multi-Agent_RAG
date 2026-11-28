@@ -11,7 +11,10 @@ Two-Tier Agentic Verification & Grounding Engine (L3-L4):
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+import contextvars
 import json
+import math
 import re
 import unicodedata
 from typing import Any, Optional, Callable
@@ -431,11 +434,38 @@ _UNIT_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-_METRIC_ANCHOR_WORDS = {
+_METRIC_NAME_ANCHORS = {
     "accuracy", "f1", "bleu", "rouge", "precision", "recall", "latency",
     "throughput", "memory", "loss", "perplexity", "mrr", "ndcg", "auc",
+}
+_METRIC_ANCHOR_WORDS = _METRIC_NAME_ANCHORS | {
     "bert", "roberta", "llama", "qwen", "gpt", "transformer", "lora",
 }
+
+_GROUPED_THOUSANDS_RE = re.compile(r"^[1-9]\d{0,2}(?:\.\d{3})+$")
+
+
+def _numeric_tokens_match(claim_num: str, ctx_num: str) -> bool:
+    """
+    Compares normalized numeric tokens (where ',' was mapped to '.') while honoring:
+      - Exact string equality (`28.4` == `28.4`, `2014` == `2014`)
+      - Thousands-grouped equivalents (`10,000` / `10.000` <-> `10000`)
+      - Trailing-zero decimal equivalents (`21.0` <-> `21`, `3.0` <-> `3`)
+    Never conflates decimals like `1.5` with `15` or `0.001` with `1`.
+    """
+    if claim_num == ctx_num:
+        return True
+    c_strip = claim_num.replace(".", "") if _GROUPED_THOUSANDS_RE.match(claim_num) else claim_num
+    e_strip = ctx_num.replace(".", "") if _GROUPED_THOUSANDS_RE.match(ctx_num) else ctx_num
+    if c_strip == e_strip:
+        return True
+    # Only compare as floats when neither token is a thousands-grouped integer (e.g. '10.000' vs '10')
+    if not _GROUPED_THOUSANDS_RE.match(claim_num) and not _GROUPED_THOUSANDS_RE.match(ctx_num):
+        try:
+            return math.isclose(float(claim_num), float(ctx_num), abs_tol=1e-9, rel_tol=0.0)
+        except ValueError:
+            return False
+    return False
 
 
 def _canonicalize_unit(raw_unit: Optional[str]) -> str:
@@ -565,7 +595,7 @@ def check_numerical_and_date_consistency(claim_text: str, full_context_text: str
         candidates = [
             (c_num, c_unit, c_pos)
             for (c_num, c_unit, c_pos) in ctx_matches
-            if c_num == norm_num
+            if _numeric_tokens_match(norm_num, c_num)
         ]
         unit_matched_positions: list[int] = []
         for _, c_unit, c_pos in candidates:
@@ -597,20 +627,21 @@ def check_numerical_and_date_consistency(claim_text: str, full_context_text: str
                 if c_unit not in {"%", "pp"}:
                     unit_matched_positions.append(c_pos)
 
-        local_win = cleaned_lower[max(0, claim_pos - 100) : min(len(cleaned_lower), claim_pos + 100)]
+        is_bare_year = (not claim_unit) and bool(re.match(r"^(?:19\d\d|20\d\d)$", norm_num))
+        local_win = cleaned_lower[max(0, claim_pos - 60) : min(len(cleaned_lower), claim_pos + 60)]
         local_tokens = set(re.findall(r"[a-z0-9_]+", local_win))
-        local_anchors = {a for a in (_METRIC_ANCHOR_WORDS & local_tokens) if a in ctx_lower}
+        local_anchors = set() if is_bare_year else {a for a in (_METRIC_NAME_ANCHORS & local_tokens) if a in ctx_lower}
 
         found = False
         if unit_matched_positions:
-            if not local_anchors or len(ctx_text) <= 180:
+            if not local_anchors or len(ctx_text) <= 360:
                 found = True
             else:
                 for pos in unit_matched_positions:
-                    win_start = max(0, pos - 140)
-                    win_end = min(len(ctx_lower), pos + 140)
+                    win_start = max(0, pos - 240)
+                    win_end = min(len(ctx_lower), pos + 240)
                     window = ctx_lower[win_start:win_end]
-                    if all(re.search(rf"\b{re.escape(anchor)}\b", window) for anchor in local_anchors):
+                    if any(re.search(rf"\b{re.escape(anchor)}\b", window) for anchor in local_anchors):
                         found = True
                         break
 
@@ -1150,12 +1181,12 @@ _SYMBOLIC_MATH_NLI_RE = re.compile(
 )
 
 _CROSS_LINGUAL_MATH_NLI_SYSTEM = (
-    "You are a strict cross-lingual scientific NLI Fact-Checker (English/Vietnamese + Math/LaTeX). "
-    "Compare each claim against its exact source evidence (which may be in another language or use mathematical symbols "
-    "such as P_i, sum, :=, N^-1, R_bar). Return ONLY a JSON object with key 'evaluations': a list of objects each with "
+    "You are a strict cross-lingual scientific NLI Fact-Checker (English/Vietnamese + Math/LaTeX + Structured Tables). "
+    "Compare each claim against its exact source evidence (which may be in another language, use mathematical symbols "
+    "such as P_i, sum, :=, N^-1, R_bar, or contain pipe-delimited table rows). Return ONLY a JSON object with key 'evaluations': a list of objects each with "
     "'claim_id' (string), 'verdict' ('SUPPORT' | 'CONTRADICT' | 'NOT_ENOUGH_INFO'), 'confidence' (float 0.0 to 1.0), "
-    "and 'reason' (short explanation). Rules: SUPPORT if the claim accurately translates, paraphrases, or states facts/formulas "
-    "present in the evidence; CONTRADICT if any number, sign, condition, or meaning conflicts with the evidence; "
+    "and 'reason' (short explanation). Rules: SUPPORT if the claim accurately translates, paraphrases, or states facts/formulas/table cells "
+    "present in the evidence; CONTRADICT if any number, sign, condition, row-column pairing, or meaning conflicts with the evidence; "
     "NOT_ENOUGH_INFO if the evidence does not contain enough information to verify the claim."
 )
 
@@ -1167,6 +1198,16 @@ def _is_cross_lingual_or_symbolic_math(claim: str, evidence: str) -> bool:
     if bool(_VI_DIACRITIC_RE.search(c_str)) != bool(_VI_DIACRITIC_RE.search(e_str)):
         return True
     if _SYMBOLIC_MATH_NLI_RE.search(c_str) or _SYMBOLIC_MATH_NLI_RE.search(e_str):
+        return True
+    return False
+
+
+def _is_structured_table_evidence(evidence: str) -> bool:
+    """Detects Markdown/pipe-delimited table evidence where 278M NLI encoders under-entail valid row claims."""
+    e_str = str(evidence or "")
+    if " | " in e_str:
+        return True
+    if e_str.count("|") >= 4 and "\n" in e_str:
         return True
     return False
 
@@ -1236,14 +1277,28 @@ def _batch_qwen_cross_lingual_nli(candidates: list[dict[str, Any]], client: Any)
 
 def specialist_nli(pairs, client, *, finetuned):
     """Bind each classifier result to the single claim and premise used for inference."""
-    results = []
-    xl_math_candidates = []
-    for pair in pairs:
+    pairs = list(pairs or [])
+    if not pairs:
+        return []
+
+    def _call_one(pair: dict[str, Any]):
         payload = ({"claims": [pair["claim"]], "context": pair["evidence"], "adapter": "factcheck"}
                    if finetuned else {"claim": pair["claim"], "evidence_context": pair["evidence"]})
-        response = client.call_kaggle_specialist(
+        return client.call_kaggle_specialist(
             endpoint="api/factcheck", payload=payload, fallback_prompt=nli_prompt([pair]),
             fallback_system=NLI_INSTRUCTION, adapter="critic", allow_generate_fallback=not finetuned)
+
+    if len(pairs) > 1:
+        max_workers = min(4, len(pairs))
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = [pool.submit(contextvars.copy_context().run, _call_one, pair) for pair in pairs]
+            responses = [f.result() for f in futures]
+    else:
+        responses = [_call_one(pairs[0])]
+
+    results = []
+    xl_math_candidates = []
+    for pair, response in zip(pairs, responses):
         if not isinstance(response, dict):
             continue
         if not finetuned and isinstance(response.get("results"), list):  # generative fallback
@@ -1275,14 +1330,17 @@ def specialist_nli(pairs, client, *, finetuned):
             "rationale": reason,
         }
         results.append(entry)
-        # Small encoder NLI (mDeBERTa/BGE 278M) is monolingual and blind to EN<->VI translation & symbolic math.
-        # When /api/factcheck is online and returns non-SUPPORT on a cross-lingual/math pair, escalate to Qwen3-8B on GPU 0.
-        if (
+        # Small encoder NLI (mDeBERTa/BGE 278M) struggles on EN<->VI translation, symbolic math, and pipe tables.
+        # Escalate qualifying non-SUPPORT (cross-lingual/math) or NOT_ENOUGH_INFO (structured tables) pairs to Qwen3-8B on GPU 0.
+        should_escalate = (
             finetuned
             and valid_conf
-            and verdict != "SUPPORT"
-            and _is_cross_lingual_or_symbolic_math(pair["claim"], pair["evidence"])
-        ):
+            and (
+                (verdict != "SUPPORT" and _is_cross_lingual_or_symbolic_math(pair["claim"], pair["evidence"]))
+                or (verdict == "NOT_ENOUGH_INFO" and _is_structured_table_evidence(pair["evidence"]))
+            )
+        )
+        if should_escalate:
             xl_math_candidates.append(pair)
 
     if xl_math_candidates:
@@ -1341,6 +1399,115 @@ def _extract_focused_evidence_window(claim_text: str, full_evidence: str, max_ch
     return text[start:end]
 
 
+_SENTENCE_SPAN_SPLIT_RE = re.compile(
+    r"(?<!\bEq\.)(?<!\bFig\.)(?<!\bTab\.)(?<!\bSec\.)(?<!\bal\.)(?<!\bvs\.)(?<!\be\.g\.)(?<!\bi\.e\.)"
+    r"(?<=[.!?])\s+(?=[A-ZÀ-Ỹ0-9\"(\[])|\n{2,}"
+)
+
+
+def _extract_sentence_focused_premise(
+    claim_text: str,
+    anchor_quote: str,
+    full_evidence: str,
+    max_chars: int = 550,
+) -> str:
+    """
+    Extracts a complete-sentence contiguous substring (~150-550 chars) from a long prose PDF chunk
+    for Cross-Encoder NLI (e.g. mDeBERTa-v3-base-xnli), preventing 1500+ char page dumps (author
+    lists, footnotes, surrounding paragraphs) from diluting entailment probabilities while always
+    preserving full sentence boundaries (including matrix negation clauses like 'It is false that ...').
+    Structured pipe-delimited tables keep a wider 900-char window so headers stay paired with rows.
+    """
+    text = str(full_evidence or "")
+    if len(text) <= max_chars:
+        return text
+    if _is_structured_table_evidence(text):
+        return _extract_focused_evidence_window(anchor_quote or claim_text, text, max_chars=900)
+
+    # Build exact (start, end, sentence_str) spans preserving offsets inside `text`
+    spans: list[tuple[int, int, str]] = []
+    cursor = 0
+    for m in _SENTENCE_SPAN_SPLIT_RE.finditer(text):
+        seg = text[cursor:m.start()].strip()
+        if seg:
+            s_idx = text.find(seg, cursor, m.start())
+            if s_idx >= 0:
+                spans.append((s_idx, s_idx + len(seg), seg))
+        cursor = m.end()
+    tail = text[cursor:].strip()
+    if tail:
+        s_idx = text.find(tail, cursor)
+        if s_idx >= 0:
+            spans.append((s_idx, s_idx + len(tail), tail))
+
+    if len(spans) <= 1:
+        return _extract_focused_evidence_window(anchor_quote or claim_text, text, max_chars=max_chars)
+
+    c_str = str(claim_text or "").strip()
+    a_str = str(anchor_quote or "").strip()
+    c_nums = extract_numbers_and_years(c_str)
+    c_raw_toks = {
+        w for w in re.findall(r"[a-zA-Z0-9À-ỹ]+", c_str.lower())
+        if len(w) >= 3 and w not in _MATCH_STOPWORDS
+    }
+    c_exp_toks = expand_bilingual_tokens(c_str, c_raw_toks) - _MATCH_STOPWORDS
+
+    # 1. If a verified verbatim anchor_quote aligns with claim numbers/content, expand to its full sentence(s)
+    if a_str and a_str != c_str:
+        a_nums = extract_numbers_and_years(a_str)
+        a_toks = {w for w in re.findall(r"[a-zA-Z0-9À-ỹ]+", a_str.lower()) if len(w) >= 3 and w not in _MATCH_STOPWORDS}
+        num_aligned = (not c_nums) or any(
+            _numeric_tokens_match(cn, an) for cn in c_nums for an in a_nums
+        )
+        tok_aligned = bool(c_exp_toks & a_toks)
+        if num_aligned or tok_aligned:
+            matched_indices = [
+                idx for idx, (_, _, sent) in enumerate(spans)
+                if _quote_in_source(a_str, sent) or (len(sent) >= 24 and _quote_in_source(sent, a_str))
+            ]
+            if matched_indices:
+                s0 = spans[matched_indices[0]][0]
+                e1 = spans[matched_indices[-1]][1]
+                focused = text[s0:e1].strip()
+                if focused and len(focused) <= 680:
+                    return focused
+                if focused:
+                    return _extract_focused_evidence_window(c_str or a_str, focused, max_chars=max_chars)
+
+    # 2. Score each complete sentence by numeric + bilingual content overlap with the claim
+    scores: list[float] = []
+    for _, _, sent in spans:
+        s_nums = extract_numbers_and_years(sent)
+        num_hits = sum(
+            1 for cn in c_nums
+            if any(_numeric_tokens_match(cn, sn) for sn in s_nums)
+        )
+        s_toks = {w for w in re.findall(r"[a-zA-Z0-9À-ỹ]+", sent.lower()) if len(w) >= 3 and w not in _MATCH_STOPWORDS}
+        tok_hits = len(c_exp_toks & s_toks)
+        scores.append(4.0 * num_hits + 1.0 * tok_hits)
+
+    best_idx = max(range(len(scores)), key=lambda i: scores[i])
+    if scores[best_idx] > 0:
+        lo = hi = best_idx
+        # Optionally expand by 1 neighboring relevant sentence if the best sentence is short (<320 chars)
+        while (spans[hi][1] - spans[lo][0]) < 320:
+            left_ok = lo > 0 and scores[lo - 1] > 0 and (spans[hi][1] - spans[lo - 1][0]) <= max_chars
+            right_ok = hi + 1 < len(spans) and scores[hi + 1] > 0 and (spans[hi + 1][1] - spans[lo][0]) <= max_chars
+            if left_ok and (not right_ok or scores[lo - 1] >= scores[hi + 1]):
+                lo -= 1
+            elif right_ok:
+                hi += 1
+            else:
+                break
+        focused = text[spans[lo][0]:spans[hi][1]].strip()
+        if focused:
+            if len(focused) <= 680:
+                return focused
+            return _extract_focused_evidence_window(c_str or a_str, focused, max_chars=max_chars)
+
+    return _extract_focused_evidence_window(a_str or c_str, text, max_chars=max_chars)
+
+
 def review_claims(state, reviewer: Optional[Callable] = None):
     """Evaluate every claim once. A malformed provider verdict cannot certify a claim."""
     abstention = review_abstention(state)
@@ -1396,8 +1563,11 @@ def review_claims(state, reviewer: Optional[Callable] = None):
             {
                 "claim_id": c["id"],
                 "claim": c["text"],
-                "evidence": _extract_focused_evidence_window(
-                    anchor, str(u.get("text") or u.get("content") or ""), max_chars=1800
+                "evidence": _extract_sentence_focused_premise(
+                    c["text"],
+                    anchor if anchor != c["text"] else "",
+                    str(u.get("text") or u.get("content") or ""),
+                    max_chars=550,
                 ),
             }
             for c, u, anchor in zip(batch, premises, anchors) if u
@@ -1519,6 +1689,12 @@ def review_claims(state, reviewer: Optional[Callable] = None):
                         status = "NOT_ENOUGH_INFO"
                     elif not check_entity_value_binding(claim["text"], quote)[0]:
                         status = "NOT_ENOUGH_INFO"
+                elif status == "NOT_ENOUGH_INFO":
+                    # Catch deterministic math/script/sign contradictions (e.g., x^2 vs x_2) that encoder NLI marked NEI.
+                    math_ok_nei, math_reason_nei = check_math_and_domain_consistency(claim["text"], str(source))
+                    if not math_ok_nei:
+                        status = "CONTRADICT"
+                        reason = f"Cổng toán học phát hiện mâu thuẫn ký hiệu/biểu thức: {math_reason_nei}"
                 bound_span_ids: list[str] | None = None
                 if status == "SUPPORT" and unit and unit.get("id"):
                     u_span_ids = [

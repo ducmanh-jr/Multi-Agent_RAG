@@ -552,5 +552,323 @@ def test_find_page_tables_robust_recovers_vector_tables_when_pymupdf_layout_miss
     assert deduped_entries[0][0] == [48.0, 420.0, 543.0, 476.0]
 
 
+def test_live_bug_a_numeric_consistency_multi_anchor_and_thousands():
+    """Bug A regression: multi-anchor long sentences and thousands separators must not false-reject valid numbers."""
+    from core.verifier import check_numerical_and_date_consistency
+
+    claim_vi = "Trên tác vụ dịch máy WMT 2014 từ tiếng Anh sang tiếng Đức, mô hình Transformer (big) đạt điểm BLEU là 28,4."
+    quote_en = (
+        "On the WMT 2014 English-to-German translation task, the big transformer model "
+        "(Transformer (big) in Table 2) outperforms the best previously reported models including "
+        "ensembles by more than 2.0 BLEU, establishing a new state-of-the-art BLEU score of 28.4."
+    )
+    assert check_numerical_and_date_consistency(claim_vi, quote_en) == (True, True, [])
+
+    # Thousands equivalence (10,000 <-> 10.000 <-> 10000), while preserving decimal strictness (1.5 != 15)
+    assert check_numerical_and_date_consistency(
+        "LoRA giảm số lượng tham số cần huấn luyện đi 10.000 lần và bộ nhớ GPU đi 3 lần.",
+        "LoRA can reduce the number of trainable parameters by 10,000 times and the GPU memory requirement by 3 times.",
+    ) == (True, True, [])
+    assert check_numerical_and_date_consistency(
+        "LoRA reduces trainable parameters by 10000 times.",
+        "LoRA can reduce the number of trainable parameters by 10,000 times.",
+    ) == (True, True, [])
+    num_ok_bad, _, missing_bad = check_numerical_and_date_consistency(
+        "Latency was 1.5 ms.",
+        "Latency was 15 ms.",
+    )
+    assert num_ok_bad is False
+    assert any("1.5" in m for m in missing_bad)
+
+
+def test_live_bug_b_gemini_summarizer_enforces_query_language_prompt(monkeypatch):
+    """Bug B regression: GeminiSummarizerAgent must lock English prompts for English queries and Vietnamese for VI."""
+    from modes.gemini.summarizer import GeminiSummarizerAgent
+    from utils.llm_client import llm_client
+
+    captured: list[dict] = []
+
+    def fake_call_gemini(*, prompt, system_instruction, **kwargs):
+        captured.append({"prompt": prompt, "system_instruction": system_instruction})
+        return json.dumps({
+            "answer_status": "ANSWERED",
+            "answer": "Transformer (big) achieves 28.4 BLEU on WMT 2014.",
+            "claims": [{"text": "Transformer (big) achieves 28.4 BLEU on WMT 2014.", "unit_id": "u1"}],
+            "evidence_spans": [{"quote": "BLEU score of 28.4.", "unit_id": "u1"}],
+            "is_supported": True,
+            "critic_action": "approve",
+            "missing_key_points": [],
+            "unsupported_claims": [],
+        })
+
+    monkeypatch.setattr(llm_client, "_call_gemini", fake_call_gemini)
+    units = [{"id": "u1", "doc_id": "attn", "page_no": 1, "text": "The Transformer (big) achieves a BLEU score of 28.4."}]
+
+    out_en = GeminiSummarizerAgent().run({
+        "query": "What BLEU score does Transformer (big) achieve?",
+        "source_units": units,
+    })
+    assert out_en["answer_language"] == "en"
+    assert "strictly in English" in captured[-1]["system_instruction"]
+    assert captured[-1]["prompt"].startswith("Question:")
+
+    out_vi = GeminiSummarizerAgent().run({
+        "query": "Mô hình Transformer (big) đạt điểm BLEU bao nhiêu?",
+        "source_units": units,
+    })
+    assert out_vi["answer_language"] == "vi"
+    assert "bằng tiếng Việt" in captured[-1]["system_instruction"]
+    assert captured[-1]["prompt"].startswith("Câu hỏi:")
+
+
+def test_live_bug_c_table_escalation_parallel_nli_and_nei_math_upgrade(monkeypatch):
+    """Bug C & D3 regression: pipe-table NEI escalates to Qwen3-8B; math script swap upgrades NEI -> CONTRADICT."""
+    from core import verifier as verifier_mod
+
+    table_evidence = (
+        "Table 4: Serving Throughput Results on Single Tesla T4.\n"
+        "Model | Quantization | Throughput (samples/s) | Latency p50 (ms)\n"
+        "Qwen3-8B | 4-bit NF4 | 14.6 | 68.5"
+    )
+    escalated_ids: list[str] = []
+
+    class FakeClient:
+        def call_kaggle_specialist(self, *, endpoint, payload, **kwargs):
+            assert endpoint == "api/factcheck"
+            claim = payload["claims"][0]
+            if "14.6" in claim:
+                return {"evaluations": [{"claim": claim, "verdict": "NOT_ENOUGH_INFO", "confidence": 0.96, "reason": "BGE NLI Head: NOT_ENOUGH_INFO"}]}
+            return {"evaluations": [{"claim": claim, "verdict": "SUPPORT", "confidence": 0.95, "reason": "BGE NLI Head: SUPPORT"}]}
+
+    def fake_qwen_batch(candidates, client):
+        escalated_ids.extend(c["claim_id"] for c in candidates)
+        return {
+            c["claim_id"]: {"status": "SUPPORT", "rationale": "Qwen3 Table NLI: SUPPORT (p=0.98)"}
+            for c in candidates
+        }
+
+    monkeypatch.setattr(verifier_mod, "_batch_qwen_cross_lingual_nli", fake_qwen_batch)
+    pairs = [
+        {"claim_id": "c1", "claim": "Qwen3-8B achieves 14.6 samples/s with 4-bit NF4.", "evidence": table_evidence},
+        {"claim_id": "c2", "claim": "Latency p50 is 68.5 ms.", "evidence": "Latency p50 is 68.5 ms on T4."},
+    ]
+    nli_rows = verifier_mod.specialist_nli(pairs, FakeClient(), finetuned=True)
+    assert [r["claim_id"] for r in nli_rows] == ["c1", "c2"]
+    assert escalated_ids == ["c1"]
+    assert nli_rows[0]["status"] == "SUPPORT"
+
+    # Math script swap (x_2 vs x^2) when encoder NLI predicts NOT_ENOUGH_INFO must upgrade to CONTRADICT
+    units = [{
+        "id": "u_math",
+        "doc_id": "math_doc",
+        "page_no": 1,
+        "text": "The regularization term penalizes the squared norm x^2 of the adapter weights with lambda = 0.01.",
+    }]
+    state = {
+        "query": "What does the regularization term penalize?",
+        "answer": "The regularization term penalizes x_2 with lambda = 0.01.",
+        "claims": [{"id": "cm1", "text": "The regularization term penalizes x_2 with lambda = 0.01.", "unit_id": "u_math"}],
+        "source_units": units,
+    }
+    res = verifier_mod.review_claims(
+        state,
+        reviewer=lambda ps: [{"claim_id": "cm1", "status": "NOT_ENOUGH_INFO", "quote": units[0]["text"], "rationale": "NEI"}],
+    )
+    assert res["fact_check_label"] == "contradict"
+    assert res["rejected_claims"][0]["status"] == "CONTRADICT"
+
+
+def test_live_bug_d_router_skips_medium_single_doc_and_bounds_high_tokens(monkeypatch):
+    """Bug D1 regression: orchestrator_router_node skips slow /api/router on MEDIUM single-doc queries."""
+    from core.config import settings
+    from core.graph import orchestrator_router_node
+    from utils.llm_client import llm_client
+
+    calls: list[dict] = []
+
+    def fake_specialist(*, endpoint, payload, **kwargs):
+        calls.append({"endpoint": endpoint, "payload": payload})
+        return {"intent": "COMPARISON", "sub_queries": ["sub1", "sub2"], "alpha": 0.5, "top_k": 6}
+
+    monkeypatch.setattr(settings, "REMOTE_INFERENCE_URL", "https://kaggle.test")
+    monkeypatch.setattr(llm_client, "call_kaggle_specialist", fake_specialist)
+
+    # Single-doc factual query (MEDIUM) -> must stay fast deterministic without calling /api/router
+    res_med = orchestrator_router_node(
+        {"query": "What BLEU score does the Transformer (big) model achieve on WMT 2014 English-to-German translation?"},
+        execution_mode="gpu_finetune",
+    )
+    assert calls == []
+    assert res_med["document_schema"]["planner_source"] == "deterministic"
+
+    # HIGH complexity comparative query -> calls /api/router with bounded max_new_tokens=160
+    res_high = orchestrator_router_node(
+        {"query": "Compare Method A and Method B latency and accuracy across benchmarks"},
+        execution_mode="gpu_finetune",
+    )
+    assert len(calls) == 1
+    assert calls[0]["endpoint"] == "api/router"
+    assert calls[0]["payload"].get("max_new_tokens") == 160
+    assert res_high["document_schema"]["planner_source"] == "kaggle_router_tool"
+
+
+def test_live_bug_e_worker_manager_live_probed_capabilities_in_base_instruct_mode(monkeypatch, tmp_path):
+    """Bug E regression: WorkerManager truthfully exposes live-probed hybrid_sota_base capabilities."""
+    import asyncio
+    import httpx
+    from unittest.mock import patch
+    from kaggle.worker_manager import WorkerManager
+
+    clean_root = tmp_path / "base_instruct_root"
+    (clean_root / "kaggle").mkdir(parents=True)
+    repo_root = Path(__file__).resolve().parents[2]
+    (clean_root / "kaggle" / "weights_manifest.json").write_bytes(
+        (repo_root / "kaggle" / "weights_manifest.json").read_bytes()
+    )
+    wm = WorkerManager(project_dir=str(clean_root))
+    assert wm.get_status_payload()["worker_profiles_available"]["gpu_finetune"] is False
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/health":
+            return httpx.Response(200, json={
+                "status": "online",
+                "ready": True,
+                "mandatory_ready": True,
+                "worker_profile": "hybrid_sota_base",
+                "loaded_adapters": [],
+                "active_models": ["qwen_cluster", "factcheck", "embedding", "reranker"],
+                "capabilities": {
+                    "qwen_cluster": True,
+                    "factcheck": True,
+                    "embedding": True,
+                    "reranker": True,
+                    "layout_reader": False,
+                },
+            })
+        if request.url.path == "/api/router":
+            return httpx.Response(200, json={"intent": "academic_research", "sub_queries": ["healthcheck"]})
+        return httpx.Response(404)
+
+    transport = httpx.MockTransport(handler)
+    real_async_client = httpx.AsyncClient
+
+    def patched_async_client(*args, **kwargs):
+        kwargs["transport"] = transport
+        return real_async_client(*args, **kwargs)
+
+    monkeypatch.setenv("KAGGLE_WORKER_PROFILE", "hybrid_sota_base")
+    monkeypatch.setenv("QWEN_USE_BASE_INSTRUCT", "true")
+    with patch("httpx.AsyncClient", side_effect=patched_async_client):
+        ok = asyncio.run(wm._poll_worker_ready("gpu_finetune", "http://127.0.0.1:8001", timeout_seconds=2))
+    assert ok is True
+    wm.active_worker = "gpu_finetune"
+    status = wm.get_status_payload()
+    caps = status["active_worker_capabilities"]
+    assert caps["router"] is True
+    assert caps["generator"] is True
+    assert caps["critic"] is True
+    assert caps["writer"] is True
+    assert caps["fact_checker_nli"] is True
+    assert caps["embedding"] is True
+    assert caps["reranker"] is True
+    assert status["worker_profiles_available"]["gpu_finetune"] is True
+
+
+def test_live_bug_f_sentence_focused_nli_premise_avoids_page_dump_dilution():
+    """Sentence-focused NLI premise extraction isolates the supporting sentence(s) from 1600-char PDF pages."""
+    from core.verifier import _extract_sentence_focused_premise
+
+    noisy_header = (
+        "arXiv:1706.03762v7 [cs.CL] 2 Aug 2023. Attention Is All You Need. "
+        "Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Lukasz Kaiser. "
+        "Google Brain and Google Research. " * 6
+    )
+    target_sent = (
+        "On the WMT 2014 English-to-German translation task, the big transformer model (Transformer (big) in Table 2) "
+        "outperforms the best previously reported models including ensembles by more than 2.0 BLEU, "
+        "establishing a new state-of-the-art BLEU score of 28.4."
+    )
+    trailing = " Training took 3.5 days on 8 P100 GPUs. " * 10
+    full_page = f"{noisy_header}{target_sent}{trailing}"
+    assert len(full_page) > 1500
+
+    claim = "On the WMT 2014 English-to-German translation task, the Transformer (big) model achieves a BLEU score of 28.4."
+    focused = _extract_sentence_focused_premise(claim, target_sent, full_page, max_chars=550)
+    assert focused in full_page
+    assert target_sent in focused
+    assert len(focused) <= 550
+    assert "Ashish Vaswani" not in focused
+
+    # Without anchor_quote, numeric + content scoring still isolates target_sent cleanly
+    focused_no_anchor = _extract_sentence_focused_premise(claim, "", full_page, max_chars=550)
+    assert focused_no_anchor in full_page
+    assert "28.4" in focused_no_anchor
+    assert len(focused_no_anchor) <= 550
+
+
+def test_hybrid_sota_max_profile_and_t4_prequantized_loader():
+    """Verify hybrid_sota_max Dual-T4 MAX-VRAM preset and pre-quantized bnb-4bit FP16 override."""
+    from types import SimpleNamespace
+    from kaggle import run_kaggle
+
+    spec = run_kaggle.normalize_worker_profile("hybrid_sota_max")
+    assert spec["canonical_profile"] == "qa_dual_gpu"
+    assert spec["prefetch_qwen"] is True
+
+    env_box: dict[str, str] = {}
+    run_kaggle.apply_profile_env_defaults("hybrid_sota_max", env=env_box)
+    assert env_box["BASE_QWEN_MODEL_ID"] == "unsloth/Qwen3-14B-bnb-4bit"
+    assert env_box["EMBEDDING_MODEL"] == "Qwen/Qwen3-Embedding-8B"
+    assert env_box["RERANKER_MODEL"] == "Qwen/Qwen3-Reranker-8B"
+    assert env_box["FACTCHECK_GPU_INDEX"] == "0"
+    assert env_box["EMBEDDING_GPU_INDEX"] == "1"
+    assert env_box["RERANKER_GPU_INDEX"] == "1"
+
+    srv = importlib.import_module("kaggle.kaggle_finetune_server")
+    assert srv._canonical_worker_profile("hybrid_sota_max") == "qa_dual_gpu"
+
+    # Pre-quantized bnb-4bit checkpoint must override compute dtype -> float16 for Tesla T4 without conflicting kwarg
+    class FakePreQuantConfig:
+        @staticmethod
+        def from_pretrained(*args, **kwargs):
+            return SimpleNamespace(
+                quantization_config={
+                    "quant_method": "bitsandbytes",
+                    "load_in_4bit": True,
+                    "bnb_4bit_compute_dtype": "bfloat16",
+                }
+            )
+
+    kw_prequant = srv._prepare_t4_quantized_load_kwargs(
+        "unsloth/Qwen3-14B-bnb-4bit",
+        target_gpu=0,
+        bnb_config=object(),
+        revision_arg={},
+        auto_config_cls=FakePreQuantConfig,
+    )
+    assert "quantization_config" not in kw_prequant
+    assert kw_prequant["config"].quantization_config["bnb_4bit_compute_dtype"] == "float16"
+
+    # Unquantized model keeps explicit bnb_config
+    class FakePlainConfig:
+        @staticmethod
+        def from_pretrained(*args, **kwargs):
+            return SimpleNamespace()
+
+    sentinel_bnb = object()
+    kw_plain = srv._prepare_t4_quantized_load_kwargs(
+        "Qwen/Qwen3-Embedding-8B",
+        target_gpu=1,
+        bnb_config=sentinel_bnb,
+        revision_arg={},
+        auto_config_cls=FakePlainConfig,
+    )
+    assert kw_plain["quantization_config"] is sentinel_bnb
+    assert "config" not in kw_plain
+
+
+
+
+
 
 

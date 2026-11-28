@@ -13,6 +13,7 @@ import re
 from typing import Any
 
 from agents.agent3_summarizer.components.generator import (
+    _clean_unit_id_ref,
     bind_evidence_spans,
     bind_summary_claims,
     pack_context_by_token_budget,
@@ -21,7 +22,7 @@ from core.base_agent import BaseAgent
 from core.config import get_role_max_tokens
 from core.handoff_inputs import revision_note
 from core.schemas import SummarizerCriticOutput, SummarizerGeneratorOutput
-from core.state import AgentState
+from core.state import AgentState, EvidenceSpan
 from core.verifier import (
     TRAINING_LAB_CRITIC_SYSTEM_PROMPT,
     TRAINING_LAB_GENERATOR_SYSTEM_PROMPT,
@@ -29,13 +30,14 @@ from core.verifier import (
 )
 from utils.llm_client import llm_client
 from utils.domain_guard import check_out_of_domain, build_out_of_domain_response
+from utils.language import detect_language, normalize_language_code
 from modes.cpu_min.summarizer import CPUMinSummarizerAgent
 
 
 class GPUFinetuneSummarizerAgent(BaseAgent):
     """Summarizer Agent executing Fine-Tuned Generator + Critic Dual-QLoRA loop."""
 
-    def __init__(self, max_internal_retry: int = 2):
+    def __init__(self, max_internal_retry: int = 1):
         super().__init__(name="GPUFinetuneSummarizerAgent", max_internal_retry=max_internal_retry)
         self.cpu_engine = CPUMinSummarizerAgent()
 
@@ -49,16 +51,19 @@ class GPUFinetuneSummarizerAgent(BaseAgent):
         )
 
         clean_q = query.strip()
+        ans_lang = normalize_language_code(state.get("answer_language")) or detect_language(clean_q, default="vi")
         effective_q = str(state.get("resolved_query") or clean_q).strip() or clean_q
         is_ood, ood_reason = check_out_of_domain(effective_q, source_units)
         if is_ood:
             self.logger.info(f"[GPU Finetune Summarizer] Zero-Hallucination Guard triggered: {ood_reason}")
-            res = build_out_of_domain_response(clean_q, model_family="gpu_finetune_guard", answer_language=state.get("answer_language"))
+            res = build_out_of_domain_response(clean_q, model_family="gpu_finetune_guard", answer_language=ans_lang)
             trace = self.log_action("gpu_finetune_summarization_completed", {"status": "out_of_domain", "reason": ood_reason})
             res["reasoning_trace"] = [trace]
+            res["answer_language"] = ans_lang
             return res
 
-        context_str, included = pack_context_by_token_budget(source_units, max_tokens=1500)
+        context_str, included = pack_context_by_token_budget(source_units, max_tokens=2400)
+        included_by_id = {u.get("id"): u for u in included if isinstance(u, dict) and u.get("id")}
 
         current_answer = ""
         current_claims: list = []
@@ -76,8 +81,13 @@ class GPUFinetuneSummarizerAgent(BaseAgent):
             internal_attempts += 1
 
             # 1. Generator Pass: Call Remote fine-tuned Generator QLoRA
+            lang_hint = (
+                "Write 'answer' and all 'claims' strictly in English; copy 'evidence_spans[].quote' verbatim from the source unit."
+                if ans_lang == "en"
+                else "Viết 'answer' và toàn bộ 'claims' bằng tiếng Việt; chép nguyên văn 'evidence_spans[].quote' từ đoạn nguồn."
+            )
             feedback = "\n\n".join(part for part in (revision, last_critic_feedback) if part)
-            gen_prompt = f"User Question: {effective_q}\n\n"
+            gen_prompt = f"User Question: {effective_q}\nLanguage requirement: {lang_hint}\n\n"
             if feedback:
                 gen_prompt += f"[Previous Critic Feedback to Address]:\n{feedback}\n\n"
             gen_prompt += f"Context:\n{context_str}\n\n"
@@ -106,7 +116,7 @@ class GPUFinetuneSummarizerAgent(BaseAgent):
             except Exception as e:
                 self.logger.warning(f"[GPU Finetune Summarizer] Remote generator fallback to local: {e}")
                 result = self.cpu_engine.run(state)
-                return {**result, "generator_model_family": "gpu_finetune_cpu_fallback"}
+                return {**result, "generator_model_family": "gpu_finetune_cpu_fallback", "answer_language": ans_lang}
 
             if gen_status in {"NOT_FOUND_IN_DOCUMENT", "INSUFFICIENT_EVIDENCE", "CLARIFICATION_NEEDED"} and current_answer:
                 trace = self.log_action(
@@ -116,6 +126,7 @@ class GPUFinetuneSummarizerAgent(BaseAgent):
                 return {
                     "answer": current_answer,
                     "answer_status": gen_status,
+                    "answer_language": ans_lang,
                     "claims": [],
                     "evidence_spans": [],
                     "critic_action": "request_more_context" if gen_status != "CLARIFICATION_NEEDED" else "lower_confidence",
@@ -125,11 +136,40 @@ class GPUFinetuneSummarizerAgent(BaseAgent):
                 }
 
             refined_spans = bind_evidence_spans(current_spans_raw, included)
+            # If the generator cited a valid unit_id in claims but slightly altered a ligature/quote in evidence_spans,
+            # bind a deterministic verbatim slice from that exact included unit so valid synthesis is preserved.
+            covered_uids = {sp["source_unit_id"] for sp in refined_spans}
+            from core.verifier import _extract_focused_evidence_window
+
+            for rc in current_claims:
+                if not isinstance(rc, dict):
+                    continue
+                rc_txt = str(rc.get("text") or rc.get("claim") or "").strip()
+                req_uids = _clean_unit_id_ref(
+                    rc.get("unit_id") or rc.get("source_unit_id") or rc.get("evidence_unit_id") or rc.get("unit_ids")
+                )
+                for uid in req_uids:
+                    if uid not in covered_uids and uid in included_by_id:
+                        u_obj = included_by_id[uid]
+                        u_txt = " ".join(str(u_obj.get("text") or "").split()).strip()
+                        if u_txt and u_obj.get("doc_id") and type(u_obj.get("page_no")) is int:
+                            focused_q = _extract_focused_evidence_window(rc_txt or effective_q, u_txt, max_chars=480)
+                            refined_spans.append(
+                                EvidenceSpan(
+                                    id=f"ev_{len(refined_spans)+1}",
+                                    quote=focused_q,
+                                    source_unit_id=uid,
+                                    doc_id=u_obj["doc_id"],
+                                    page_no=u_obj["page_no"],
+                                    bbox=u_obj.get("bbox"),
+                                ).to_dict()
+                            )
+                            covered_uids.add(uid)
             claims = bind_summary_claims(current_claims or [s["quote"] for s in refined_spans], refined_spans)
             if not current_answer or not claims:
                 self.logger.info("[GPU Finetune Summarizer] No grounded synthesis; using extractive reader output.")
                 result = self.cpu_engine.run(state)
-                return {**result, "generator_model_family": "gpu_finetune_cpu_fallback"}
+                return {**result, "generator_model_family": "gpu_finetune_cpu_fallback", "answer_language": ans_lang}
 
             # 2. Critic Pass: Call Remote fine-tuned Critic QLoRA only if generator succeeded
             try:
@@ -142,7 +182,7 @@ class GPUFinetuneSummarizerAgent(BaseAgent):
                         "context": context_str,
                         "claims": critic_claims,
                         "adapter": "critic",
-                        "max_tokens": get_role_max_tokens("critic"),
+                        "max_tokens": min(get_role_max_tokens("critic"), 224),
                     },
                     fallback_prompt=f"Question: {clean_q}\nContext:\n{context_str}\nAnswer:\n{current_answer}\nClaims: {critic_claims}",
                     fallback_system=TRAINING_LAB_CRITIC_SYSTEM_PROMPT,
@@ -189,6 +229,7 @@ class GPUFinetuneSummarizerAgent(BaseAgent):
 
         return {
             "answer": cited_answer,
+            "answer_language": ans_lang,
             "claims": claims,
             "evidence_spans": refined_spans,
             "critic_action": critic_action,

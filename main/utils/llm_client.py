@@ -250,8 +250,8 @@ class UnifiedLLMClient:
 
     ENDPOINT_DEFAULT_TIMEOUTS: dict[str, float] = {
         "api/router": 20.0,
-        "api/embed": 25.0,
-        "api/rerank": 25.0,
+        "api/embed": 45.0,
+        "api/rerank": 45.0,
         "api/factcheck": 30.0,
         "api/reader/layout": 45.0,
         "api/summarize/critic": 45.0,

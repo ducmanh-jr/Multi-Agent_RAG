@@ -259,6 +259,46 @@ def _resolve_pinned_base_revision(
     return None
 
 
+def _prepare_t4_quantized_load_kwargs(
+    model_id: str,
+    *,
+    target_gpu: int | str,
+    bnb_config: Any,
+    revision_arg: dict[str, Any],
+    auto_config_cls: Any = None,
+) -> dict[str, Any]:
+    """
+    Builds `from_pretrained` kwargs safe for Tesla T4 (Turing sm_75, native float16 only):
+    - If `model_id` is already pre-quantized in bitsandbytes 4-bit (e.g. `unsloth/Qwen3-14B-bnb-4bit`),
+      mutates its `config.quantization_config['bnb_4bit_compute_dtype'] = 'float16'` and passes `config=cfg`
+      (without a conflicting `quantization_config` kwarg) so T4 uses native FP16 tensor cores.
+    - Otherwise passes `quantization_config=bnb_config` when requested.
+    """
+    load_kwargs: dict[str, Any] = {
+        "device_map": {"": target_gpu} if isinstance(target_gpu, int) else target_gpu,
+        "torch_dtype": torch.float16 if torch is not None else "float16",
+        "trust_remote_code": True,
+        **revision_arg,
+    }
+    cfg_cls = auto_config_cls
+    if cfg_cls is None:
+        from transformers import AutoConfig as cfg_cls
+    try:
+        cfg = cfg_cls.from_pretrained(model_id, trust_remote_code=True, **revision_arg)
+    except Exception:
+        cfg = None
+
+    prequant_qcfg = getattr(cfg, "quantization_config", None) if cfg is not None else None
+    if isinstance(prequant_qcfg, dict) and prequant_qcfg.get("quant_method") == "bitsandbytes":
+        updated_qcfg = dict(prequant_qcfg)
+        updated_qcfg["bnb_4bit_compute_dtype"] = "float16"
+        cfg.quantization_config = updated_qcfg
+        load_kwargs["config"] = cfg
+    elif bnb_config is not None:
+        load_kwargs["quantization_config"] = bnb_config
+    return load_kwargs
+
+
 def load_qwen_lora_cluster():
     global _qwen_model_name, _qwen_revision
     if "qwen_cluster" in _models:
@@ -281,14 +321,14 @@ def load_qwen_lora_cluster():
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    model = AutoModelForCausalLM.from_pretrained(
+    target_dev: int | str = 0 if _cuda_device_count() >= 1 else "auto"
+    load_kwargs = _prepare_t4_quantized_load_kwargs(
         model_id,
-        quantization_config=bnb_config,
-        device_map={"": 0} if _cuda_device_count() >= 1 else "auto",
-        torch_dtype=torch.float16,
-        trust_remote_code=True,
-        **revision_arg,
+        target_gpu=target_dev,
+        bnb_config=bnb_config,
+        revision_arg=revision_arg,
     )
+    model = AutoModelForCausalLM.from_pretrained(model_id, **load_kwargs)
 
     # Attach PEFT LoRA Adapters (skipped when QWEN_USE_BASE_INSTRUCT=true, e.g., pure Qwen3-8B/14B testing)
     use_base_instruct = os.getenv("QWEN_USE_BASE_INSTRUCT", "false").strip().lower() in ("true", "1", "yes")
@@ -602,6 +642,7 @@ def _canonical_worker_profile(profile: str) -> str:
         "gpu_finetune": "qa_dual_gpu",
         "hybrid_specialist": "qa_dual_gpu",
         "hybrid_sota_base": "qa_dual_gpu",
+        "hybrid_sota_max": "qa_dual_gpu",
         "32b_tp2": "32b_tp2",
         "gpu_max": "32b_tp2",
     }
@@ -729,10 +770,10 @@ def healthcheck():
 def router_endpoint(req: RouterRequest, response: Response = None):
     prompt = (
         "You are an intelligent routing agent for an Academic RAG system. "
-        "Analyze the user query and output a JSON object with: intent, sub_queries, alpha (0.0 to 1.0), top_k (1 to 15), and reasoning.\n\n"
+        "Return ONLY a concise JSON object with keys: intent, sub_queries (max 3 short strings), alpha (0.0 to 1.0), top_k (1 to 12), and reasoning (1 short sentence).\n\n"
         f"Query: {req.query}\nOutput JSON:"
     )
-    token_limit = max(8, min(int(req.max_new_tokens or 512), 512))
+    token_limit = max(8, min(int(req.max_new_tokens or 192), 256))
     raw = generate_with_qwen(prompt, adapter="router", max_new_tokens=token_limit, temperature=0.1, response=response)
     parsed = _parse_output_object(raw)
     if parsed:
@@ -1063,7 +1104,7 @@ def load_reranker_model():
     if _is_causal_llm_reranker(active_model):
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
-        revision = os.getenv("RERANKER_REVISION") or _hub_revision(active_model) or hashlib.sha256(active_model.encode("utf-8")).hexdigest()
+        revision = os.getenv("RERANKER_REVISION") or _hub_revision(active_model) or hashlib.sha256(active_model.encode("utf-8")).hexdigest()[:40]
         if not re.fullmatch(r"[a-f0-9]{40}", revision):
             raise ValueError("Reranker revision must be a full commit SHA")
         rev_kw = {"revision": revision} if os.getenv("RERANKER_REVISION") or _hub_revision(active_model) else {}
@@ -1074,18 +1115,19 @@ def load_reranker_model():
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
         if bnb_cfg is not None:
-            model = AutoModelForCausalLM.from_pretrained(
+            rerank_kwargs = _prepare_t4_quantized_load_kwargs(
                 active_model,
-                quantization_config=bnb_cfg,
-                device_map={"": target_gpu},
-                torch_dtype=dtype,
-                trust_remote_code=True,
-                **rev_kw,
+                target_gpu=target_gpu,
+                bnb_config=bnb_cfg,
+                revision_arg=rev_kw,
             )
+            model = AutoModelForCausalLM.from_pretrained(active_model, **rerank_kwargs)
         else:
             model = AutoModelForCausalLM.from_pretrained(
                 active_model, torch_dtype=dtype, trust_remote_code=True, **rev_kw
             ).to(device)
+        if gpu_count and hasattr(torch.cuda, "empty_cache"):
+            torch.cuda.empty_cache()
 
         skip_lora = os.getenv("SKIP_DRIVE_LORA_BUNDLE", "false").strip().lower() in ("true", "1", "yes")
         lora_dir = None if skip_lora else (find_weight_path("07_reranker_qwen3") or find_weight_path("07_reranker_lora"))
@@ -1224,7 +1266,7 @@ def load_embedding_model():
     dtype = torch.float16 if gpu_count else torch.float32
 
     if _is_qwen3_embedding(active_model):
-        revision = os.getenv("EMBEDDING_REVISION") or _hub_revision(active_model) or hashlib.sha256(active_model.encode("utf-8")).hexdigest()
+        revision = os.getenv("EMBEDDING_REVISION") or _hub_revision(active_model) or hashlib.sha256(active_model.encode("utf-8")).hexdigest()[:40]
         if not re.fullmatch(r"[a-f0-9]{40}", revision):
             raise ValueError("EMBEDDING_REVISION must be a full commit SHA")
         rev_kw = {"revision": revision} if os.getenv("EMBEDDING_REVISION") or _hub_revision(active_model) else {}
@@ -1235,18 +1277,19 @@ def load_embedding_model():
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
         if bnb_cfg is not None:
-            model = AutoModel.from_pretrained(
+            emb_kwargs = _prepare_t4_quantized_load_kwargs(
                 active_model,
-                quantization_config=bnb_cfg,
-                device_map={"": target_gpu},
-                torch_dtype=dtype,
-                trust_remote_code=True,
-                **rev_kw,
+                target_gpu=target_gpu,
+                bnb_config=bnb_cfg,
+                revision_arg=rev_kw,
             )
+            model = AutoModel.from_pretrained(active_model, **emb_kwargs)
         else:
             model = AutoModel.from_pretrained(
                 active_model, torch_dtype=dtype, trust_remote_code=True, **rev_kw
             ).to(device)
+        if gpu_count and hasattr(torch.cuda, "empty_cache"):
+            torch.cuda.empty_cache()
 
         if int(getattr(model.config, "hidden_size", 0)) < EMBEDDING_DIMENSION:
             raise ValueError("Embedding hidden_size smaller than required Matryoshka dimension")
