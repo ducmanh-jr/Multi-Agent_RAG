@@ -8,6 +8,7 @@ Hardware Accelerator & Real-Time Backend Capability Probe for:
 from __future__ import annotations
 
 import os
+import threading
 import time
 from typing import Any, Optional
 import httpx
@@ -23,7 +24,8 @@ os.environ.setdefault("OLLAMA_KEEP_ALIVE", "30m")
 os.environ.setdefault("OMP_NUM_THREADS", "8")
 
 
-_PROBE_CACHE: tuple[tuple[str, str, str, bool], float, dict[str, Any]] | None = None
+_PROBE_CACHE: tuple[tuple[Any, ...], float, dict[str, Any]] | None = None
+_PROBE_LOCK = threading.RLock()
 
 
 def get_local_hardware_profile() -> dict[str, Any]:
@@ -65,7 +67,7 @@ def get_local_hardware_profile() -> dict[str, Any]:
     }
 
 
-def probe_ollama_models(base_url: Optional[str] = None, timeout: float = 1.8) -> dict[str, Any]:
+def probe_ollama_models(base_url: Optional[str] = None, timeout: float = 0.6) -> dict[str, Any]:
     """Checks if local Ollama server is running and lists installed models."""
     settings = get_run_settings()
     url = (base_url or settings.LOCAL_CPU_URL or "http://localhost:11434").rstrip("/")
@@ -101,14 +103,16 @@ def probe_ollama_models(base_url: Optional[str] = None, timeout: float = 1.8) ->
     }
 
 
-def probe_kaggle_worker(remote_url: Optional[str] = None, timeout: float = 5.0) -> dict[str, Any]:
+def probe_kaggle_worker(remote_url: Optional[str] = None, timeout: float = 2.0) -> dict[str, Any]:
     """Checks if the remote Kaggle GPU Worker (Multi-LoRA or vLLM 32B) is online."""
     url = (remote_url or get_run_settings().REMOTE_INFERENCE_URL or "").rstrip("/")
     if not url:
         return {"online": False, "url": "", "adapters": [], "has_vllm_32b": False}
 
+    health_reachable = False
     try:
         resp = httpx.get(f"{url}/health", timeout=timeout)
+        health_reachable = True
         if resp.status_code == 200:
             data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
             worker_health = data.get("worker_health") if isinstance(data.get("worker_health"), dict) else {}
@@ -131,24 +135,26 @@ def probe_kaggle_worker(remote_url: Optional[str] = None, timeout: float = 5.0) 
                 "is_gpu_finetune": is_gpu_finetune,
             }
     except Exception:
-        pass
+        # Fast-fail if host/tunnel is completely unreachable instead of timing out a second time on /v1/models
+        return {"online": False, "url": url, "adapters": [], "has_vllm_32b": False}
 
-    # Also check OpenAI-compatible /v1/models endpoint (for pure vLLM 32B server)
-    try:
-        resp = httpx.get(f"{url}/v1/models", timeout=timeout)
-        if resp.status_code == 200:
-            data = resp.json()
-            model_ids = [m.get("id", "") for m in data.get("data", [])]
-            return {
-                "online": True,
-                "url": url,
-                "adapters": [],
-                "model": model_ids[0] if model_ids else "Qwen/Qwen3-32B-AWQ",
-                "has_vllm_32b": True,
-                "has_nli": False,
-            }
-    except Exception:
-        pass
+    # Only check OpenAI-compatible /v1/models if host responded over HTTP (e.g. 404 on /health for pure vLLM)
+    if health_reachable:
+        try:
+            resp = httpx.get(f"{url}/v1/models", timeout=timeout)
+            if resp.status_code == 200:
+                data = resp.json()
+                model_ids = [m.get("id", "") for m in data.get("data", [])]
+                return {
+                    "online": True,
+                    "url": url,
+                    "adapters": [],
+                    "model": model_ids[0] if model_ids else "Qwen/Qwen3-32B-AWQ",
+                    "has_vllm_32b": True,
+                    "has_nli": False,
+                }
+        except Exception:
+            pass
 
     return {"online": False, "url": url, "adapters": [], "has_vllm_32b": False}
 
@@ -243,13 +249,14 @@ def probe_all_capabilities(force_refresh: bool = False, *, live_gemini_probe: bo
     )
     default_model = getattr(settings, "DEFAULT_LLM_MODEL", "") or ""
     key = (settings.LOCAL_CPU_URL, settings.LOCAL_CPU_MODEL, settings.REMOTE_INFERENCE_URL, gemini_ready, default_model, do_live_probe)
-    now = time.monotonic()
-    cached = _PROBE_CACHE
-    if not force_refresh and cached and cached[0] == key and now - cached[1] < 10.0:
-        return cached[2]
+    with _PROBE_LOCK:
+        now = time.monotonic()
+        cached = _PROBE_CACHE
+        if not force_refresh and cached and cached[0] == key and now - cached[1] < 45.0:
+            return cached[2]
 
-    ollama_info = probe_ollama_models()
-    kaggle_info = probe_kaggle_worker()
+        ollama_info = probe_ollama_models()
+        kaggle_info = probe_kaggle_worker()
 
     # Check remaining Gemini quota today
     gemini_used_today = 0
@@ -306,5 +313,6 @@ def probe_all_capabilities(force_refresh: bool = False, *, live_gemini_probe: bo
             "has_vllm_32b": kaggle_info.get("has_vllm_32b", False),
         },
     }
-    _PROBE_CACHE = (key, now, status)
+    with _PROBE_LOCK:
+        _PROBE_CACHE = (key, time.monotonic(), status)
     return status

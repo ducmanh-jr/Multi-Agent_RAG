@@ -364,11 +364,9 @@ class UnifiedLLMClient:
         raw_candidates = [
             self.settings.DEFAULT_LLM_MODEL,
             self.settings.FALLBACK_LLM_MODEL,
-            "gemini-3.6-flash",
             "gemini-3.5-flash",
             "gemini-3.5-flash-lite",
             "gemini-3-flash-preview",
-            "gemini-flash-lite-latest",
         ]
         candidate_models = []
         for m in raw_candidates:
@@ -465,8 +463,9 @@ class UnifiedLLMClient:
                         break
                     elif resp.status_code in (429, 503):
                         last_error = RuntimeError(f"Gemini HTTP {resp.status_code} on {model}")
-                        if resp.status_code == 429 and "exceeded your current quota" in (resp.text or "").lower():
-                            cooldowns[model] = time.monotonic() + 180.0
+                        if resp.status_code == 429:
+                            is_daily = "exceeded your current quota" in (resp.text or "").lower()
+                            cooldowns[model] = time.monotonic() + (180.0 if is_daily else 20.0)
                         elif resp.status_code == 503:
                             cooldowns[model] = time.monotonic() + 60.0
                         retry_after = 0.0
