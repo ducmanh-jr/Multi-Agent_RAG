@@ -21,8 +21,10 @@ from agents.agent1_retrieval.tools.semantic_pipeline import (
     build_cross_lingual_subqueries,
     enhance_with_dense_and_rerank,
     extract_searchable_figure_chunks,
+    find_referenced_table_chunks,
 )
 from core.base_agent import BaseAgent
+from core.handoff_inputs import is_focused_retrieval
 from core.state import AgentState
 from core.supervisor import supervisor_planner
 from core.tools import load_or_parse_selected_pdf
@@ -79,7 +81,7 @@ class GeminiRetrievalAgent(BaseAgent):
         pdf_paths = state.get("pdf_paths") or ([pdf_path] if pdf_path else [])
         # 1. Scope strictly to user-selected PDF(s) if provided (with shared index cache)
         existing_paths = [p for p in pdf_paths if p and os.path.exists(p)]
-        cached_lexical = build_cached_pdf_lexical_pool(existing_paths) if existing_paths else None
+        cached_lexical = build_cached_pdf_lexical_pool(existing_paths, loader=load_or_parse_selected_pdf) if existing_paths else None
         if cached_lexical is not None:
             active_pool, active_fts, active_bm25 = cached_lexical
             pdf_chunks = active_pool
@@ -121,10 +123,17 @@ class GeminiRetrievalAgent(BaseAgent):
             page_diverse=True,
         )
 
-        # 4. Entity & Intact-Table/Equation priority boost
-        fused = boost_entities_and_tables(effective_q, fused, required_entities, top_k)
-
+        # 4. Entity & Intact-Table/Equation priority boost (honor focused Reader handoff queries)
+        focused = is_focused_retrieval(state)
+        boost_q = " ".join(dict.fromkeys([*sub_queries[:2], effective_q])) if focused and sub_queries else effective_q
         seen_ids = {c.get("id") for c in seen_chunks if isinstance(c, dict)}
+        if focused and active_pool:
+            targeted_tables = find_referenced_table_chunks(active_pool, search_queries, seen_ids)
+            if targeted_tables:
+                target_ids = {t.get("id") for t in targeted_tables}
+                fused = [*targeted_tables, *(d for d in fused if d.get("id") not in target_ids)]
+        fused = boost_entities_and_tables(boost_q, fused, required_entities, top_k)
+
         fresh_docs = [d for d in fused if d.get("id") not in seen_ids]
         no_new_evidence = len(fresh_docs) == 0 and retry_count > 0
         if not fresh_docs and fused:

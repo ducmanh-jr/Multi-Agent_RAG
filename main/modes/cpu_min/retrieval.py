@@ -23,6 +23,7 @@ from agents.agent1_retrieval.tools.semantic_pipeline import (
     boost_entities_tables_and_equations,
     build_cross_lingual_subqueries,
     extract_searchable_figure_chunks,
+    find_referenced_table_chunks,
 )
 from core.base_agent import BaseAgent
 from core.comparison_plan import (
@@ -294,12 +295,26 @@ class CPUMinRetrievalAgent(BaseAgent):
             results = sampled_summary if sampled_summary else active_pool[: max(top_k, 20)]
         else:
             # First-pass multi-query lexical search (always bridged VI<->EN + equation/table structure)
+            focused = is_focused_retrieval(state)
             effective_q = str(state.get("resolved_query") or clean_q).strip() or clean_q
-            bridged_queries = build_cross_lingual_subqueries(effective_q, active_pool)
+            boost_q = (
+                " ".join(dict.fromkeys([*sub_queries[:2], effective_q]))
+                if focused and sub_queries
+                else effective_q
+            )
+            bridged_queries = build_cross_lingual_subqueries(boost_q, active_pool)
             primary_queries = list(dict.fromkeys([*sub_queries, *bridged_queries]))[:6]
             results = search(primary_queries, max(top_k + 4, top_k), "primary")
+            if focused and active_pool:
+                seen_id_set = {c.get("id") for c in seen_chunks if isinstance(c, dict)}
+                targeted_tables = find_referenced_table_chunks(active_pool, primary_queries, seen_id_set)
+                if targeted_tables:
+                    existing_rids = {d.get("id") for d in results if isinstance(d, dict)}
+                    results = [*targeted_tables, *(d for d in results if d.get("id") not in {t.get("id") for t in targeted_tables})]
+                    if len(results) < len(existing_rids):
+                        results = results
             if results:
-                results = boost_entities_tables_and_equations(effective_q, results, required_entities, top_k)
+                results = boost_entities_tables_and_equations(boost_q, results, required_entities, top_k)
 
         # 3. Internal Coverage Gate: Check if required_entities are covered
         if required_entities and results and not is_summary_query:

@@ -12,6 +12,7 @@ from typing import Any
 from agents.agent2_reader.tools.reader_pipeline import (
     build_source_units_from_docs,
     collect_unique_pdf_paths,
+    evaluate_reader_table_completeness,
     ingest_pdf_fallbacks,
     merge_or_append_unit,
 )
@@ -87,6 +88,7 @@ class GPUMaxReaderAgent(BaseAgent):
             merged_dups += extra_merged
 
         source_units = [u.to_dict() for u in ordered_units]
+        reader_decision, unresolved_tables = evaluate_reader_table_completeness(state, source_units)
 
         if not document_schema:
             document_schema = {
@@ -96,6 +98,7 @@ class GPUMaxReaderAgent(BaseAgent):
                 "failed_pdfs": failed_pdfs,
                 "dedup_merged_count": merged_dups,
             }
+        document_schema["unresolved_table_references"] = unresolved_tables
 
         trace = self.log_action(
             "gpu_max_reading_completed",
@@ -107,11 +110,16 @@ class GPUMaxReaderAgent(BaseAgent):
                 "dedup_merged_count": merged_dups,
                 "failed_pdf_count": len(failed_pdfs),
                 "failed_pdfs": failed_pdfs,
+                "proposed_handoff": reader_decision.action if reader_decision else None,
+                "unresolved_table_references": unresolved_tables,
             },
         )
 
-        return {
+        result: dict[str, Any] = {
             "document_schema": document_schema,
             "source_units": source_units,
             "reasoning_trace": [trace],
         }
+        if reader_decision is not None:
+            result["agent_decision"] = reader_decision
+        return result

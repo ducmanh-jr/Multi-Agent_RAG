@@ -107,7 +107,11 @@ _LEXICAL_INDEX_LOCK = threading.RLock()
 _LEXICAL_INDEX_CACHE: OrderedDict[tuple[Any, ...], tuple[list[dict[str, Any]], Any, Any]] = OrderedDict()
 
 
-def build_cached_pdf_lexical_pool(pdf_paths: Iterable[str | None]) -> tuple[list[dict[str, Any]], Any, Any] | None:
+def build_cached_pdf_lexical_pool(
+    pdf_paths: Iterable[str | None],
+    *,
+    loader: Any | None = None,
+) -> tuple[list[dict[str, Any]], Any, Any] | None:
     """
     Loads selected PDF chunks + searchable figure chunks and builds `(active_pool, active_fts, active_bm25)`
     ONCE per document state, sharing the compiled C-Engine FTS5 and BM25 indexes across parallel DAG
@@ -117,14 +121,15 @@ def build_cached_pdf_lexical_pool(pdf_paths: Iterable[str | None]) -> tuple[list
     from agents.agent1_retrieval.tools.fts5_search import SQLiteFTS5Searcher
     from core.tools import load_or_parse_selected_pdf
 
+    effective_loader = loader or load_or_parse_selected_pdf
     valid_paths = [str(p) for p in dict.fromkeys(p for p in pdf_paths if p)]
     if not valid_paths:
         return None
 
     per_doc_lists: list[list[dict[str, Any]]] = []
-    sig_parts: list[Any] = []
+    sig_parts: list[Any] = [id(effective_loader)]
     for p in valid_paths:
-        chunks = load_or_parse_selected_pdf(p)
+        chunks = effective_loader(p)
         if chunks:
             per_doc_lists.append(chunks)
             sig_parts.append((os.path.abspath(p), id(chunks), len(chunks)))
@@ -386,6 +391,80 @@ def boost_entities_and_tables(
 ) -> list[dict[str, Any]]:
     """Backward-compatible wrapper delegating to `boost_entities_tables_and_equations`."""
     return boost_entities_tables_and_equations(query, candidates, required_entities, top_k)
+
+
+def find_referenced_table_chunks(
+    active_pool: list[dict[str, Any]],
+    queries: Iterable[str],
+    seen_ids: set[Any] | None = None,
+    *,
+    limit: int = 4,
+) -> list[dict[str, Any]]:
+    """
+    Locates unseen structured table chunks (or table-captioned pages) in `active_pool`
+    matching explicit table numbers referenced in focused retrieval queries (e.g. 'Table 4', 'Bảng 4').
+    Used during Reader -> Retrieval handoffs so compact table pages aren't buried by verbose prose.
+    """
+    if not active_pool:
+        return []
+    combined_q = " ".join(str(q) for q in queries if isinstance(q, str) and q.strip())
+    tbl_nums = list(dict.fromkeys(m.group(1).strip().lower() for m in _TABLE_NUM_REF_RE.finditer(combined_q)))
+    if not tbl_nums:
+        return []
+
+    seen = seen_ids or set()
+    scored: list[tuple[float, int, dict[str, Any]]] = []
+    cross_ref_re = re.compile(
+        r"(?:see|shown\s+in|reported\s+in|presented\s+in|listed\s+in|summarized\s+in|detailed\s+in|"
+        r"refer\s+to|xem|trình\s+bày\s+(?:ở|trong|tại)|nêu\s+(?:ở|trong|tại))\s+(?:table|tab\.?|bảng|bang)\s*",
+        re.IGNORECASE,
+    )
+
+    for idx, chunk in enumerate(active_pool):
+        if not isinstance(chunk, dict):
+            continue
+        cid = chunk.get("id") or chunk.get("chunk_id")
+        if cid in seen:
+            continue
+        txt = str(chunk.get("text") or chunk.get("content") or "")
+        if not txt.strip():
+            continue
+        txt_l = txt.lower()
+        u_type = str(chunk.get("unit_type") or "text").lower()
+        caption_l = str((chunk.get("table_metadata") or {}).get("caption") or "").lower()
+
+        matched_num = False
+        for n in tbl_nums:
+            pat = re.compile(rf"\b(?:table|tab\.?|bảng|bang)\s*{re.escape(n)}\b", re.IGNORECASE)
+            if pat.search(caption_l) or pat.search(txt_l):
+                matched_num = True
+                break
+        if not matched_num:
+            continue
+
+        pipe_lines = sum(1 for ln in txt.splitlines() if ln.count("|") >= 2)
+        has_header_caption = any(
+            re.search(rf"\b(?:table|tab\.?|bảng|bang)\s*{re.escape(n)}\s*[:.\-–\n]", txt_l, re.IGNORECASE)
+            for n in tbl_nums
+        )
+        is_pure_cross_ref = bool(cross_ref_re.search(txt_l)) and u_type != "table" and pipe_lines < 2 and not has_header_caption
+        if is_pure_cross_ref:
+            continue
+
+        score = 0.0
+        if u_type == "table":
+            score += 3.0
+        if pipe_lines >= 2:
+            score += 2.0
+        if has_header_caption:
+            score += 1.5
+        if re.search(r"\d+(?:[.,]\d+)?", txt):
+            score += 0.5
+        if score > 0:
+            scored.append((score, -idx, chunk))
+
+    scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    return [chunk for _, _, chunk in scored[:limit]]
 
 
 def _cosine(a: list[float], b: list[float]) -> float:

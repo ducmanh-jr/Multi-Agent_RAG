@@ -25,8 +25,10 @@ from agents.agent1_retrieval.tools.semantic_pipeline import (
     build_cross_lingual_subqueries,
     enhance_with_dense_and_rerank,
     extract_searchable_figure_chunks,
+    find_referenced_table_chunks,
 )
 from core.base_agent import BaseAgent
+from core.handoff_inputs import is_focused_retrieval
 from core.schemas import RouterPlanOutput
 from core.state import AgentState
 from core.supervisor import supervisor_planner
@@ -165,7 +167,7 @@ class HybridRetrievalAgent(BaseAgent):
         # Scope strictly to user-selected PDF(s) if provided (with shared index cache)
         # =====================================================================
         if pdf_paths:
-            cached_lexical = build_cached_pdf_lexical_pool(pdf_paths)
+            cached_lexical = build_cached_pdf_lexical_pool(pdf_paths, loader=load_or_parse_selected_pdf)
             if cached_lexical is not None:
                 active_pool, active_fts, active_bm25 = cached_lexical
                 pdf_chunks = active_pool
@@ -232,10 +234,17 @@ class HybridRetrievalAgent(BaseAgent):
             page_diverse=True,
         )
 
-        # Priority reranking via required entities & intact tables
-        fused = boost_entities_and_tables(query, fused, required_entities, top_k)
-
+        # Priority reranking via required entities & intact tables (honor focused Reader handoff queries)
+        focused = is_focused_retrieval(state)
+        boost_q = " ".join(dict.fromkeys([*sub_queries[:2], effective_q])) if focused and sub_queries else effective_q
         seen_ids = {c.get("id") for c in seen_chunks if isinstance(c, dict)}
+        if focused and active_pool:
+            targeted_tables = find_referenced_table_chunks(active_pool, search_queries, seen_ids)
+            if targeted_tables:
+                target_ids = {t.get("id") for t in targeted_tables}
+                fused = [*targeted_tables, *(d for d in fused if d.get("id") not in target_ids)]
+        fused = boost_entities_and_tables(boost_q, fused, required_entities, top_k)
+
         fresh_docs = [d for d in fused if d.get("id") not in seen_ids]
         no_new_evidence = len(fresh_docs) == 0 and retry_count > 0
 

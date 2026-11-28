@@ -9,8 +9,10 @@ Provides:
 from __future__ import annotations
 
 import os
+import re
 from typing import Any, Callable, Iterable, Optional
 
+from core.coordination import AgentDecision
 from core.pdf_ingest import is_parser_error_text
 from core.state import SourceUnit, compute_content_hash
 from utils.logger import logger
@@ -222,3 +224,183 @@ def ingest_pdf_fallbacks(
             curr_offset = unit_offset + len(clean_text) + 1
 
     return failed_pdfs, merged_count, curr_offset
+
+
+_QUERY_TABLE_REF_RE = re.compile(
+    r"\b(?:table|tab\.?|bảng|bang)\s*([A-Z]?\d+(?:[.-]\d+)*)\b",
+    re.IGNORECASE,
+)
+_CROSS_REF_TABLE_RE = re.compile(
+    r"(?:see|shown\s+in|reported\s+in|presented\s+in|listed\s+in|summarized\s+in|"
+    r"detailed\s+in|refer\s+to|as\s+in|given\s+in|found\s+in|"
+    r"xem(?:\s+chi\s+tiết)?(?:\s+(?:ở|trong|tại))?|"
+    r"trình\s+bày\s+(?:ở|trong|tại)|nêu\s+(?:ở|trong|tại)|cho\s+(?:ở|trong|tại)|"
+    r"liệt\s+kê\s+(?:ở|trong|tại)|tham\s+khảo)\s+"
+    r"(?:table|tab\.?|bảng|bang)\s*([A-Z]?\d+(?:[.-]\d+)*)\b",
+    re.IGNORECASE,
+)
+_TABLE_DECISION_STOPWORDS = frozenset(
+    {
+        "the", "and", "for", "with", "from", "that", "this", "what", "which", "where",
+        "when", "how", "are", "was", "were", "does", "did", "can", "into", "about",
+        "table", "tab", "bảng", "bang", "see", "xem", "trong", "của", "cho", "với",
+        "các", "những", "một", "bao", "nhiêu", "giá", "trị", "value", "values",
+    }
+)
+
+
+def _content_tokens(text: str) -> set[str]:
+    return {
+        tok
+        for tok in re.findall(r"[a-zA-ZÀ-ỹ0-9_-]{3,}", (text or "").lower())
+        if tok not in _TABLE_DECISION_STOPWORDS
+    }
+
+
+def has_structured_table(units: Iterable[dict[str, Any]], table_id: str) -> bool:
+    """
+    Returns True if `units` already contains structured tabular content (or an inline numeric
+    result directly answering) for `table_id` (e.g. '4' for Table 4 / Bảng 4).
+    """
+    tid = str(table_id or "").strip()
+    if not tid:
+        return False
+    ref_pat = re.compile(rf"\b(?:table|tab\.?|bảng|bang)\s*{re.escape(tid)}\b", re.IGNORECASE)
+    caption_pat = re.compile(rf"\b(?:table|tab\.?|bảng|bang)\s*{re.escape(tid)}\s*[:.\-–]", re.IGNORECASE)
+
+    for unit in units:
+        if not isinstance(unit, dict):
+            continue
+        txt = str(unit.get("text") or unit.get("content") or "")
+        if not txt.strip():
+            continue
+        meta = unit.get("table_metadata") if isinstance(unit.get("table_metadata"), dict) else {}
+        caption = str(meta.get("caption") or "")
+        u_type = str(unit.get("unit_type") or "text").lower()
+
+        mentions_table = bool(ref_pat.search(caption) or ref_pat.search(txt))
+        if not mentions_table:
+            continue
+
+        pipe_lines = [ln for ln in txt.splitlines() if ln.count("|") >= 2]
+        if u_type == "table" and (pipe_lines or re.search(r"\d+(?:[.,]\d+)?", txt)):
+            return True
+        if len(pipe_lines) >= 2:
+            return True
+        cap_match = caption_pat.search(txt)
+        if cap_match is not None:
+            # Caption followed by structured rows or >= 2 numeric cell values (handles PyMuPDF plain-text tables)
+            after_caption = txt[cap_match.end():]
+            numeric_cells = re.findall(r"\b\d+(?:[.,]\d+)?%?\b", after_caption)
+            if len(numeric_cells) >= 2:
+                return True
+            non_caption_lines = [
+                ln.strip() for ln in after_caption.splitlines()
+                if ln.strip()
+            ]
+            if non_caption_lines and any(("\t" in ln or "  " in ln or "|" in ln) for ln in non_caption_lines) and numeric_cells:
+                return True
+        # Inline direct numeric measurement alongside Table N (NOT a 'see Table N' pointer!)
+        for sent in re.split(r"(?<=[.!?])\s+|\n+", txt):
+            if not ref_pat.search(sent):
+                continue
+            if _CROSS_REF_TABLE_RE.search(sent):
+                continue
+            cleaned_no_tid = ref_pat.sub(" ", sent)
+            if re.search(r"\b\d+(?:[.,]\d+)?\s*(?:%|ms|s|sec|mb|gb|kb|hz|mhz|ghz|bleu|f1|acc|tokens|params|x)?\b", cleaned_no_tid, re.IGNORECASE):
+                if re.search(r"\b\d+(?:[.,]\d+)?\s*(?:%|ms|s|sec|mb|gb|kb|hz|mhz|ghz|bleu|f1|x)\b|\b\d+\.\d+\b", cleaned_no_tid, re.IGNORECASE):
+                    return True
+    return False
+
+
+def extract_referenced_table_ids(query: str, units: Iterable[dict[str, Any]]) -> list[str]:
+    """
+    Extracts ordered table identifiers referenced either directly in `query`
+    or via query-relevant cross-references inside `units` (e.g. 'see Table 4', 'xem Bảng 4').
+    """
+    ordered: list[str] = []
+    q_text = str(query or "").strip()
+    q_tokens = _content_tokens(q_text)
+
+    for m in _QUERY_TABLE_REF_RE.finditer(q_text):
+        tid = m.group(1).strip()
+        if tid and tid.lower() not in {x.lower() for x in ordered}:
+            ordered.append(tid)
+
+    unit_list = [u for u in units if isinstance(u, dict)]
+    for unit in unit_list:
+        txt = str(unit.get("text") or unit.get("content") or "")
+        if not txt.strip():
+            continue
+        for sent in re.split(r"(?<=[.!?])\s+|\n+", txt):
+            matches = list(_CROSS_REF_TABLE_RE.finditer(sent))
+            if not matches:
+                continue
+            sent_tokens = _content_tokens(sent)
+            overlap = bool(q_tokens & sent_tokens)
+            # Only trigger on cross-references relevant to the user's question (or when query is broad/short)
+            if not overlap and len(q_tokens) >= 2 and len(unit_list) > 2:
+                continue
+            for m in matches:
+                tid = m.group(1).strip()
+                if tid and tid.lower() not in {x.lower() for x in ordered}:
+                    ordered.append(tid)
+    return ordered
+
+
+def evaluate_reader_table_completeness(
+    state: dict[str, Any],
+    source_units: list[dict[str, Any]],
+    *,
+    allow_handoff: bool = True,
+) -> tuple[AgentDecision | None, list[str]]:
+    """
+    Local deterministic check (zero extra LLM calls) for missing referenced tables in Reader output.
+    Returns `(agent_decision_or_none, unresolved_table_labels)`:
+      - When all referenced tables are already present -> `(None, [])` (zero unnecessary handoff).
+      - When a referenced table is missing and retrieval may still fetch it -> `(AgentDecision, [])`.
+      - When a referenced table is STILL missing after retrieval returned `no_new_evidence=True`
+        -> `(None, ["Table <N>", ...])` so Summarizer/Fact-Checker can report unverified evidence cleanly.
+    """
+    if not allow_handoff:
+        return None, []
+
+    query = str(state.get("resolved_query") or state.get("query") or "").strip()
+    if not query:
+        return None, []
+
+    prior_units = [u for u in (state.get("source_units") or []) if isinstance(u, dict)]
+    combined_units = [*(source_units or []), *prior_units]
+    if not combined_units:
+        return None, []
+
+    referenced = extract_referenced_table_ids(query, combined_units)
+    if not referenced:
+        return None, []
+
+    missing_ids = [tid for tid in referenced if not has_structured_table(combined_units, tid)]
+    if not missing_ids:
+        return None, []
+
+    unresolved_labels = [f"Table {tid}" for tid in missing_ids]
+    if state.get("no_new_evidence"):
+        return None, unresolved_labels
+
+    primary_tid = missing_ids[0]
+    retry_count = int(state.get("retry_count") or 0)
+    query_hint = " ".join(sorted(_content_tokens(query))[:5]).strip()
+    focused_queries = [f"Table {primary_tid} Bảng {primary_tid}"]
+    if query_hint:
+        focused_queries.append(f"Table {primary_tid} {query_hint}")
+
+    decision = AgentDecision(
+        source_agent="reader",
+        status="needs_followup",
+        action="request_more_evidence",
+        target_agent="retrieval",
+        reason=f"Referenced Table {primary_tid} is not present in currently read evidence",
+        suggested_queries=focused_queries,
+        focus=[f"Table {primary_tid}", *(focused_queries[1:2])],
+        round_index=retry_count,
+    )
+    return decision, []
