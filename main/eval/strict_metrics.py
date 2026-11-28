@@ -17,8 +17,9 @@ Key Corrections over Legacy Metrics:
 """
 
 import math
+import os
 import re
-from typing import Dict, Any, List, Set, Tuple
+from typing import Dict, Any, List, Optional, Sequence, Set, Tuple
 
 from eval.three_layer_evaluator import (
     check_polarity_alignment,
@@ -83,48 +84,90 @@ def extract_numbers_and_years_strict(text: str) -> List[str]:
     return normalized
 
 
+def _normalize_doc_key(doc_id: Any) -> str:
+    raw = str(doc_id or "").strip().lower()
+    if not raw:
+        return ""
+    base = os.path.basename(raw)
+    stem, _ = os.path.splitext(base)
+    return stem or base
+
+
 def compute_strict_citation_f1(
     answer: str,
     evidence_list: List[Dict[str, Any]],
     gold_keywords: List[str],
+    *,
+    is_unanswerable: bool = False,
+    gold_sources: Optional[Sequence[Tuple[str, int]]] = None,
 ) -> Tuple[float, float, float]:
     """
     Computes strict Citation Precision, Recall, and F1.
-    NO artificial inflation: If cited evidence does not match relevant gold chunks, TP = 0.
+    - Penalizes out-of-range citation markers (e.g., [999], [0]) as false positives in Precision.
+    - Separates unanswerable/abstention queries (`is_unanswerable=True`) from answerable queries:
+      an answerable query with empty evidence or no relevant retrieved evidence scores 0.0, not 1.0.
+    - Optionally accepts `gold_sources` as `(doc_id, page_no)` pairs so Recall reflects retrieval misses.
     Returns (precision, recall, f1).
     """
     cited_indices = [int(m) for m in re.findall(r"\[(\d+)\]", answer or "")]
-    if not evidence_list:
-        return (1.0, 1.0, 1.0) if not cited_indices else (0.0, 0.0, 0.0)
+    all_cited_set: Set[int] = set(cited_indices)
 
-    # Find evidence chunks that actually contain at least one gold keyword
-    relevant_indices: Set[int] = set()
-    cleaned_keywords = [kw.lower().strip() for kw in gold_keywords if kw and len(kw.strip()) > 1]
-    
-    for idx, ev in enumerate(evidence_list, 1):
-        txt = str(ev.get("text") or ev.get("content") or "").lower()
-        if any(kw in txt for kw in cleaned_keywords):
-            relevant_indices.add(idx)
+    if is_unanswerable:
+        return (1.0, 1.0, 1.0) if not all_cited_set else (0.0, 0.0, 0.0)
 
-    # If no gold keywords matched any retrieved chunk, then none of the chunks are truly relevant
-    if not relevant_indices:
-        # None of the chunks are relevant to the gold standard
-        if not cited_indices:
-            return 1.0, 1.0, 1.0  # Correctly did not cite irrelevant evidence
-        return 0.0, 0.0, 0.0  # Cited chunks that don't contain the facts
+    if not evidence_list or not all_cited_set:
+        return (0.0, 0.0, 0.0)
 
-    if not cited_indices:
-        return 0.0, 0.0, 0.0
+    valid_cited_set = {i for i in all_cited_set if 1 <= i <= len(evidence_list)}
 
-    cited_set = set(i for i in cited_indices if 1 <= i <= len(evidence_list))
-    if not cited_set:
-        return 0.0, 0.0, 0.0
+    if gold_sources:
+        normalized_gold: Set[Tuple[str, int]] = set()
+        for doc_ref, page_ref in gold_sources:
+            try:
+                page_int = int(page_ref)
+            except (TypeError, ValueError):
+                continue
+            doc_key = _normalize_doc_key(doc_ref)
+            if doc_key:
+                normalized_gold.add((doc_key, page_int))
+        if not normalized_gold:
+            return (0.0, 0.0, 0.0)
 
-    # STRICT TP: Exact set intersection, no bonus!
-    tp = len(cited_set & relevant_indices)
+        idx_to_gold_key: Dict[int, Tuple[str, int]] = {}
+        for idx, ev in enumerate(evidence_list, 1):
+            ev_doc = _normalize_doc_key(ev.get("doc_id") or ev.get("title") or ev.get("source_path"))
+            try:
+                ev_page = int(ev.get("page_no") if ev.get("page_no") is not None else ev.get("page", 1))
+            except (TypeError, ValueError):
+                ev_page = 1
+            key = (ev_doc, ev_page)
+            if key in normalized_gold:
+                idx_to_gold_key[idx] = key
 
-    precision = tp / len(cited_set) if cited_set else 0.0
-    recall = tp / len(relevant_indices) if relevant_indices else 0.0
+        relevant_indices = set(idx_to_gold_key.keys())
+        matched_cited = valid_cited_set & relevant_indices
+        tp_precision = len(matched_cited)
+        recalled_gold = {idx_to_gold_key[i] for i in matched_cited}
+
+        precision = tp_precision / len(all_cited_set)
+        recall = len(recalled_gold) / len(normalized_gold)
+    else:
+        # Find evidence chunks that actually contain at least one gold keyword
+        relevant_indices: Set[int] = set()
+        cleaned_keywords = [kw.lower().strip() for kw in (gold_keywords or []) if kw and len(kw.strip()) > 1]
+
+        for idx, ev in enumerate(evidence_list, 1):
+            txt = str(ev.get("text") or ev.get("content") or "").lower()
+            if any(kw in txt for kw in cleaned_keywords):
+                relevant_indices.add(idx)
+
+        if not relevant_indices:
+            return (0.0, 0.0, 0.0)
+
+        # STRICT TP: Exact intersection; precision denominator includes out-of-range markers like [999]
+        tp = len(valid_cited_set & relevant_indices)
+        precision = tp / len(all_cited_set)
+        recall = tp / len(relevant_indices)
 
     if precision + recall == 0:
         f1 = 0.0
