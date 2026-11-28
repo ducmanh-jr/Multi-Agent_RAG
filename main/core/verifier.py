@@ -880,6 +880,10 @@ def _quote_in_source(quote: Any, source: str) -> bool:
     for repl in ("", "-"):
         if re.sub(r"-\s+", repl, q_norm) in re.sub(r"-\s+", repl, s_norm):
             return True
+    from agents.agent3_summarizer.components.generator import _extract_verbatim_unit_quote
+
+    if _extract_verbatim_unit_quote(q_norm, s_norm) is not None:
+        return True
     q_math = _math_norm_for_quote(q_norm)
     s_math = _math_norm_for_quote(s_norm)
     if q_math and q_math in s_math:
@@ -1368,7 +1372,16 @@ def review_claims(state, reviewer: Optional[Callable] = None):
                 candidate_ids.append(c["unit_id"])
             linked = [units_by_id[uid] for eid in candidate_ids
                       if (uid := spans.get(eid, eid)) in units_by_id]
-            anchor_quote = next((span_quotes[eid] for eid in candidate_ids if span_quotes.get(eid)), "")
+            candidate_quotes = [span_quotes[eid] for eid in candidate_ids if span_quotes.get(eid)]
+            if len(candidate_quotes) > 1:
+                c_toks = {w for w in re.findall(r"[a-zA-Z0-9À-ỹ]+", c["text"].lower()) if len(w) >= 3}
+                c_exp = expand_bilingual_tokens(c["text"], c_toks)
+                anchor_quote = max(
+                    candidate_quotes,
+                    key=lambda q_str: len(c_exp & {w for w in re.findall(r"[a-zA-Z0-9À-ỹ]+", q_str.lower()) if len(w) >= 3}),
+                )
+            else:
+                anchor_quote = candidate_quotes[0] if candidate_quotes else ""
             search_probe = anchor_quote or c["text"]
             best_premise = find_best_supporting_unit(search_probe, linked or units)
             if best_premise is None and linked:
@@ -1382,7 +1395,7 @@ def review_claims(state, reviewer: Optional[Callable] = None):
                 "claim_id": c["id"],
                 "claim": c["text"],
                 "evidence": _extract_focused_evidence_window(
-                    anchor, str(u.get("text") or u.get("content") or ""), max_chars=900
+                    anchor, str(u.get("text") or u.get("content") or ""), max_chars=1800
                 ),
             }
             for c, u, anchor in zip(batch, premises, anchors) if u
@@ -1472,10 +1485,25 @@ def review_claims(state, reviewer: Optional[Callable] = None):
                     status = "NOT_ENOUGH_INFO"
                 reason = row.get("rationale") or "Không có phán quyết và bằng chứng hợp lệ."
                 if status == "SUPPORT":
+                    # Scope semantic guard to the full sentence(s) in `source` containing NLI's verified `quote`
+                    # so contrasting sibling sentences (e.g. '(a) has a controller' vs '(b) has no controller') don't cross-contaminate,
+                    # while keeping full matrix clauses ('It is false that ...') intact!
+                    from core.claim_semantics import _split_source_sentences
+
+                    guard_context = str(source)
+                    if isinstance(quote, str) and quote.strip():
+                        src_sents = _split_source_sentences(str(source))
+                        q_clean = " ".join(quote.split()).lower()
+                        matched_src_sents = [
+                            s for s in src_sents
+                            if _quote_in_source(quote, s) or _quote_in_source(s, quote) or q_clean[:40] in " ".join(s.split()).lower()
+                        ]
+                        if matched_src_sents:
+                            guard_context = " ".join(matched_src_sents)
                     sem_ok, sem_verdict, sem_reason = check_sentence_entailment_guards(
-                        claim["text"], str(source), qualitative_comparatives=False
+                        claim["text"], guard_context, qualitative_comparatives=False
                     )
-                    math_ok, math_reason = check_math_and_domain_consistency(claim["text"], str(source))
+                    math_ok, math_reason = check_math_and_domain_consistency(claim["text"], guard_context)
                     if not sem_ok:
                         status = sem_verdict
                         reason = f"Cổng ngữ nghĩa bác bỏ kết quả NLI: {sem_reason}"
@@ -1489,7 +1517,22 @@ def review_claims(state, reviewer: Optional[Callable] = None):
                         status = "NOT_ENOUGH_INFO"
                     elif not check_entity_value_binding(claim["text"], quote)[0]:
                         status = "NOT_ENOUGH_INFO"
-                checked = _result(claim, status, str(reason), unit)
+                bound_span_ids: list[str] | None = None
+                if status == "SUPPORT" and unit and unit.get("id"):
+                    u_span_ids = [
+                        eid for eid in (claim.get("evidence_ids") or [])
+                        if spans.get(eid) == unit["id"]
+                    ]
+                    if isinstance(quote, str) and quote.strip():
+                        quote_matched_sids = [
+                            sid for sid, sq in span_quotes.items()
+                            if spans.get(sid) == unit["id"] and (_quote_in_source(quote, sq) or _quote_in_source(sq, quote))
+                        ]
+                        if quote_matched_sids:
+                            bound_span_ids = quote_matched_sids
+                    if not bound_span_ids and u_span_ids:
+                        bound_span_ids = u_span_ids
+                checked = _result(claim, status, str(reason), unit, evidence_ids=bound_span_ids)
             if checked["status"] == "SUPPORT":
                 verified.append(checked)
             else:

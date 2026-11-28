@@ -65,22 +65,101 @@ def pack_context_by_token_budget(
     return "".join(context_parts), included_units
 
 
-def _quote_matches_unit_text(normalized_quote: str, unit_text: str) -> bool:
-    """Match a quote against unit text, accounting for PDF soft line-break hyphenation."""
+_SMART_QUOTE_MAP = str.maketrans({
+    "‘": "'", "’": "'", "‚": "'", "‛": "'",
+    "“": '"', "”": '"', "„": '"', "‟": '"',
+    "–": "-", "—": "-", "\u00ad": "",
+})
+
+
+def _clean_unit_id_ref(raw_uid: Any) -> list[str]:
+    """Normalizes single, comma-separated, or list unit_id references while stripping prompt header wrappers."""
+    if isinstance(raw_uid, list):
+        items = [str(x) for x in raw_uid if isinstance(x, (str, int)) and str(x).strip()]
+    elif isinstance(raw_uid, str) and raw_uid.strip():
+        cleaned = re.sub(r"^\[?\s*Unit\s+ID\s*:\s*|\s*\]$", "", raw_uid.strip(), flags=re.IGNORECASE)
+        cleaned = cleaned.split("|")[0].strip()
+        items = [part.strip() for part in re.split(r"\s*[,;]\s*", cleaned) if part.strip()] if "," in cleaned or ";" in cleaned else ([cleaned] if cleaned else [])
+    else:
+        items = []
+    out: list[str] = []
+    for it in items:
+        it_clean = re.sub(r"^\[?\s*Unit\s+ID\s*:\s*|\s*\]$", "", it.strip(), flags=re.IGNORECASE).strip()
+        if it_clean and it_clean not in out:
+            out.append(it_clean)
+    return out
+
+
+def _extract_verbatim_unit_quote(normalized_quote: str, unit_text: str) -> str | None:
+    """
+    Matches `normalized_quote` against `unit_text` (handling PDF soft line-break hyphenation,
+    typographic quotes, ligatures, and '...' ellipsis) and returns the EXACT verbatim slice
+    from `unit_text` so downstream `citation_audit` always verifies 100% verbatim provenance.
+    """
     if not normalized_quote or not unit_text:
-        return False
+        return None
     u_norm = " ".join(unit_text.split())
+    if not u_norm:
+        return None
+
+    # 1. Exact word-bounded match in u_norm
     prefix = r"(?<!\w)" if normalized_quote[0].isalnum() else ""
     suffix = r"(?!\w)" if normalized_quote[-1].isalnum() else ""
-    if re.search(prefix + re.escape(normalized_quote) + suffix, u_norm):
-        return True
-    # Handle PDF soft line-break hyphens (e.g. 'Syntac- tics' -> 'Syntactics', 'bag-of- words' -> 'bag-of-words')
-    for repl in ("", "-"):
-        q_de = re.sub(r"-\s+", repl, normalized_quote)
-        u_de = re.sub(r"-\s+", repl, u_norm)
-        if re.search(prefix + re.escape(q_de) + suffix, u_de):
-            return True
-    # Handle Unicode math symbols, NFKC ligatures (ﬁ -> fi), and superscripts/subscripts while keeping ^ vs _ distinct!
+    m_exact = re.search(prefix + re.escape(normalized_quote) + suffix, u_norm)
+    if m_exact:
+        return m_exact.group(0)
+
+    # 2. Match with smart quotes normalized + flexible PDF soft-hyphenation (e.g. 'ac- tions' vs 'actions')
+    def _build_flex_pattern(q_seg: str) -> str:
+        q_ascii = q_seg.translate(_SMART_QUOTE_MAP)
+        tokens = re.findall(r"\w+|[^\w\s]", q_ascii)
+        if not tokens:
+            return ""
+        pieces: list[str] = []
+        for idx, tok in enumerate(tokens):
+            if len(tok) >= 5 and tok.isalpha():
+                # Allow an optional PDF line-break hyphen '- ' inside long words ('tech- niques' <-> 'techniques')
+                char_pat = r"(?:-\s+)?".join(re.escape(ch) for ch in tok)
+            elif tok in {"'", '"'}:
+                char_pat = r"['‘’\"“”]"
+            elif tok == "-":
+                char_pat = r"[-–—]\s*"
+            else:
+                char_pat = re.escape(tok)
+            pieces.append(char_pat)
+        p_bound = r"(?<!\w)" if tokens[0][0].isalnum() else ""
+        s_bound = r"(?!\w)" if tokens[-1][-1].isalnum() else ""
+        return p_bound + r"[\s\-–—]*".join(pieces) + s_bound
+
+    # Handle '...' or '…' ellipsis by matching segments in order and slicing u_norm verbatim
+    segments = [seg.strip(" .,;:") for seg in re.split(r"\s*(?:\.\.\.+|…)\s*", normalized_quote) if len(seg.strip(" .,;:")) >= 16]
+    if len(segments) >= 2:
+        pos = 0
+        seg_spans: list[tuple[int, int]] = []
+        for seg in segments:
+            pat = _build_flex_pattern(seg)
+            if not pat:
+                break
+            m_seg = re.search(pat, u_norm[pos:], flags=re.IGNORECASE)
+            if not m_seg:
+                seg_spans = []
+                break
+            seg_spans.append((pos + m_seg.start(), pos + m_seg.end()))
+            pos += m_seg.end()
+        if seg_spans:
+            span_start, span_end = seg_spans[0][0], seg_spans[-1][1]
+            if span_end - span_start <= 650:
+                return u_norm[span_start:span_end]
+            longest = max(seg_spans, key=lambda ab: ab[1] - ab[0])
+            return u_norm[longest[0]:longest[1]]
+
+    flex_pat = _build_flex_pattern(normalized_quote)
+    if flex_pat:
+        m_flex = re.search(flex_pat, u_norm)
+        if m_flex:
+            return m_flex.group(0)
+
+    # 3. Math/Unicode ligature fallback (e.g. ﬁ -> fi, x² -> x^2)
     from core.claim_semantics import normalize_math_preserving_structure
 
     q_math = normalize_math_preserving_structure(normalized_quote)
@@ -89,12 +168,17 @@ def _quote_matches_unit_text(normalized_quote: str, unit_text: str) -> bool:
         m_pre = r"(?<!\w)" if q_math[0].isalnum() else ""
         m_suf = r"(?!\w)" if q_math[-1].isalnum() else ""
         if re.search(m_pre + re.escape(q_math) + m_suf, u_math):
-            return True
-    return False
+            return normalized_quote
+    return None
+
+
+def _quote_matches_unit_text(normalized_quote: str, unit_text: str) -> bool:
+    """Match a quote against unit text, accounting for PDF soft line-break hyphenation."""
+    return _extract_verbatim_unit_quote(normalized_quote, unit_text) is not None
 
 
 def bind_evidence_spans(raw_spans: list, units: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Bind verbatim quotes to Reader metadata, including legacy quotes without IDs."""
+    """Bind verbatim quotes to Reader metadata, snapping to exact verbatim unit slices."""
     if not isinstance(raw_spans, list):
         return []
     result = []
@@ -106,32 +190,44 @@ def bind_evidence_spans(raw_spans: list, units: list[dict[str, Any]]) -> list[di
         quote = item["quote"].strip()
         if not quote:
             continue
-        unit_id = item.get("source_unit_id") or item.get("unit_id")
-        normalized = " ".join(quote.split())
-        matches = [
-            unit for unit in units
-            if unit.get("id") and (not unit_id or unit_id == unit["id"])
-            and (not item.get("doc_id") or item["doc_id"] == unit.get("doc_id"))
-            and (item.get("page_no") is None or str(item["page_no"]) == str(unit.get("page_no")))
-            and _quote_matches_unit_text(normalized, unit.get("text") or "")
-        ]
-        if len(matches) != 1:
+        raw_uid = item.get("source_unit_id") or item.get("unit_id")
+        uid_list = _clean_unit_id_ref(raw_uid)
+        has_explicit_uid = raw_uid is not None and str(raw_uid).strip() != ""
+        if has_explicit_uid and not uid_list:
             continue
-        unit = matches[0]
-        key = (unit["id"], quote)
+        normalized = " ".join(quote.split())
+        matched_pairs: list[tuple[dict[str, Any], str]] = []
+        for unit in units:
+            uid_val = unit.get("id")
+            if not uid_val:
+                continue
+            if has_explicit_uid and uid_val not in uid_list:
+                continue
+            if item.get("doc_id") and item["doc_id"] != unit.get("doc_id"):
+                continue
+            if item.get("page_no") is not None and str(item["page_no"]) != str(unit.get("page_no")):
+                continue
+            verbatim_slice = _extract_verbatim_unit_quote(normalized, unit.get("text") or "")
+            if verbatim_slice:
+                matched_pairs.append((unit, verbatim_slice))
+        if len(matched_pairs) != 1:
+            continue
+        unit, verbatim_quote = matched_pairs[0]
+        key = (unit["id"], verbatim_quote)
         if key in seen:
             continue
         seen.add(key)
-        result.append(EvidenceSpan(id=f"ev_{len(result)+1}", quote=quote, source_unit_id=unit["id"],
+        result.append(EvidenceSpan(id=f"ev_{len(result)+1}", quote=verbatim_quote, source_unit_id=unit["id"],
                                    doc_id=unit["doc_id"], page_no=unit["page_no"], bbox=unit.get("bbox")).to_dict())
     return result
 
 
 def bind_summary_claims(raw_claims: list, spans: list[dict]) -> list[dict]:
-    """Only emit model claims that can name an actual quoted unit or match a quote literally."""
+    """Only emit model claims that can name actual quoted unit(s) or match a quote literally."""
     if not isinstance(raw_claims, list):
         return []
     claims = []
+    spans_by_id = {span.get("id"): span for span in spans if isinstance(span, dict) and span.get("id")}
     for raw in raw_claims:
         item = {"text": raw} if isinstance(raw, str) else raw
         if not isinstance(item, dict):
@@ -139,13 +235,50 @@ def bind_summary_claims(raw_claims: list, spans: list[dict]) -> list[dict]:
         text = item.get("text") or item.get("claim_text") or item.get("claim")
         if not isinstance(text, str) or not text.strip():
             continue
-        unit_id = item.get("unit_id") or item.get("evidence_unit_id")
-        if unit_id:
-            matches = [span for span in spans if span["source_unit_id"] == unit_id]
+        raw_uid = item.get("unit_id") or item.get("source_unit_id") or item.get("evidence_unit_id") or item.get("unit_ids")
+        has_explicit_uid = raw_uid is not None and (not isinstance(raw_uid, str) or raw_uid.strip() != "")
+        uid_list = _clean_unit_id_ref(raw_uid)
+        if has_explicit_uid:
+            if not uid_list:
+                continue
+            matches = [span for span in spans if span["source_unit_id"] in uid_list]
+            # Every explicitly requested unit_id must resolve to at least one verified span
+            resolved_uids = {span["source_unit_id"] for span in matches}
+            if not matches or not set(uid_list).issubset(resolved_uids):
+                continue
+            # When multiple spans come from the same unit_id, bind the most relevant span per unit_id
+            # so each atomic claim links to its specific supporting sentence rather than unrelated sibling spans.
+            if len(matches) > len(uid_list):
+                from utils.bilingual import expand_bilingual_tokens
+
+                c_toks = {w for w in re.findall(r"[a-zA-Z0-9À-ỹ]+", text.lower()) if len(w) >= 3}
+                c_exp = expand_bilingual_tokens(text, c_toks)
+                narrowed: list[dict] = []
+                for req_u in uid_list:
+                    u_spans = [sp for sp in matches if sp["source_unit_id"] == req_u]
+                    if len(u_spans) <= 1:
+                        narrowed.extend(u_spans)
+                    else:
+                        scored_sp = sorted(
+                            u_spans,
+                            key=lambda sp: len(c_exp & {w for w in re.findall(r"[a-zA-Z0-9À-ỹ]+", str(sp.get("quote") or "").lower()) if len(w) >= 3}),
+                            reverse=True,
+                        )
+                        best_overlap = len(c_exp & {w for w in re.findall(r"[a-zA-Z0-9À-ỹ]+", str(scored_sp[0].get("quote") or "").lower()) if len(w) >= 3})
+                        narrowed.extend(
+                            [sp for sp in scored_sp[:2] if len(c_exp & {w for w in re.findall(r"[a-zA-Z0-9À-ỹ]+", str(sp.get("quote") or "").lower()) if len(w) >= 3}) >= max(1, best_overlap - 1)]
+                            or [scored_sp[0]]
+                        )
+                matches = narrowed
+        elif isinstance(item.get("evidence_ids"), list) and item["evidence_ids"]:
+            req_eids = [str(e).strip() for e in item["evidence_ids"] if str(e).strip()]
+            if not req_eids or not all(e in spans_by_id for e in req_eids):
+                continue
+            matches = [spans_by_id[e] for e in req_eids]
         else:
             matches = [span for span in spans if text.strip() == span["quote"]]
-        if not matches or len({span["source_unit_id"] for span in matches}) != 1:
-            continue
+            if not matches or len({span["source_unit_id"] for span in matches}) != 1:
+                continue
         claims.append(AtomicClaim(
             id=f"claim_{len(claims)+1}",
             text=text.strip(),

@@ -215,6 +215,22 @@ def audit_claim_citations(state: AgentState) -> dict[str, Any]:
             unit_spans = by_unit.get(link, [])
             if len(unit_spans) > 1:
                 narrowed = [eid for eid in unit_spans if _contains(_normalized(evidence_quote(checked[eid])), text)]
+                if not narrowed:
+                    from utils.bilingual import expand_bilingual_tokens
+
+                    c_toks = {w for w in re.findall(r"[a-zA-Z0-9À-ỹ]+", text.lower()) if len(w) >= 3}
+                    c_exp = expand_bilingual_tokens(text, c_toks)
+                    scored_eids = sorted(
+                        unit_spans,
+                        key=lambda eid: len(c_exp & {w for w in re.findall(r"[a-zA-Z0-9À-ỹ]+", evidence_quote(checked[eid]).lower()) if len(w) >= 3}),
+                        reverse=True,
+                    )
+                    best_ov = len(c_exp & {w for w in re.findall(r"[a-zA-Z0-9À-ỹ]+", evidence_quote(checked[scored_eids[0]]).lower()) if len(w) >= 3})
+                    if best_ov > 0:
+                        narrowed = [
+                            eid for eid in scored_eids[:2]
+                            if len(c_exp & {w for w in re.findall(r"[a-zA-Z0-9À-ỹ]+", evidence_quote(checked[eid]).lower()) if len(w) >= 3}) >= max(1, best_ov - 1)
+                        ]
                 unit_spans = narrowed or unit_spans
             if unit_spans:
                 evidence_ids.extend(unit_spans)

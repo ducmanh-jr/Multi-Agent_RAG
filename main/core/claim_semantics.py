@@ -327,6 +327,31 @@ def _split_source_sentences(source_text: str) -> list[str]:
     return [p.strip() for p in parts if p and p.strip()]
 
 
+def _extract_clause_markers(text: str) -> set[str]:
+    """Extracts sub-figure/clause identifiers like '(a)', '(b)', '(1)', 'model a', 'group b' that 3+ char tokenizers skip."""
+    low = (text or "").lower()
+    markers: set[str] = set()
+    for m in re.finditer(r"\(([a-z0-9]{1,3})\)", low):
+        markers.add(f"({m.group(1)})")
+    for m in re.finditer(
+        r"\b(?:model|method|group|config|variant|system|agent|structure|nhóm|mô\s+hình|phương\s+pháp|cấu\s+trúc|hình|phần|mục)\s+\(?([a-z0-9]{1,2})\)?(?!\w)",
+        low,
+    ):
+        markers.add(f"({m.group(1)})")
+    return markers
+
+
+def _with_plural_stems(words: set[str]) -> set[str]:
+    out = set(words)
+    for w in words:
+        if len(w) >= 4 and w.isascii() and w.isalpha():
+            if w.endswith("ies") and len(w) >= 5:
+                out.add(w[:-3] + "y")
+            elif w.endswith("s") and not w.endswith("ss"):
+                out.add(w[:-1])
+    return out
+
+
 def _find_matching_sentences(claim_text: str, source_text: str) -> list[str]:
     sents = _split_source_sentences(source_text)
     if not sents:
@@ -338,15 +363,24 @@ def _find_matching_sentences(claim_text: str, source_text: str) -> list[str]:
     if exact_sents:
         return exact_sents
     c_words = {w for w in re.findall(r"[a-zA-Z0-9À-ỹ]+", c_clean) if len(w) >= 3}
-    c_expanded = expand_bilingual_tokens(claim_text, c_words)
+    c_expanded = _with_plural_stems(expand_bilingual_tokens(claim_text, c_words))
+    c_markers = _extract_clause_markers(claim_text)
     scored: list[tuple[float, str]] = []
     for s in sents:
-        s_words = {w for w in re.findall(r"[a-zA-Z0-9À-ỹ]+", s.lower()) if len(w) >= 3}
-        overlap = len(c_expanded & s_words)
+        s_words = _with_plural_stems({w for w in re.findall(r"[a-zA-Z0-9À-ỹ]+", s.lower()) if len(w) >= 3})
+        s_markers = _extract_clause_markers(s)
+        overlap = len(c_expanded & s_words) + 3 * len(c_markers & s_markers)
+        if c_markers and s_markers and not (c_markers & s_markers):
+            overlap = max(0, overlap - 2)
         if overlap > 0:
-            scored.append((overlap / max(len(c_words), 1), s))
+            scored.append((overlap / max(len(c_words) + len(c_markers), 1), s))
     scored.sort(key=lambda item: item[0], reverse=True)
-    return [s for _, s in scored[:2]] if scored else sents[:1]
+    if not scored:
+        return sents[:1]
+    top_score = scored[0][0]
+    # Only keep runner-up sentences when they are genuinely close to the best-matching sentence
+    best = [s for sc, s in scored[:2] if sc >= top_score * 0.85]
+    return best or [scored[0][1]]
 
 
 def check_sentence_entailment_guards(
@@ -382,13 +416,26 @@ def check_sentence_entailment_guards(
     claim_neg = has_clause_negation(claim_text)
     claim_cond = bool(_CONDITIONAL_FRAMING_RE.search(claim_text))
 
+    c_toks = {w for w in re.findall(r"[a-zA-Z0-9À-ỹ]+", c_low) if len(w) >= 3}
+    c_exp = _with_plural_stems(expand_bilingual_tokens(claim_text, c_toks))
+    c_markers = _extract_clause_markers(claim_text)
+
+    # Check if the top-matching sentence (or any tied top sentence) shares core tokens AND matching polarity
+    has_aligned_polarity_sent = any(
+        has_clause_negation(s) == claim_neg
+        and (
+            len(c_exp & _with_plural_stems({w for w in re.findall(r"[a-zA-Z0-9À-ỹ]+", s.lower()) if len(w) >= 3})) >= (1 if idx == 0 else 2)
+            or c_low.strip(" .!?") in s.lower()
+        )
+        and (not c_markers or not _extract_clause_markers(s) or bool(c_markers & _extract_clause_markers(s)))
+        for idx, s in enumerate(matching_sents)
+    )
+
     for sent in matching_sents:
         sent_neg = has_clause_negation(sent)
-        if claim_neg != sent_neg:
+        if claim_neg != sent_neg and not has_aligned_polarity_sent:
             # Verify they actually share the core predicate/subject tokens (not two unrelated clauses)
-            c_toks = {w for w in re.findall(r"[a-zA-Z0-9À-ỹ]+", c_low) if len(w) >= 3}
-            c_exp = expand_bilingual_tokens(claim_text, c_toks)
-            s_toks = {w for w in re.findall(r"[a-zA-Z0-9À-ỹ]+", sent.lower()) if len(w) >= 3}
+            s_toks = _with_plural_stems({w for w in re.findall(r"[a-zA-Z0-9À-ỹ]+", sent.lower()) if len(w) >= 3})
             if len(c_exp & s_toks) >= 1 or c_low.strip(" .!?") in sent.lower():
                 return False, "CONTRADICT", f"polarity_mismatch: source sentence negates/inverts claim ({sent[:120]})"
 

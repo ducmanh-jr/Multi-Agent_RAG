@@ -67,9 +67,9 @@ thực sự có trong tài liệu. Khi so sánh, phân biệt nguồn và điề
 Chỉ đưa cú pháp, số liệu và ví dụ khi được nguồn hỗ trợ. Khi có công thức toán học, trình bày rõ bằng ký hiệu LaTeX ($...$ nội dòng hoặc $$...$$ cho công thức độc lập) bám sát tài liệu gốc. Hệ thống tự đánh số trích dẫn.
 Trả duy nhất một đối tượng JSON với các trường:
 - answer_status: ANSWERED, NOT_FOUND_IN_DOCUMENT hoặc CLARIFICATION_NEEDED.
-- answer: câu trả lời, hoặc chỉ rõ thông tin chưa tìm thấy, hoặc câu hỏi làm rõ.
-- claims: danh sách mệnh đề đơn có text và unit_id.
-- evidence_spans: danh sách quote nguyên văn và unit_id đã cung cấp. Mỗi claim cần một đoạn hỗ trợ.
+- answer: câu trả lời trực tiếp, mạch lạc, dễ đọc bằng đúng ngôn ngữ của người hỏi (hoặc chỉ rõ thông tin chưa tìm thấy / câu hỏi làm rõ).
+- claims: danh sách các nhận định cốt lõi trả lời trực tiếp câu hỏi, viết bằng câu hoàn chỉnh, tự nhiên, dễ hiểu theo đúng ngôn ngữ của người hỏi (không lặp ý vụn vặt, không chép nguyên xi câu tiếng Anh thô khi câu hỏi là tiếng Việt), mỗi phần tử gồm {"text": "...", "unit_id": "<mã Unit ID chính xác>"}.
+- evidence_spans: danh sách các đoạn trích dẫn NGUYÊN VĂN từ tài liệu nguồn gồm {"quote": "<chép nguyên văn 1-2 câu liền mạch từ đoạn nguồn, tuyệt đối KHÔNG dùng dấu ... rút gọn giữa câu>", "unit_id": "<mã Unit ID chính xác>"}. Mọi unit_id dùng trong claims đều PHẢI có mặt trong evidence_spans.
 - is_supported: Boolean. critic_action: approve, rewrite, request_more_context hoặc lower_confidence.
 - missing_key_points và unsupported_claims: danh sách các thiếu sót cụ thể.
 Nếu chưa tìm thấy dữ liệu, chọn NOT_FOUND_IN_DOCUMENT, is_supported=false, request_more_context
@@ -85,7 +85,12 @@ Tài liệu nguồn:
                 prompt=prompt, system_instruction=instructions, temperature=0.15, max_tokens=4096, json_mode=True,
             )
             clean = re.sub(r"^```(?:json)?\s*|\s*```$", "", response.strip(), flags=re.I)
-            data = json.loads(clean)
+            try:
+                data = json.loads(clean)
+            except ValueError:
+                from utils.json_repair import extract_and_parse_json
+
+                data = extract_and_parse_json(clean)
             if not isinstance(data, dict) or not isinstance(data.get("answer"), str) or not data["answer"].strip():
                 raise ValueError("Missing answer")
             answer = data["answer"].strip()
@@ -102,6 +107,35 @@ Tài liệu nguồn:
             raw_claims = data.get("claims", [])
             if not isinstance(raw_claims, list):
                 raise ValueError("Invalid claims")
+            # If Gemini cited a valid unit_id in claims but omitted/mismatched its quote in evidence_spans,
+            # bind a deterministic verbatim sentence span from that exact included unit so valid synthesis is never discarded.
+            covered_uids = {sp["source_unit_id"] for sp in spans}
+            included_by_id = {u.get("id"): u for u in included if isinstance(u, dict) and u.get("id")}
+            from agents.agent3_summarizer.components.generator import _clean_unit_id_ref
+            from core.state import EvidenceSpan
+
+            for rc in raw_claims:
+                if not isinstance(rc, dict):
+                    continue
+                req_uids = _clean_unit_id_ref(
+                    rc.get("unit_id") or rc.get("source_unit_id") or rc.get("evidence_unit_id") or rc.get("unit_ids")
+                )
+                for uid in req_uids:
+                    if uid not in covered_uids and uid in included_by_id:
+                        u_obj = included_by_id[uid]
+                        u_txt = " ".join(str(u_obj.get("text") or "").split()).strip()
+                        if u_txt and u_obj.get("doc_id") and type(u_obj.get("page_no")) is int:
+                            spans.append(
+                                EvidenceSpan(
+                                    id=f"ev_{len(spans)+1}",
+                                    quote=u_txt[:480],
+                                    source_unit_id=uid,
+                                    doc_id=u_obj["doc_id"],
+                                    page_no=u_obj["page_no"],
+                                    bbox=u_obj.get("bbox"),
+                                ).to_dict()
+                            )
+                            covered_uids.add(uid)
             claims = bind_summary_claims(raw_claims, spans)
             if status == "NOT_FOUND_IN_DOCUMENT":
                 spans, claims = [], []

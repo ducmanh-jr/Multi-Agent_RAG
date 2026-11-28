@@ -21,7 +21,12 @@ class GeminiFactCheckerAgent(BaseAgent):
         try:
             data = json.loads(clean)
         except (TypeError, ValueError):
-            return []
+            try:
+                from utils.json_repair import extract_and_parse_json
+
+                data = extract_and_parse_json(clean)
+            except Exception:
+                return []
         if isinstance(data, dict):
             res = data.get("results")
             return res if isinstance(res, list) else []
