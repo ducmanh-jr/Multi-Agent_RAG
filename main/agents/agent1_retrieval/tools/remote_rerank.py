@@ -27,9 +27,10 @@ class RerankError(RuntimeError):
 
 def rerank_passages(
     query: str, candidates: list[dict[str, Any]], *, client: httpx.Client, url: str, model: str, timeout: float,
-    keep_prefix: int = 0,
+    keep_prefix: int = 0, max_text_length: int = MAX_TEXT_LENGTH,
 ) -> tuple[list[dict[str, Any]], str, bool]:
-    texts = [str(doc.get("text") or "").strip()[:MAX_TEXT_LENGTH] for doc in candidates[:MAX_CANDIDATES]]
+    effective_max = max(256, min(int(max_text_length or MAX_TEXT_LENGTH), MAX_TEXT_LENGTH))
+    texts = [str(doc.get("text") or "").strip()[:effective_max] for doc in candidates[:MAX_CANDIDATES]]
     clean_query = query.strip()[:MAX_TEXT_LENGTH]
     if not clean_query or not all(texts):
         raise RerankError("missing_rerank_input")

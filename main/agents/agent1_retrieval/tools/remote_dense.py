@@ -1,6 +1,7 @@
 """Scoped dense retrieval using the versioned worker embedding contract."""
 
 from collections import OrderedDict
+import os
 import re
 import threading
 import time
@@ -25,6 +26,7 @@ class DenseRetrievalError(RuntimeError):
 class RemoteDenseRetriever:
     BATCH_SIZE = 16
     MAX_TEXT_LENGTH = 4096
+    QWEN3_LARGE_PASSAGE_MAX_LENGTH = 1400
     DIMENSION = 1024
     CACHE_SIZE = 4096
 
@@ -95,9 +97,8 @@ class RemoteDenseRetriever:
         self, query: str, passages: list[dict[str, Any]], *, top_k: int, client: httpx.Client,
         url: str, model: str, timeout: float,
     ) -> tuple[list[dict[str, Any]], str]:
-        texts = [str(passage.get("text") or "").strip()[:self.MAX_TEXT_LENGTH] for passage in passages]
-        candidates = [(index, text) for index, text in enumerate(texts) if text]
-        if not candidates or not query.strip():
+        raw_texts = [str(passage.get("text") or "").strip() for passage in passages]
+        if not any(raw_texts) or not query.strip():
             raise DenseRetrievalError("missing_embedding_input")
 
         deadline = time.monotonic() + timeout
@@ -105,6 +106,17 @@ class RemoteDenseRetriever:
         worker_model, revision, query_vectors = self._embed(client, url, model, [query.strip()[:self.MAX_TEXT_LENGTH]], deadline)
         identity = (url, worker_model, revision)
 
+        # Qwen3-Embedding-8B/4B on T4 scales linearly with passage token length; keeping passages compact (~300 tokens)
+        # cuts remote 8B embedding latency ~2x while preserving full MAX_TEXT_LENGTH for BGE-M3.
+        env_max = os.getenv("REMOTE_DENSE_MAX_CHARS", "").strip()
+        if env_max.isdigit() and int(env_max) >= 256:
+            passage_max_len = min(self.MAX_TEXT_LENGTH, int(env_max))
+        elif worker_model in self.ALLOWED_QWEN3_EMBEDDING_MODELS and any(sz in worker_model.lower() for sz in ("-8b", "-4b")):
+            passage_max_len = self.QWEN3_LARGE_PASSAGE_MAX_LENGTH
+        else:
+            passage_max_len = self.MAX_TEXT_LENGTH
+
+        candidates = [(index, text[:passage_max_len]) for index, text in enumerate(raw_texts) if text]
         unique_texts = dict.fromkeys(text for _, text in candidates)
         # Serialize cache lookup + missing-passage embedding across parallel DAG branches so the same PDF
         # is never embedded 3x concurrently over the remote Kaggle tunnel.

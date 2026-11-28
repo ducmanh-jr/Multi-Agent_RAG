@@ -101,7 +101,7 @@ def extract_searchable_figure_chunks(pdf_paths: Iterable[str | None]) -> list[di
 from utils.language import detect_corpus_language, is_vietnamese_text
 
 _SHARED_DENSE_RETRIEVER = RemoteDenseRetriever()
-MAX_REMOTE_DENSE_POOL = 80
+MAX_REMOTE_DENSE_POOL = max(16, int(os.getenv("MAX_REMOTE_DENSE_POOL", "48")))
 _GEMINI_EMBED_COOLDOWN_UNTIL: float = 0.0
 _LEXICAL_INDEX_LOCK = threading.RLock()
 _LEXICAL_INDEX_CACHE: OrderedDict[tuple[Any, ...], tuple[list[dict[str, Any]], Any, Any]] = OrderedDict()
@@ -191,11 +191,17 @@ def _select_dense_candidate_pool(
         if len(selected) >= limit:
             return selected[:limit]
 
-    for doc in active_pool:
-        if str(doc.get("unit_type") or "text").lower() in {"figure", "ocr_scan", "table", "equation"}:
-            _add(doc)
-            if len(selected) >= limit:
-                return selected[:limit]
+    # Prioritize tables first, then figures/OCR, then equations, capping structural slots at half the budget
+    # so equation-dense papers still retain broad distinct-page prose coverage.
+    structural_budget = max(len(selected), min(limit, len(selected) + max(8, limit // 2)))
+    for priority_types in ({"table"}, {"figure", "ocr_scan"}, {"equation"}):
+        for doc in active_pool:
+            if len(selected) >= structural_budget:
+                break
+            if str(doc.get("unit_type") or "text").lower() in priority_types:
+                _add(doc)
+                if len(selected) >= limit:
+                    return selected[:limit]
 
     for doc in prefer_distinct_pages(active_pool):
         _add(doc)
@@ -641,6 +647,7 @@ def enhance_with_dense_and_rerank(
                     model=settings.RERANKER_MODEL,
                     timeout=float(settings.REMOTE_TIMEOUT_SECONDS),
                     keep_prefix=safe_prefix,
+                    max_text_length=1600,
                 )
                 rerank_trace = {
                     "status": "used",

@@ -20,6 +20,7 @@ from agents.agent1_retrieval.tools.hybrid import reciprocal_rank_fusion
 from agents.agent1_retrieval.tools.perspective import generate_research_perspectives
 from agents.agent1_retrieval.tools.remote_dense import RemoteDenseRetriever
 from agents.agent1_retrieval.tools.semantic_pipeline import (
+    _SHARED_DENSE_RETRIEVER,
     boost_entities_and_tables,
     build_cached_pdf_lexical_pool,
     build_cross_lingual_subqueries,
@@ -75,7 +76,7 @@ class HybridRetrievalAgent(BaseAgent):
         self.rerank_keep_prefix = (
             self.settings.HYBRID_RERANK_KEEP_PREFIX if rerank_keep_prefix is None else rerank_keep_prefix
         )
-        self.dense = RemoteDenseRetriever()
+        self.dense = _SHARED_DENSE_RETRIEVER
         self._load_corpus()
 
     def _load_corpus(self):
@@ -230,7 +231,7 @@ class HybridRetrievalAgent(BaseAgent):
             query,
             sparse_fused,
             active_pool,
-            top_k=max(top_k + 4, top_k),
+            top_k=max(top_k + 2, 6),
             http_client=llm_client.http_client,
             dense_retriever=self.dense,
             enable_kaggle_dense=use_kaggle_dense,

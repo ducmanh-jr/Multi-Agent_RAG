@@ -25,6 +25,8 @@ from agents.agent1_retrieval.tools.remote_dense import (
 )
 from agents.agent1_retrieval.tools.remote_rerank import MAX_CANDIDATES, RerankError, rerank_passages
 from agents.agent1_retrieval.tools.semantic_pipeline import (
+    MAX_REMOTE_DENSE_POOL,
+    _select_dense_candidate_pool,
     boost_entities_tables_and_equations,
     build_cross_lingual_subqueries,
     extract_searchable_figure_chunks,
@@ -191,8 +193,9 @@ class GPUFinetuneRetrievalAgent(BaseAgent):
             try:
                 if not self.settings.REMOTE_INFERENCE_URL:
                     raise DenseRetrievalError("embedding_worker_not_configured")
+                bounded_pool = _select_dense_candidate_pool(fused_docs, active_pool, limit=MAX_REMOTE_DENSE_POOL)
                 dense_docs, revision = self.dense.rank(
-                    query, active_pool, top_k=candidate_limit, client=llm_client.http_client,
+                    query, bounded_pool, top_k=candidate_limit, client=llm_client.http_client,
                     url=self.settings.REMOTE_INFERENCE_URL, model=self.settings.EMBEDDING_MODEL,
                     timeout=float(self.settings.REMOTE_TIMEOUT_SECONDS),
                 )
@@ -243,6 +246,7 @@ class GPUFinetuneRetrievalAgent(BaseAgent):
                         url=self.settings.REMOTE_INFERENCE_URL, model=self.settings.RERANKER_MODEL,
                         timeout=float(self.settings.REMOTE_TIMEOUT_SECONDS),
                         keep_prefix=self.rerank_keep_prefix,
+                        max_text_length=1600,
                     )
                 except RerankError as exc:
                     rerank_trace = {"status": "fallback", "reason": str(exc)}
