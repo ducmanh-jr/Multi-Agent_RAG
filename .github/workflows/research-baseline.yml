@@ -15,13 +15,13 @@ permissions:
   contents: read
 
 jobs:
-  smoke-check:
+  smoke-and-m0-regression:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     env:
       PYTHONUTF8: '1'
       PYTHON_DOTENV_DISABLED: '1'
-      PYTHONPATH: main
+      PYTHONPATH: 'main:.'
     steps:
       - uses: actions/checkout@v4
 
@@ -31,8 +31,11 @@ jobs:
           cache: pip
           cache-dependency-path: requirements.txt
 
+      - name: Install system OCR (Tesseract EN + VI)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq tesseract-ocr tesseract-ocr-eng tesseract-ocr-vie
+
       - name: Install dependencies
-        run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt
+        run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt && python -m pip install pytest
 
       - name: Verify Python syntax across main and kaggle
         run: python -m compileall -q main kaggle
@@ -84,3 +87,36 @@ jobs:
               assert resp.json().get('status') == 'ok'
           print('FastAPI /health and /api/health OK')
           "
+
+      - name: Run M0 60-question mechanism regression gate
+        run: |
+          python main/eval/m0_regression_gate.py --output-dir /tmp/m0-gate
+          python -c "
+          import json
+          with open('/tmp/m0-gate/m0_gate_report.json', encoding='utf-8') as f:
+              report = json.load(f)
+          assert report['passed'] is True
+          assert report['good_passed'] == 60 and report['bad_traps_caught'] == 60
+          print('M0 60-case gate OK:', report['clopper_pearson_95_lower_bound'])
+          "
+
+      - name: Run reproducible offline CPU pilot benchmark
+        run: |
+          python main/eval/run_benchmark.py --pilot --modes cpu_min --cache-regimes cold warm_no_cache --limit-per-cat 0 --output-dir /tmp/pilot-eval
+          python -c "
+          import json
+          with open('/tmp/pilot-eval/benchmark_results.json', encoding='utf-8') as f:
+              res = json.load(f)
+          summaries = res['summaries']
+          assert len(summaries) == 2
+          for s in summaries:
+              assert s['errors'] == []
+              assert s['scored_questions'] == 4
+              assert s['cache_hit_total'] == 0
+              trap = next(r for r in s['records'] if r['id'] == 'pilot-unanswerable-vi')
+              assert trap['abstention_accuracy'] == 1.0 and trap['hallucination_rate'] == 0.0, f'Trap audit failed: {trap}'
+          print('Offline CPU pilot OK across cold and warm_no_cache regimes')
+          "
+
+      - name: Run full offline unit and integration pytest suite
+        run: python -m pytest main/tests -q

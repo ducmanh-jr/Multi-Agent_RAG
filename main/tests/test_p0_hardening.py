@@ -19,6 +19,8 @@ def test_env_example_contains_no_hardcoded_credentials_or_tunnel_url():
 def test_single_provider_gate_blocks_gemini_in_local_only_and_single_modes(monkeypatch):
     monkeypatch.setattr(settings, "GEMINI_API_KEY", "test-fake-key-123456")
     monkeypatch.setattr(settings, "HYBRID_PROVIDER_PROFILE", "local_only")
+    monkeypatch.setattr(settings, "LOCAL_CPU_URL", "")
+    monkeypatch.delenv("FIGURE_VISION_MODEL", raising=False)
 
     assert is_gemini_permitted("hybrid") is False
     assert is_gemini_permitted("cpu_min") is False

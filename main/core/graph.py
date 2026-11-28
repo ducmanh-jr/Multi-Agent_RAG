@@ -5,16 +5,30 @@ import inspect
 import os
 from pathlib import Path
 from typing import Any, Callable, Optional
+from langchain_core.runnables import RunnableLambda
 from langgraph.graph import END, START, StateGraph
 
 from agents.agent0_scout.node import ScoutAgent
+from core.agent_decisions import decide_for_role
+from core.agent_protocol import (
+    AgentResult,
+    AgentTask,
+    compact_result_summary,
+    make_agent_message,
+    normalize_decision_dict,
+)
 from core.citation_audit import citation_location, get_citation_audit, write_with_citation_audit
 from core.comparison_plan import (
     compare_documents, comparison_schedule, get_comparison_budget, incomplete_comparison, review_comparison,
     run_coro_sync,
 )
 from core.config import RunConfig, agent_inference_mode, get_run_settings, use_run_config
-from core.coordination import decide_handoff, evaluate_agent_handoff, fact_check_accepted
+from core.coordination import (
+    decide_handoff,
+    evaluate_agent_handoff,
+    fact_check_accepted,
+    next_handoff_budgets,
+)
 from core.evidence_store import EvidenceStore
 from core.figure_qa import (
     add_figure_evidence, attach_answer_figures, check_visual_answer,
@@ -31,9 +45,12 @@ from core.research_dag import (
     replan_research_dag_for_gaps,
     sync_dag_manifest_from_retrieval,
 )
-from core.research_tasks import TaskStatus
+from core.research_tasks import ResearchTask, TaskStatus
+from core.task_scheduler import TaskPolicy, TaskScheduler
+from core.schemas import RouterPlanOutput
 from core.state import AgentState
 from core.supervisor import supervisor_planner
+from core.supervisor_hub import route_from_supervisor_hub, supervisor_hub_step
 from modes.registry import get_active_agents, get_agent_runners, normalize_mode, resolve_agent_modes
 from utils.language import detect_corpus_language, localized_status_message, resolve_language_bundle
 from utils.logger import logger
@@ -99,13 +116,13 @@ def orchestrator_router_node(
             or run_settings.EXECUTION_MODE
             or "cpu_min"
         )
-        should_refine = (
+        should_refine_gemini = (
             retry_count == 0
             and base_plan.complexity in {"MEDIUM", "HIGH"}
             and is_gemini_permitted(active_mode, role="planner")
             and bool(getattr(run_settings, "GEMINI_API_KEY", ""))
         )
-        if should_refine:
+        if should_refine_gemini:
             from utils.llm_client import llm_client
 
             def _planner_llm(prompt: str) -> Any:
@@ -122,14 +139,48 @@ def orchestrator_router_node(
                 plan = refined
                 planning_source = "llm_refined"
 
+        # Single-Planner consolidation: when Gemini didn't refine and Kaggle router tool is available
+        # in gpu_finetune/hybrid mode, Supervisor invokes `/api/router` directly so Retrieval never re-plans.
+        if (
+            planning_source == "deterministic"
+            and retry_count == 0
+            and base_plan.complexity in {"MEDIUM", "HIGH"}
+            and active_mode in {"gpu_finetune", "hybrid"}
+            and bool(getattr(run_settings, "REMOTE_INFERENCE_URL", ""))
+        ):
+            try:
+                from utils.llm_client import llm_client
+
+                router_res = llm_client.call_kaggle_specialist(
+                    endpoint="api/router",
+                    payload={"query": resolved_query, "adapter": "router"},
+                    adapter="router",
+                    timeout=15.0,
+                    allow_generate_fallback=False,
+                )
+                if isinstance(router_res, dict) and router_res:
+                    lora_plan = RouterPlanOutput.from_dict(router_res, default_query=resolved_query)
+                    merged_subs = list(dict.fromkeys([*lora_plan.sub_queries, *plan.sub_queries]))[:4]
+                    if merged_subs:
+                        plan.sub_queries = merged_subs
+                    plan.alpha = lora_plan.alpha
+                    plan.top_k = lora_plan.top_k
+                    if lora_plan.intent:
+                        plan.intent = lora_plan.intent
+                    planning_source = "kaggle_router_tool"
+            except Exception as exc:
+                logger.warning("[Supervisor Planner] Kaggle /api/router tool fallback to deterministic plan: %s", exc)
+
+    dag_round_index = int(state.get("dag_round_index") or 0)
     dag = build_research_dag_plan(
         plan,
         evidence_gaps=evidence_gaps,
-        round_index=retry_count,
+        round_index=dag_round_index,
     )
     dag_manifest = dag.to_manifest()
     existing_schema = dict(state.get("document_schema") or {})
     existing_schema["research_dag"] = dag_manifest
+    existing_schema["planner_source"] = planning_source
 
     logger.info(
         f"[Supervisor Planner] Query='{query[:70]}' | Intent={plan.intent} | "
@@ -194,6 +245,9 @@ def orchestrator_router_node(
         "alpha": plan.alpha,
         "top_k": plan.top_k,
         "retry_count": retry_count,
+        "dag_round_index": dag_round_index,
+        "handoff_budgets": dict(state.get("handoff_budgets") or {}),
+        "draft_revision_needed": bool(state.get("draft_revision_needed", False)),
         "document_schema": existing_schema,
         "reasoning_trace": [trace],
     }
@@ -299,12 +353,35 @@ def dispatch_next_node(
     state: AgentState,
     *,
     comparison_plan: bool = False,
+    supervisor_mode: str | None = None,
 ) -> str:
     """
     Single unified dispatch policy shared by fresh LangGraph runs, retry loops, and checkpoint resume.
-    Routes every completed node across all 6 specialist roles + Supervisor consistently.
+    Routes every completed node across all 6 specialist roles + Supervisor consistently in both
+    `pipeline` and `hub` orchestration modes.
     """
     node = (completed_node or "").strip()
+    effective_sup_mode = str(supervisor_mode or state.get("supervisor_mode") or "pipeline").strip().lower()
+    if effective_sup_mode == "hub":
+        if not node:
+            return "orchestrator_router"
+        if node == "supervisor_node":
+            return route_from_supervisor_hub(state)
+        if node in {"escalation_node", END, "__end__"}:
+            return END
+        if node in {
+            "orchestrator_router",
+            "scout_node",
+            "retrieval_node",
+            "reader_node",
+            "summarizer_node",
+            "fact_checker_node",
+            "writer_node",
+            "comparison_review_node",
+        }:
+            return "supervisor_node"
+        return "orchestrator_router"
+
     if not node:
         return "orchestrator_router"
     if node == "orchestrator_router":
@@ -358,6 +435,10 @@ def dispatch_next_node(
     return "orchestrator_router"
 
 
+def route_after_router(state: AgentState) -> str:
+    return dispatch_next_node("orchestrator_router", state)
+
+
 def route_after_scout(state: AgentState) -> str:
     return dispatch_next_node("scout_node", state)
 
@@ -387,9 +468,15 @@ def resolve_next_node_after_checkpoint(
     state: AgentState,
     *,
     comparison_plan: bool = False,
+    supervisor_mode: str | None = None,
 ) -> str:
     """Resolve the exact successor node to execute when resuming after `completed_node`."""
-    return dispatch_next_node(completed_node, state, comparison_plan=comparison_plan)
+    return dispatch_next_node(
+        completed_node,
+        state,
+        comparison_plan=comparison_plan,
+        supervisor_mode=supervisor_mode,
+    )
 
 
 _agents: dict[str, Any] = {}
@@ -400,11 +487,25 @@ def build_research_rag_graph(
     allow_scout_handoff: Optional[bool] = None,
     parallel_retrieval: bool = False, comparison_plan: bool = False,
     planner_llm_fn: Optional[Callable[[str], Any]] = None,
+    arbiter_llm_fn: Optional[Callable[[str], Any]] = None,
     start_at_node: Optional[str] = None,
     enable_reader_handoff: bool = True,
+    supervisor_mode: Optional[str] = None,
+    disabled_agent_handoffs: Optional[list[str]] = None,
 ):
-    """Build a run-local team with unified 6-role supervised handoff dispatch."""
+    """Build a run-local team supporting both `hub` (default Hub-and-Spoke) and `pipeline` (legacy baseline) modes."""
     run_config = run_config or RunConfig.capture()
+    effective_supervisor_mode = str(
+        supervisor_mode
+        if supervisor_mode is not None
+        else (getattr(run_config, "SUPERVISOR_MODE", "hub") or "hub")
+    ).strip().lower()
+    hub_mode = effective_supervisor_mode != "pipeline"
+    graph_disabled_handoffs = [
+        str(r).strip().lower()
+        for r in (disabled_agent_handoffs or [])
+        if isinstance(r, str) and r.strip()
+    ]
     with use_run_config(run_config):
         run_agents = get_agent_runners(mode)
         reader_mode = normalize_mode(mode or run_config.get_agent_mode("reader") or run_config.EXECUTION_MODE)
@@ -508,10 +609,79 @@ def build_research_rag_graph(
             digest = None
         return resolved, digest
 
+    def _active_task_for(state: AgentState, role: str) -> AgentTask | None:
+        pending = state.get("pending_tasks") or []
+        if pending and isinstance(pending[0], dict) and pending[0].get("role") == role:
+            return AgentTask.from_dict(pending[0])
+        return None
+
+    def _attach_protocol_envelope(
+        role: str,
+        state: AgentState,
+        update: dict[str, Any],
+        task: AgentTask | None,
+        *,
+        explicit_decision: Any = None,
+    ) -> dict[str, Any]:
+        """Wrap specialist update with mandatory `AgentDecision`, compact `AgentResult`, and blackboard message."""
+        merged_for_decide = {
+            **state,
+            "allow_scout_handoff": scout_handoff_allowed,
+            "enable_reader_handoff": False if (not enable_reader_handoff or state.get("enable_reader_handoff") is False) else True,
+        }
+        decision = (
+            explicit_decision
+            if explicit_decision is not None
+            else decide_for_role(role, merged_for_decide, update, task.to_dict() if task else None)
+        )
+        round_idx = int(update.get("retry_count") if update.get("retry_count") is not None else (state.get("retry_count") or 0))
+        dec_dict = normalize_decision_dict(
+            role,
+            decision,
+            round_index=round_idx,
+            task_id=task.task_id if task else None,
+        )
+        summary = compact_result_summary(role, state, update)
+        raw_tools = update.get("tools_used")
+        tools_used = tuple(str(t) for t in raw_tools if isinstance(t, str) and t.strip()) if isinstance(raw_tools, (list, tuple)) else ()
+        result_obj = AgentResult(
+            role=role,
+            status=str(dec_dict.get("status") or "completed"),
+            decision=dec_dict,
+            task_id=task.task_id if task else None,
+            summary=summary,
+            tools_used=tools_used,
+            round_index=round_idx,
+        )
+        msg_kind = "decision_proposed" if dec_dict.get("action") not in {"proceed", ""} else "result_reported"
+        msg = make_agent_message(
+            sender=role,
+            recipient="supervisor" if hub_mode else str(dec_dict.get("target_agent") or "supervisor"),
+            kind=msg_kind,
+            action=str(dec_dict.get("action") or "proceed"),
+            reason=str(dec_dict.get("reason") or ""),
+            task_id=task.task_id if task else None,
+            focus=(dec_dict.get("parameters") or {}).get("focus") if isinstance(dec_dict.get("parameters"), dict) else (),
+            summary=summary,
+            round_index=round_idx,
+        )
+        existing_msgs = list(update.get("agent_messages") or [])
+        existing_msgs.append(msg)
+        wrapped = {
+            **update,
+            "last_result": result_obj.to_dict(),
+            "agent_messages": existing_msgs,
+        }
+        if hub_mode:
+            wrapped["pending_tasks"] = []
+        return wrapped
+
     def _run_scout(state: AgentState) -> dict[str, Any]:
-        request = _handoff_for(state, "scout", "recipient")
+        task = _active_task_for(state, "scout") if hub_mode else None
+        request = (task.to_handoff_request() if task else None) or _handoff_for(state, "scout", "recipient")
         if not request:
-            return scout.run(state)
+            base_out = scout.run(state)
+            return _attach_protocol_envelope("scout", state, base_out, task)
         existing_paths = list(dict.fromkeys(
             state.get("pdf_paths") or ([state["pdf_path"]] if state.get("pdf_path") else [])
         ))
@@ -526,8 +696,8 @@ def build_research_rag_graph(
             "sender": request["sender"],
             "recipient": "scout",
             "reason": request["reason"],
-            "signature": request["signature"],
-            "retry_count": request["retry_count"],
+            "signature": request.get("signature"),
+            "retry_count": request.get("retry_count", int(state.get("retry_count") or 0)),
         }
         if request.get("decision_id"):
             receipt["decision_id"] = request["decision_id"]
@@ -560,7 +730,7 @@ def build_research_rag_graph(
             "agent": "scout",
             "sender": request["sender"],
             "recipient": "scout",
-            "signature": request["signature"],
+            "signature": request.get("signature"),
             "decision_id": request.get("decision_id"),
             "task_id": request.get("task_id"),
             "outcome_status": "discovered_new_documents" if truly_new_paths else "no_new_documents",
@@ -572,7 +742,7 @@ def build_research_rag_graph(
             outcome_event,
         ]
         if truly_new_paths and merged_paths:
-            return {
+            out = {
                 **update,
                 "pdf_path": merged_paths[0],
                 "pdf_paths": merged_paths,
@@ -580,8 +750,9 @@ def build_research_rag_graph(
                 "agent_decision": None,
                 "reasoning_trace": trace,
             }
+            return _attach_protocol_envelope("scout", state, out, task)
         if not existing_paths and update.get("answer_status"):
-            return {
+            out = {
                 **update,
                 "pdf_path": None,
                 "pdf_paths": [],
@@ -589,25 +760,34 @@ def build_research_rag_graph(
                 "agent_decision": None,
                 "reasoning_trace": [receipt, *(update.get("reasoning_trace") or [])],
             }
+            return _attach_protocol_envelope("scout", state, out, task)
         # If discovery found no genuinely new PDF, preserve existing paths and mark no_new_evidence=True
-        return {
+        out = {
             "pdf_path": existing_paths[0] if existing_paths else None,
             "pdf_paths": existing_paths,
             "no_new_evidence": True,
             "agent_decision": None,
             "reasoning_trace": trace,
         }
+        return _attach_protocol_envelope("scout", state, out, task)
 
-    def run_specialist(role: str, state: AgentState) -> dict[str, Any]:
-        request = _handoff_for(state, role, "recipient")
+    def run_specialist(role: str, state: AgentState, *, inline_handoff: bool | None = None) -> dict[str, Any]:
+        use_inline_handoff = (not hub_mode) if inline_handoff is None else bool(inline_handoff)
+        task = _active_task_for(state, role) if hub_mode else None
+        request = (task.to_handoff_request() if task else None) or _handoff_for(state, role, "recipient")
         inputs = prepare_handoff_input(state, request) if request else state
         if role == "reader" and (not enable_reader_handoff or state.get("enable_reader_handoff") is False):
             inputs = {**inputs, "enable_reader_handoff": False}
         existing_schema = dict(inputs.get("document_schema") or state.get("document_schema") or {})
         dag_manifest = existing_schema.get("research_dag") if isinstance(existing_schema.get("research_dag"), dict) else None
+        current_dag_round = int(
+            state.get("dag_round_index")
+            if state.get("dag_round_index") is not None
+            else (dag_manifest.get("round_index", 0) if isinstance(dag_manifest, dict) else 0)
+        )
         gap_queries = (
             pending_dag_investigation_queries(dag_manifest)
-            if role == "retrieval" and state.get("retry_count", 0) > 0
+            if role == "retrieval" and current_dag_round > 0
             else []
         )
         if gap_queries:
@@ -650,14 +830,13 @@ def build_research_rag_graph(
                     }
                     return run_agents["retrieval"](branch_state)
 
-                current_round = int(state.get("retry_count") or 0)
                 prev_seen = inputs.get("seen_chunks") or state.get("seen_chunks") or []
                 try:
                     dag_update, dag_trace = execute_retrieval_dag(
                         sub_queries,
                         _run_branch,
                         top_k=int(inputs.get("top_k") or 10),
-                        round_index=current_round,
+                        round_index=current_dag_round,
                         dag_manifest=dag_manifest,
                         previous_seen_chunks=prev_seen,
                     )
@@ -691,14 +870,13 @@ def build_research_rag_graph(
                     }
                     return run_agents["retrieval"](branch_state)
 
-                current_round = int(state.get("retry_count") or 0)
                 prev_seen = inputs.get("seen_chunks") or state.get("seen_chunks") or []
                 try:
                     fanout_update, fanout_trace = execute_document_fanout_dag(
                         selected_pdfs,
                         _run_doc_branch,
                         top_k=int(inputs.get("top_k") or 10),
-                        round_index=current_round,
+                        round_index=current_dag_round,
                         previous_seen_chunks=prev_seen,
                     )
                 except Exception as exc:
@@ -756,7 +934,7 @@ def build_research_rag_graph(
                 dag_manifest,
                 sync_event,
                 retrieved_count=len(update.get("retrieved_docs") or []),
-                round_index=int(state.get("retry_count") or 0),
+                round_index=current_dag_round,
             )
             update = {**update, "document_schema": schema}
 
@@ -783,8 +961,8 @@ def build_research_rag_graph(
                 "sender": request["sender"],
                 "recipient": role,
                 "reason": request["reason"],
-                "signature": request["signature"],
-                "retry_count": request["retry_count"],
+                "signature": request.get("signature"),
+                "retry_count": request.get("retry_count", int(state.get("retry_count") or 0)),
             }
             if request.get("decision_id"):
                 receipt["decision_id"] = request["decision_id"]
@@ -823,16 +1001,25 @@ def build_research_rag_graph(
             )
             update = {**update, "document_schema": schema, "source_language": src_lang}
 
-        if role == "summarizer" and state.get("retry_count", 0) > 0:
-            # Judgements and citations from the previous draft cannot certify its replacement.
+        should_reset_draft = role == "summarizer" and (
+            bool(state.get("draft_revision_needed"))
+            or (request is not None and request.get("sender") in {"summarizer", "fact_checker", "writer"})
+            or bool(state.get("verified_claims") or state.get("rejected_claims"))
+        )
+        if should_reset_draft:
+            # Event-driven draft reset: clear stale verification/claims only when revising an earlier draft,
+            # never falsely on a pre-draft reader->retrieval handoff.
             update = {
                 "answer": "", "claims": [], "evidence_spans": [],
                 "critic_action": "approve", "critic_feedback": {},
                 "verified_claims": [], "rejected_claims": [], "evidence_gaps": [],
                 "short_answer": None, "answer_status": None, "fact_check_label": "not_enough_info",
                 "statistical_audit": None, "code_verification": None,
+                "draft_revision_needed": False,
                 **update,
             }
+        elif role == "summarizer":
+            update = {**update, "draft_revision_needed": False}
 
         if role == "summarizer":
             schema = dict(update.get("document_schema") or state.get("document_schema") or {})
@@ -843,91 +1030,145 @@ def build_research_rag_graph(
                     schema.get("research_dag"),
                     "synthesize",
                     TaskStatus.COMPLETED if has_answer else TaskStatus.FAILED,
-                    round_index=int(state.get("retry_count") or 0),
+                    round_index=current_dag_round,
                     metadata_update={"claims_count": len(update.get("claims") or [])},
                 )
             update = {**update, "document_schema": schema}
 
-        should_evaluate_decision = not visual and (
-            role in {"summarizer", "fact_checker"}
-            or (role in {"reader", "retrieval"} and update.get("agent_decision") is not None)
-        )
-        if should_evaluate_decision:
-            reviewed = {
-                **state,
-                **update,
-                "agent_decision": update.get("agent_decision"),
-                "allow_scout_handoff": scout_handoff_allowed,
-                "reasoning_trace": [*(state.get("reasoning_trace") or []), *trace],
-            }
-            decision, audit_event = evaluate_agent_handoff(role, reviewed)
-            if audit_event is not None:
-                trace.append(audit_event)
-            if role == "fact_checker":
-                schema = dict(update.get("document_schema") or state.get("document_schema") or {})
-                store = EvidenceStore.from_state(reviewed)
-                schema["evidence_store"] = store.to_dict()
-                if isinstance(schema.get("research_dag"), dict):
-                    if fact_check_accepted(reviewed):
-                        verify_outcome = "PASSED"
-                    else:
-                        label = str(reviewed.get("fact_check_label") or "").lower()
-                        rejected = reviewed.get("rejected_claims") or []
-                        has_contradiction = label in {"contradict", "contradicted", "refuted"} or any(
-                            str(item.get("status", "")).lower() in {"contradict", "contradicted", "refuted"}
-                            for item in rejected if isinstance(item, dict)
-                        )
-                        verify_outcome = "CONTRADICTED" if has_contradiction else "NEEDS_MORE_EVIDENCE"
-                    schema["research_dag"] = mark_dag_stage_status(
-                        schema.get("research_dag"),
-                        "verify",
-                        TaskStatus.COMPLETED,
-                        round_index=int(state.get("retry_count") or 0),
-                        review_outcome=verify_outcome,
-                        metadata_update={
-                            "fact_check_label": reviewed.get("fact_check_label"),
-                            "verified_count": len(reviewed.get("verified_claims") or []),
-                            "rejected_count": len(reviewed.get("rejected_claims") or []),
-                        },
+        merged_disabled = list(dict.fromkeys([
+            *graph_disabled_handoffs,
+            *(str(r).strip().lower() for r in (state.get("disabled_agent_handoffs") or []) if isinstance(r, str) and r.strip()),
+        ]))
+        reviewed_snapshot = {
+            **state,
+            **update,
+            "agent_decision": update.get("agent_decision"),
+            "allow_scout_handoff": scout_handoff_allowed,
+            "enable_reader_handoff": False if (not enable_reader_handoff or state.get("enable_reader_handoff") is False) else True,
+            "disabled_agent_handoffs": merged_disabled,
+            "reasoning_trace": [*(state.get("reasoning_trace") or []), *trace],
+        }
+
+        if role == "fact_checker" and not visual:
+            schema = dict(update.get("document_schema") or state.get("document_schema") or {})
+            store = EvidenceStore.from_state(reviewed_snapshot)
+            schema["evidence_store"] = store.to_dict()
+            if isinstance(schema.get("research_dag"), dict):
+                if fact_check_accepted(reviewed_snapshot):
+                    verify_outcome = "PASSED"
+                else:
+                    label = str(reviewed_snapshot.get("fact_check_label") or "").lower()
+                    rejected = reviewed_snapshot.get("rejected_claims") or []
+                    has_contradiction = label in {"contradict", "contradicted", "refuted"} or any(
+                        str(item.get("status", "")).lower() in {"contradict", "contradicted", "refuted"}
+                        for item in rejected if isinstance(item, dict)
                     )
-                gaps = reviewed.get("evidence_gaps") or []
-                if gaps and decision is not None and decision.recipient in {"retrieval", "scout", "reader"}:
-                    replanned = replan_research_dag_for_gaps(schema.get("research_dag"), gaps)
-                    schema["research_dag"] = replanned
-                    if replanned.get("added_gap_tasks", 0) > 0:
-                        trace.append({
-                            "agent": "task_scheduler",
-                            "action": "research_dag_replanned",
-                            "round_index": replanned["round_index"],
-                            "added_gap_tasks": replanned["added_gap_tasks"],
-                            "total_tasks": replanned["total_tasks"],
-                        })
-                update["document_schema"] = schema
-            if decision is not None:
-                attempt = state.get("retry_count", 0) + 1
-                handoff_event = {**decision.as_trace(), "agent": role, "retry_count": attempt}
-                if audit_event and audit_event.get("decision_id"):
-                    handoff_event["decision_id"] = audit_event["decision_id"]
-                trace.append(handoff_event)
-                update["retry_count"] = attempt
+                    verify_outcome = "CONTRADICTED" if has_contradiction else "NEEDS_MORE_EVIDENCE"
+                schema["research_dag"] = mark_dag_stage_status(
+                    schema.get("research_dag"),
+                    "verify",
+                    TaskStatus.COMPLETED,
+                    round_index=current_dag_round,
+                    review_outcome=verify_outcome,
+                    metadata_update={
+                        "fact_check_label": reviewed_snapshot.get("fact_check_label"),
+                        "verified_count": len(reviewed_snapshot.get("verified_claims") or []),
+                        "rejected_count": len(reviewed_snapshot.get("rejected_claims") or []),
+                    },
+                )
+            update["document_schema"] = schema
+
+        # Every specialist computes its own mandatory `AgentDecision` via `decide_for_role`.
+        role_decision = (
+            decide_for_role(role, reviewed_snapshot, update, task.to_dict() if task else None)
+            if not visual
+            else None
+        )
+
+        if use_inline_handoff:
+            should_evaluate_decision = not visual and (
+                role in {"summarizer", "fact_checker"}
+                or (role in {"reader", "retrieval"} and (update.get("agent_decision") is not None or (role_decision is not None and role_decision.action != "proceed")))
+            )
+            if should_evaluate_decision:
+                reviewed_inline = {
+                    **reviewed_snapshot,
+                    "agent_decision": (
+                        update.get("agent_decision")
+                        if update.get("agent_decision") is not None
+                        else (role_decision.to_dict() if role_decision is not None and role_decision.action != "proceed" else None)
+                    ),
+                }
+                decision, audit_event = evaluate_agent_handoff(role, reviewed_inline)
+                if audit_event is not None:
+                    trace.append(audit_event)
+                if role == "fact_checker":
+                    schema = dict(update.get("document_schema") or state.get("document_schema") or {})
+                    gaps = reviewed_inline.get("evidence_gaps") or []
+                    if gaps and decision is not None and decision.recipient in {"retrieval", "scout", "reader"}:
+                        replanned = replan_research_dag_for_gaps(schema.get("research_dag"), gaps)
+                        schema["research_dag"] = replanned
+                        update["dag_round_index"] = int(replanned.get("round_index", current_dag_round))
+                        if replanned.get("added_gap_tasks", 0) > 0:
+                            trace.append({
+                                "agent": "task_scheduler",
+                                "action": "research_dag_replanned",
+                                "round_index": replanned["round_index"],
+                                "added_gap_tasks": replanned["added_gap_tasks"],
+                                "total_tasks": replanned["total_tasks"],
+                            })
+                    update["document_schema"] = schema
+                if decision is not None:
+                    attempt = state.get("retry_count", 0) + 1
+                    budget_cat = str((audit_event or {}).get("budget_category") or "revise")
+                    updated_budgets = next_handoff_budgets(
+                        state.get("handoff_budgets"),
+                        budget_cat,
+                        fallback_total=int(state.get("retry_count") or 0),
+                    )
+                    handoff_event = {
+                        **decision.as_trace(),
+                        "agent": role,
+                        "retry_count": attempt,
+                        "budget_category": budget_cat,
+                    }
+                    if audit_event and audit_event.get("decision_id"):
+                        handoff_event["decision_id"] = audit_event["decision_id"]
+                    trace.append(handoff_event)
+                    update["retry_count"] = attempt
+                    update["handoff_budgets"] = updated_budgets
+                    if role in {"summarizer", "fact_checker", "writer"}:
+                        update["draft_revision_needed"] = True
+
         update["agent_decision"] = None
         update["reasoning_trace"] = trace
-        return update
+        return _attach_protocol_envelope(role, state, update, task, explicit_decision=role_decision)
 
     def _mark_write_stage(state: AgentState, result: dict[str, Any]) -> dict[str, Any]:
         schema = dict(result.get("document_schema") or state.get("document_schema") or {})
         if isinstance(schema.get("research_dag"), dict):
+            write_round = int(
+                result.get("dag_round_index")
+                if result.get("dag_round_index") is not None
+                else (
+                    state.get("dag_round_index")
+                    if state.get("dag_round_index") is not None
+                    else schema["research_dag"].get("round_index", 0)
+                )
+            )
             schema["research_dag"] = mark_dag_stage_status(
                 schema.get("research_dag"),
                 "write",
                 TaskStatus.COMPLETED,
-                round_index=int(state.get("retry_count") or 0),
+                round_index=write_round,
                 metadata_update={"confidence": result.get("confidence")},
             )
             result = {**result, "document_schema": schema}
         return result
 
-    def _writer_node(state: AgentState) -> dict[str, Any]:
+    def _writer_node(state: AgentState, *, inline_handoff: bool | None = None) -> dict[str, Any]:
+        use_inline_handoff = (not hub_mode) if inline_handoff is None else bool(inline_handoff)
+        task = _active_task_for(state, "writer") if hub_mode else None
         writer = write_visual_answer if figure_context(state).get("explicit") else run_agents["writer"]
         result = write_with_citation_audit(state, writer)
         comparison = comparison_schedule(state.get("reasoning_trace") or []) if comparison_enabled else None
@@ -935,45 +1176,111 @@ def build_research_rag_graph(
             references = get_citation_audit(result["reasoning_trace"]).get("references", [])
             cited = {location[0] for ref in references if (location := citation_location(ref))}
             if not cited.issuperset(comparison["required_sources"]):
-                return incomplete_comparison("missing_audited_source")
+                inc = incomplete_comparison("missing_audited_source")
+                return _attach_protocol_envelope("writer", state, inc, task)
         if state.get("critic_action") == "lower_confidence":
             result["confidence"] = "low"
         else:
             result.setdefault("confidence", "high" if state.get("verified_claims") else "low")
-        if result.get("agent_decision") is not None:
-            w_trace = list(result.get("reasoning_trace") or [])
-            reviewed_w = {
-                **state,
-                **result,
-                "agent_decision": result.get("agent_decision"),
-                "allow_scout_handoff": scout_handoff_allowed,
-                "reasoning_trace": [*(state.get("reasoning_trace") or []), *w_trace],
-            }
-            w_decision, w_audit = evaluate_agent_handoff("writer", reviewed_w)
-            if w_audit is not None:
-                w_trace.append(w_audit)
-            if w_decision is not None:
-                attempt = state.get("retry_count", 0) + 1
-                w_handoff = {**w_decision.as_trace(), "agent": "writer", "retry_count": attempt}
-                if w_audit and w_audit.get("decision_id"):
-                    w_handoff["decision_id"] = w_audit["decision_id"]
-                w_trace.append(w_handoff)
-                result = {**result, "retry_count": attempt, "agent_decision": None, "reasoning_trace": w_trace}
+
+        writer_decision = decide_for_role("writer", state, result, task.to_dict() if task else None)
+        if use_inline_handoff:
+            raw_proposal = (
+                result.get("agent_decision")
+                if result.get("agent_decision") is not None
+                else (writer_decision.to_dict() if writer_decision.action != "proceed" else None)
+            )
+            if raw_proposal is not None:
+                w_trace = list(result.get("reasoning_trace") or [])
+                reviewed_w = {
+                    **state,
+                    **result,
+                    "agent_decision": raw_proposal,
+                    "allow_scout_handoff": scout_handoff_allowed,
+                    "disabled_agent_handoffs": list(dict.fromkeys([
+                        *graph_disabled_handoffs,
+                        *(str(r).strip().lower() for r in (state.get("disabled_agent_handoffs") or []) if isinstance(r, str) and r.strip()),
+                    ])),
+                    "reasoning_trace": [*(state.get("reasoning_trace") or []), *w_trace],
+                }
+                w_decision, w_audit = evaluate_agent_handoff("writer", reviewed_w)
+                if w_audit is not None:
+                    w_trace.append(w_audit)
+                if w_decision is not None:
+                    attempt = state.get("retry_count", 0) + 1
+                    w_cat = str((w_audit or {}).get("budget_category") or "verify")
+                    w_budgets = next_handoff_budgets(
+                        state.get("handoff_budgets"),
+                        w_cat,
+                        fallback_total=int(state.get("retry_count") or 0),
+                    )
+                    w_handoff = {
+                        **w_decision.as_trace(),
+                        "agent": "writer",
+                        "retry_count": attempt,
+                        "budget_category": w_cat,
+                    }
+                    if w_audit and w_audit.get("decision_id"):
+                        w_handoff["decision_id"] = w_audit["decision_id"]
+                    w_trace.append(w_handoff)
+                    result = {
+                        **result,
+                        "retry_count": attempt,
+                        "handoff_budgets": w_budgets,
+                        "draft_revision_needed": True,
+                        "agent_decision": None,
+                        "reasoning_trace": w_trace,
+                    }
+                else:
+                    result = {**result, "agent_decision": None, "reasoning_trace": w_trace}
             else:
-                result = {**result, "agent_decision": None, "reasoning_trace": w_trace}
+                result = {**result, "agent_decision": None}
         else:
             result = {**result, "agent_decision": None}
-        return _mark_write_stage(state, attach_answer_figures(state, result))
+        finalized = _mark_write_stage(state, attach_answer_figures(state, result))
+        return _attach_protocol_envelope("writer", state, finalized, task, explicit_decision=writer_decision)
 
     def _escalation(state: AgentState) -> dict[str, Any]:
-        return _mark_write_stage(
+        out = _mark_write_stage(
             state,
             attach_answer_figures(state, _write_escalated_report(state, run_agents["writer"])),
         )
+        if hub_mode:
+            out = {**out, "pending_tasks": []}
+        return out
 
     def _comparison_review(state: AgentState) -> dict[str, Any]:
+        task = _active_task_for(state, "comparison_review") if hub_mode else None
         evidence = comparison_schedule(state.get("reasoning_trace") or [])
-        return run_coro_sync(review_comparison(state, evidence["required_sources"], run_specialist, _writer_node))
+        out = run_coro_sync(
+            review_comparison(
+                state,
+                evidence["required_sources"],
+                lambda r, v: run_specialist(r, v, inline_handoff=True),
+                lambda v: _writer_node(v, inline_handoff=True),
+            )
+        )
+        if hub_mode:
+            comp_dec = normalize_decision_dict(
+                "comparison_review",
+                None,
+                round_index=int(out.get("retry_count") or state.get("retry_count") or 0),
+                task_id=task.task_id if task else None,
+            )
+            comp_summary = compact_result_summary("comparison_review", state, out)
+            out = {
+                **out,
+                "pending_tasks": [],
+                "last_result": AgentResult(
+                    role="comparison_review",
+                    status="completed",
+                    decision=comp_dec,
+                    task_id=task.task_id if task else None,
+                    summary=comp_summary,
+                    round_index=int(out.get("retry_count") or state.get("retry_count") or 0),
+                ).to_dict(),
+            }
+        return out
 
     def _after_comparison_review(state: AgentState) -> str:
         return dispatch_next_node("comparison_review_node", state, comparison_plan=True)
@@ -984,20 +1291,254 @@ def build_research_rag_graph(
     def _after_reader(state: AgentState) -> str:
         return dispatch_next_node("reader_node", state, comparison_plan=comparison_enabled)
 
+    def _parallel_dispatch_node(state: AgentState) -> dict[str, Any]:
+        """Execute a Supervisor-dispatched batch of independent retrieval `AgentTask`s via `TaskScheduler`."""
+        pending_raw = [dict(t) for t in (state.get("pending_tasks") or []) if isinstance(t, dict)]
+        if not pending_raw:
+            return {"pending_tasks": []}
+        tasks = [AgentTask.from_dict(item) for item in pending_raw]
+        batch_kind = str((tasks[0].metadata or {}).get("batch_kind") or "sub_query")
+        top_k = max(4, int(state.get("top_k") or 10))
+        round_idx = int(state.get("retry_count") or 0)
+
+        def _run_one_task(t: AgentTask) -> dict[str, Any]:
+            meta = t.metadata or {}
+            branch_state: dict[str, Any] = {**state, "pending_tasks": [t.to_dict()]}
+            if meta.get("target_pdf"):
+                branch_state["pdf_path"] = str(meta["target_pdf"])
+                branch_state["pdf_paths"] = [str(meta["target_pdf"])]
+            elif meta.get("target_query"):
+                branch_state["query"] = str(meta["target_query"])
+                branch_state["sub_queries"] = [str(meta["target_query"])]
+            with use_run_config(run_config):
+                if pilot_enabled and _accepts_kwarg(run_agents["retrieval"], "parallel_search"):
+                    return run_agents["retrieval"](branch_state, parallel_search=True)
+                return run_agents["retrieval"](branch_state)
+
+        async def _execute_batch() -> dict[str, Any]:
+            plan_tasks = [ResearchTask(id=t.task_id) for t in tasks]
+            by_id = {t.task_id: t for t in tasks}
+            policies = {t.task_id: TaskPolicy(timeout_seconds=75.0, max_retries=0) for t in tasks}
+            scheduler = TaskScheduler(
+                plan_tasks,
+                max_concurrency=min(2, len(tasks)),
+                task_policies=policies,
+                run_timeout_seconds=150.0,
+            )
+
+            async def _exec(rtask: ResearchTask, _deps: Any) -> dict[str, Any]:
+                return await asyncio.to_thread(_run_one_task, by_id[rtask.id])
+
+            return await scheduler.run(_exec)
+
+        outcomes = run_coro_sync(_execute_batch())
+
+        # Deterministic RRF merge + round-robin per-branch coverage guarantee across completed parallel branches
+        rrf_k = 60.0
+        merged_scores: dict[str, float] = {}
+        merged_by_key: dict[str, dict[str, Any]] = {}
+        per_branch_top_keys: list[str] = []
+        completed_ids: list[str] = []
+        failed_ids: list[str] = []
+        branch_messages: list[dict[str, Any]] = []
+        branch_schedule_traces: list[dict[str, Any]] = []
+        branch_tools_used: list[str] = ["task_scheduler_parallel_batch"]
+        branch_summaries: list[dict[str, Any]] = []
+
+        for t in tasks:
+            outcome = outcomes.get(t.task_id)
+            if outcome and outcome.status == TaskStatus.COMPLETED and isinstance(outcome.output, dict):
+                completed_ids.append(t.task_id)
+                for ev in outcome.output.get("reasoning_trace") or []:
+                    if isinstance(ev, dict) and ev.get("action") == "retrieval_task_schedule":
+                        branch_schedule_traces.append(ev)
+                for tool_name in outcome.output.get("tools_used") or []:
+                    if isinstance(tool_name, str) and tool_name.strip() and tool_name not in branch_tools_used:
+                        branch_tools_used.append(tool_name)
+                branch_docs = [d for d in (outcome.output.get("retrieved_docs") or []) if isinstance(d, dict)]
+                branch_keys: list[str] = []
+                for rank_idx, doc in enumerate(branch_docs):
+                    key = str(
+                        doc.get("id")
+                        or doc.get("chunk_id")
+                        or f"{doc.get('doc_id')}:{doc.get('page_no')}:{str(doc.get('text') or '')[:80]}"
+                    )
+                    merged_scores[key] = merged_scores.get(key, 0.0) + (1.0 / (rrf_k + rank_idx + 1.0))
+                    if key not in merged_by_key:
+                        merged_by_key[key] = dict(doc)
+                    branch_keys.append(key)
+                if branch_keys:
+                    per_branch_top_keys.append(branch_keys[0])
+                branch_summaries.append({
+                    "task_id": t.task_id,
+                    "status": "COMPLETED",
+                    "retrieved_count": len(branch_docs),
+                    "target_pdf": (t.metadata or {}).get("target_pdf"),
+                    "target_query": (t.metadata or {}).get("target_query"),
+                })
+                branch_messages.append(make_agent_message(
+                    sender=t.role,
+                    recipient="supervisor",
+                    kind="parallel_task_completed",
+                    action="parallel_branch_done",
+                    reason=t.reason,
+                    task_id=t.task_id,
+                    focus=t.focus,
+                    summary={"retrieved_count": len(branch_docs), "batch_kind": batch_kind},
+                    round_index=round_idx,
+                ))
+            else:
+                failed_ids.append(t.task_id)
+                branch_summaries.append({
+                    "task_id": t.task_id,
+                    "status": "FAILED",
+                    "retrieved_count": 0,
+                    "target_pdf": (t.metadata or {}).get("target_pdf"),
+                    "target_query": (t.metadata or {}).get("target_query"),
+                })
+                branch_messages.append(make_agent_message(
+                    sender=t.role,
+                    recipient="supervisor",
+                    kind="parallel_task_failed",
+                    action="parallel_branch_failed",
+                    reason=str(getattr(outcome, "error", "failed"))[:180],
+                    task_id=t.task_id,
+                    focus=t.focus,
+                    summary={"batch_kind": batch_kind},
+                    round_index=round_idx,
+                ))
+
+        effective_limit = max(top_k, len(tasks) * 2)
+        ranked_keys = sorted(merged_scores.keys(), key=lambda k: merged_scores[k], reverse=True)
+        # Guarantee at least the top-1 chunk from every completed branch is retained (essential for 6-PDF coverage)
+        selected_keys: list[str] = []
+        for bk in per_branch_top_keys:
+            if bk in merged_by_key and bk not in selected_keys:
+                selected_keys.append(bk)
+        for rk in ranked_keys:
+            if len(selected_keys) >= effective_limit:
+                break
+            if rk not in selected_keys:
+                selected_keys.append(rk)
+        merged_docs = [merged_by_key[k] for k in selected_keys[:effective_limit]]
+
+        prev_seen_list = list(state.get("seen_chunks") or [])
+        prev_ids = {
+            (d.get("id") or d.get("chunk_id") or (d.get("doc_id"), d.get("page_no"), str(d.get("text") or "")[:80]))
+            for d in prev_seen_list
+            if isinstance(d, dict)
+        }
+        fresh_docs = [
+            d for d in merged_docs
+            if (d.get("id") or d.get("chunk_id") or (d.get("doc_id"), d.get("page_no"), str(d.get("text") or "")[:80])) not in prev_ids
+        ]
+
+        batch_trace = {
+            "agent": "task_scheduler",
+            "action": "supervisor_parallel_batch_completed",
+            "batch_kind": batch_kind,
+            "total_tasks": len(tasks),
+            "completed_tasks": len(completed_ids),
+            "failed_tasks": len(failed_ids),
+            "task_ids": [t.task_id for t in tasks],
+            "merged_docs_count": len(merged_docs),
+            "round_index": round_idx,
+        }
+        canonical_dag_trace: dict[str, Any] = (
+            {
+                "agent": "task_scheduler",
+                "action": "document_fanout_dag_executed",
+                "status": "completed" if completed_ids else "failed",
+                "round_index": round_idx,
+                "document_count": len(tasks),
+                "completed_documents": len(completed_ids),
+                "failed_documents": len(failed_ids),
+                "merged_chunks": len(merged_docs),
+                "branches": branch_summaries,
+            }
+            if batch_kind == "document"
+            else {
+                "agent": "task_scheduler",
+                "action": "research_dag_executed",
+                "status": "completed" if completed_ids else "failed",
+                "round_index": round_idx,
+                "branch_count": len(tasks),
+                "completed_branches": len(completed_ids),
+                "failed_branches": len(failed_ids),
+                "merged_chunks": len(merged_docs),
+                "task_outcomes": {b["task_id"]: b["status"] for b in branch_summaries},
+                "branches": branch_summaries,
+            }
+        )
+        batch_update: dict[str, Any] = {
+            "retrieved_docs": merged_docs,
+            "seen_chunks": [*prev_seen_list, *fresh_docs],
+            "no_new_evidence": bool(state.get("retry_count", 0) > 0 and prev_seen_list and not fresh_docs),
+            "tools_used": branch_tools_used,
+            "agent_messages": branch_messages,
+            "reasoning_trace": [*branch_schedule_traces, canonical_dag_trace, batch_trace],
+        }
+        existing_schema = dict(state.get("document_schema") or {})
+        if batch_kind == "document":
+            existing_schema["document_fanout"] = canonical_dag_trace
+        if isinstance(existing_schema.get("research_dag"), dict):
+            existing_schema["research_dag"] = sync_dag_manifest_from_retrieval(
+                existing_schema["research_dag"],
+                canonical_dag_trace if batch_kind == "sub_query" else None,
+                retrieved_count=len(merged_docs),
+                round_index=int(state.get("dag_round_index") or 0),
+            )
+            batch_update["document_schema"] = existing_schema
+        elif batch_kind == "document":
+            batch_update["document_schema"] = existing_schema
+        return _attach_protocol_envelope("retrieval", state, batch_update, tasks[0])
+
+    def _make_graph_node(
+        fn: Callable[[AgentState], dict[str, Any]],
+        *,
+        inference_mode: str | None = None,
+    ) -> RunnableLambda:
+        """Bind `RunConfig` (and optional `agent_inference_mode`) for BOTH sync `.invoke()` and non-blocking async `.astream()`/`.ainvoke()`."""
+        def _sync(state: AgentState) -> dict[str, Any]:
+            with use_run_config(run_config):
+                if inference_mode:
+                    with agent_inference_mode(inference_mode):
+                        return fn(state)
+                return fn(state)
+
+        async def _async(state: AgentState) -> dict[str, Any]:
+            return await asyncio.to_thread(_sync, state)
+
+        return RunnableLambda(_sync, afunc=_async)
+
     workflow = StateGraph(AgentState)
 
-    # Bind the snapshot at the node boundary, including when LangGraph runs in an executor.
-    router_fn = (
-        partial(orchestrator_router_node, planner_llm_fn=planner_llm_fn, execution_mode=mode)
-        if (planner_llm_fn or mode)
-        else orchestrator_router_node
-    )
-    workflow.add_node("orchestrator_router", use_run_config(run_config)(router_fn))
-    workflow.add_node("scout_node", use_run_config(run_config)(agent_inference_mode(scout_mode)(_run_scout)))
+    # Bind the snapshot at the node boundary, supporting both sync `.invoke()` and non-blocking async `.astream()`.
+    def _router_wrapper(state: AgentState) -> dict[str, Any]:
+        out = orchestrator_router_node(
+            state,
+            planner_llm_fn=planner_llm_fn,
+            execution_mode=mode,
+        )
+        out["supervisor_mode"] = "hub" if hub_mode else "pipeline"
+        if graph_disabled_handoffs:
+            out["disabled_agent_handoffs"] = list(dict.fromkeys([
+                *graph_disabled_handoffs,
+                *(str(r).strip().lower() for r in (state.get("disabled_agent_handoffs") or []) if isinstance(r, str) and r.strip()),
+            ]))
+        if hub_mode:
+            out["last_result"] = {}
+            out["pending_tasks"] = []
+        return out
+
+    workflow.add_node("orchestrator_router", _make_graph_node(_router_wrapper))
+    workflow.add_node("scout_node", _make_graph_node(_run_scout, inference_mode=scout_mode))
     for role in ("retrieval", "reader", "summarizer", "fact_checker"):
-        workflow.add_node(f"{role}_node", use_run_config(run_config)(partial(run_specialist, role)))
-    workflow.add_node("escalation_node", use_run_config(run_config)(_escalation))
-    workflow.add_node("writer_node", use_run_config(run_config)(_writer_node))
+        workflow.add_node(f"{role}_node", _make_graph_node(partial(run_specialist, role)))
+    workflow.add_node("escalation_node", _make_graph_node(_escalation))
+    workflow.add_node("writer_node", _make_graph_node(_writer_node))
+    if comparison_enabled:
+        workflow.add_node("comparison_review_node", _make_graph_node(_comparison_review))
 
     valid_entry_nodes = [
         "orchestrator_router",
@@ -1011,6 +1552,27 @@ def build_research_rag_graph(
     ]
     if comparison_enabled:
         valid_entry_nodes.append("comparison_review_node")
+    if hub_mode:
+        def _hub_wrapper(state: AgentState) -> dict[str, Any]:
+            scoped = state
+            if graph_disabled_handoffs:
+                merged_dis = list(dict.fromkeys([
+                    *graph_disabled_handoffs,
+                    *(str(r).strip().lower() for r in (state.get("disabled_agent_handoffs") or []) if isinstance(r, str) and r.strip()),
+                ]))
+                scoped = {**state, "disabled_agent_handoffs": merged_dis}
+            return supervisor_hub_step(
+                scoped,
+                comparison_plan=comparison_enabled,
+                allow_scout_handoff=scout_handoff_allowed,
+                parallel_retrieval=parallel_retrieval,
+                arbiter_llm_fn=arbiter_llm_fn,
+                execution_mode=mode,
+            )
+
+        workflow.add_node("supervisor_node", _make_graph_node(_hub_wrapper))
+        workflow.add_node("parallel_dispatch_node", _make_graph_node(_parallel_dispatch_node))
+        valid_entry_nodes.extend(["supervisor_node", "parallel_dispatch_node"])
 
     if start_at_node and start_at_node in valid_entry_nodes and start_at_node != "orchestrator_router":
         workflow.add_conditional_edges(
@@ -1020,14 +1582,48 @@ def build_research_rag_graph(
         )
     else:
         workflow.add_edge(START, "orchestrator_router")
-    workflow.add_edge("orchestrator_router", "scout_node")
+
+    if hub_mode:
+        # True Hub-and-Spoke Multi-Agent Topology:
+        # Planner -> Supervisor Hub <-> all specialist nodes (+ controlled parallel batch dispatch);
+        # ZERO hardcoded edges between specialists!
+        hub_targets = [
+            "scout_node",
+            "retrieval_node",
+            "parallel_dispatch_node",
+            "reader_node",
+            "summarizer_node",
+            "fact_checker_node",
+            "writer_node",
+            "escalation_node",
+            END,
+        ]
+        if comparison_enabled:
+            hub_targets.append("comparison_review_node")
+        workflow.add_edge("orchestrator_router", "supervisor_node")
+        workflow.add_conditional_edges("supervisor_node", route_from_supervisor_hub, hub_targets)
+        for specialist_node in (
+            "scout_node",
+            "retrieval_node",
+            "parallel_dispatch_node",
+            "reader_node",
+            "summarizer_node",
+            "fact_checker_node",
+            "writer_node",
+        ):
+            workflow.add_edge(specialist_node, "supervisor_node")
+        if comparison_enabled:
+            workflow.add_edge("comparison_review_node", "supervisor_node")
+        workflow.add_edge("escalation_node", END)
+        return workflow.compile()
+
+    workflow.add_conditional_edges("orchestrator_router", route_after_router, ["scout_node", "retrieval_node"])
     workflow.add_conditional_edges("scout_node", route_after_scout, ["retrieval_node", END])
     if comparison_enabled:
-        workflow.add_node("comparison_review_node", use_run_config(run_config)(_comparison_review))
         workflow.add_conditional_edges(
             "retrieval_node",
             _after_retrieval,
-            ["reader_node", "scout_node", "comparison_review_node", END],
+            ["reader_node", "retrieval_node", "scout_node", "comparison_review_node", END],
         )
         workflow.add_conditional_edges(
             "reader_node",
@@ -1042,7 +1638,7 @@ def build_research_rag_graph(
         workflow.add_conditional_edges(
             "retrieval_node",
             route_after_retrieval,
-            ["reader_node", "scout_node"],
+            ["reader_node", "retrieval_node", "scout_node"],
         )
         workflow.add_conditional_edges(
             "reader_node",

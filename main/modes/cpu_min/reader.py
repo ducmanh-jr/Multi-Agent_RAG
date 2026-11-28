@@ -76,32 +76,86 @@ class CPUMinReaderAgent(BaseAgent):
 
         # Keep 1:1 chunk traceability for single-doc comparison reader; dedup in unified multi-PDF mode
         dedup = bool(allow_pdf_fallback)
-        ordered_units, by_hash, pages_covered, merged_dups, curr_offset = build_source_units_from_docs(
-            retrieved_docs,
-            limit=16,
-            text_cleaner=sanitize_unit_text,
-            deduplicate=dedup,
-        )
+        read_ctx: dict[str, Any] = {
+            "ordered_units": [],
+            "by_hash": {},
+            "pages_covered": set(),
+            "merged_dups": 0,
+            "curr_offset": 0,
+            "failed_pdfs": [],
+            "source_units": [],
+            "reader_decision": None,
+            "unresolved_tables": [],
+        }
 
-        failed_pdfs: list[dict[str, str]] = []
-        if allow_pdf_fallback and not ordered_units and pdf_paths:
-            failed_pdfs, extra_merged, curr_offset = ingest_pdf_fallbacks(
+        def _tool_sanitize_source_units() -> int:
+            ordered_u, by_h, pages_c, merged_d, offset = build_source_units_from_docs(
+                retrieved_docs,
+                limit=16,
+                text_cleaner=sanitize_unit_text,
+                deduplicate=dedup,
+            )
+            read_ctx.update(
+                ordered_units=ordered_u,
+                by_hash=by_h,
+                pages_covered=pages_c,
+                merged_dups=merged_d,
+                curr_offset=offset,
+            )
+            return len(ordered_u)
+
+        def _tool_pdf_fallback_ingest() -> int:
+            failed, extra_merged, offset = ingest_pdf_fallbacks(
                 pdf_paths,
-                ordered_units=ordered_units,
-                units_by_content_hash=by_hash,
-                pages_covered=pages_covered,
-                curr_offset=curr_offset,
+                ordered_units=read_ctx["ordered_units"],
+                units_by_content_hash=read_ctx["by_hash"],
+                pages_covered=read_ctx["pages_covered"],
+                curr_offset=read_ctx["curr_offset"],
                 chunk_loader=load_or_parse_selected_pdf,
                 text_cleaner=sanitize_unit_text,
                 max_units_per_pdf=10,
                 deduplicate=True,
             )
-            merged_dups += extra_merged
+            read_ctx["failed_pdfs"] = failed
+            read_ctx["merged_dups"] += extra_merged
+            read_ctx["curr_offset"] = offset
+            return len(read_ctx["ordered_units"])
 
-        source_units = [u.to_dict() for u in ordered_units]
-        reader_decision, unresolved_tables = evaluate_reader_table_completeness(
-            state, source_units, allow_handoff=allow_pdf_fallback
+        def _tool_table_completeness_audit() -> int:
+            read_ctx["source_units"] = [u.to_dict() for u in read_ctx["ordered_units"]]
+            r_dec, unresolved = evaluate_reader_table_completeness(
+                state, read_ctx["source_units"], allow_handoff=allow_pdf_fallback
+            )
+            read_ctx["reader_decision"] = r_dec
+            read_ctx["unresolved_tables"] = unresolved
+            return len(unresolved)
+
+        def _reader_tool_planner(step_idx: int, history: list[dict[str, Any]]):
+            if step_idx == 0:
+                return ("sanitize_source_units", {})
+            last_tool = history[-1]["tool"] if history else ""
+            if last_tool == "sanitize_source_units" and allow_pdf_fallback and not read_ctx["ordered_units"] and pdf_paths:
+                return ("pdf_fallback_ingest", {})
+            if last_tool in {"sanitize_source_units", "pdf_fallback_ingest"}:
+                return ("table_completeness_audit", {})
+            return None
+
+        tool_loop = self.run_bounded_tool_loop(
+            {
+                "sanitize_source_units": _tool_sanitize_source_units,
+                "pdf_fallback_ingest": _tool_pdf_fallback_ingest,
+                "table_completeness_audit": _tool_table_completeness_audit,
+            },
+            _reader_tool_planner,
+            max_steps=3,
         )
+
+        pages_covered = read_ctx["pages_covered"]
+        merged_dups = read_ctx["merged_dups"]
+        failed_pdfs = read_ctx["failed_pdfs"]
+        source_units = read_ctx["source_units"]
+        reader_decision = read_ctx["reader_decision"]
+        unresolved_tables = read_ctx["unresolved_tables"]
 
         document_schema = {
             "doc_id": source_units[0]["doc_id"] if source_units else "unknown",
@@ -117,6 +171,7 @@ class CPUMinReaderAgent(BaseAgent):
             "cpu_min_reading_completed",
             {
                 "engine": "Sanitized_SourceUnit_Pipeline",
+                "tools_used": tool_loop["tools_used"],
                 "total_source_units": len(source_units),
                 "pages_covered": sorted(list(pages_covered)),
                 "dedup_merged_count": merged_dups,
@@ -130,6 +185,7 @@ class CPUMinReaderAgent(BaseAgent):
         result: dict[str, Any] = {
             "document_schema": document_schema,
             "source_units": source_units,
+            "tools_used": tool_loop["tools_used"],
             "reasoning_trace": [trace],
         }
         if reader_decision is not None:

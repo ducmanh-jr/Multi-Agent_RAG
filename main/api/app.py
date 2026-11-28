@@ -190,6 +190,7 @@ class CreateRunRequest(BaseModel):
     chat_history: Optional[list[dict[str, str]]] = None
     session_id: Optional[str] = None
     answer_language: Optional[str] = None
+    supervisor_mode: Optional[str] = None
 
 
 class RenameSessionRequest(BaseModel):
@@ -209,6 +210,7 @@ class DirectResearchRequest(BaseModel):
     token_budget: int | None = Field(default=None, gt=0, strict=True)
     session_id: str | None = None
     answer_language: Optional[str] = None
+    supervisor_mode: Optional[str] = None
 
 
 
@@ -277,12 +279,43 @@ class SetModeRequest(BaseModel):
     mode: str
 
 
+class SetSupervisorModeRequest(BaseModel):
+
+    supervisor_mode: str
+
+
 
 
 
 class SetRemoteUrlRequest(BaseModel):
 
     remote_url: str
+
+
+class RegisterTunnelRequest(BaseModel):
+
+    remote_url: str
+    remote_token: Optional[str] = None
+    worker_profile: Optional[str] = None
+    git_commit_sha: Optional[str] = None
+
+
+def _validate_remote_worker_url(raw_url: str) -> str:
+    """Allow https:// remote tunnels or loopback http:// URLs; block metadata/invalid hosts."""
+    from urllib.parse import urlparse
+
+    clean = (raw_url or "").strip().rstrip("/")
+    parsed = urlparse(clean)
+    scheme = (parsed.scheme or "").lower()
+    host = (parsed.hostname or "").lower()
+    if not host or scheme not in {"http", "https"}:
+        raise HTTPException(status_code=400, detail="URL worker không hợp lệ (cần https:// hoặc http://localhost).")
+    blocked_hosts = {"169.254.169.254", "metadata.google.internal", "metadata.goog"}
+    if host in blocked_hosts:
+        raise HTTPException(status_code=400, detail="Host worker bị chặn vì lý do bảo mật.")
+    if scheme == "http" and host not in {"localhost", "127.0.0.1", "::1"}:
+        raise HTTPException(status_code=400, detail="Auto-register yêu cầu https:// cho địa chỉ không phải loopback.")
+    return clean
 
 
 
@@ -298,6 +331,15 @@ def set_execution_mode(req: SetModeRequest):
     if norm_mode not in valid_modes and req.mode not in valid_modes:
         raise HTTPException(status_code=400, detail="Chế độ không hợp lệ")
     _set_run_defaults({"EXECUTION_MODE": norm_mode})
+    return get_config()
+
+
+@app.post("/api/config/supervisor-mode")
+def set_supervisor_mode(req: SetSupervisorModeRequest):
+    clean = (req.supervisor_mode or "").strip().lower()
+    if clean not in {"hub", "pipeline"}:
+        raise HTTPException(status_code=400, detail="supervisor_mode chỉ hỗ trợ 'hub' hoặc 'pipeline'.")
+    _set_run_defaults({"SUPERVISOR_MODE": clean})
     return get_config()
 
 
@@ -362,6 +404,58 @@ async def set_remote_url(req: SetRemoteUrlRequest):
 
         "config": get_config(),
 
+    }
+
+
+@app.post("/api/config/remote-url/register")
+async def register_kaggle_tunnel(req: RegisterTunnelRequest, request: Request):
+    """
+    Authenticated auto-registration endpoint for Kaggle Cloudflare Tunnel startup.
+    Requires `X-Tunnel-Secret` (or `Authorization: Bearer ...`) matching `TUNNEL_REGISTER_SECRET`
+    or `REMOTE_INFERENCE_TOKEN` configured on the backend.
+    """
+    import hmac
+
+    expected_secret = (
+        os.getenv("TUNNEL_REGISTER_SECRET", "").strip()
+        or str(getattr(settings, "REMOTE_INFERENCE_TOKEN", "") or "").strip()
+    )
+    if not expected_secret:
+        raise HTTPException(
+            status_code=503,
+            detail="TUNNEL_REGISTER_SECRET hoặc REMOTE_INFERENCE_TOKEN chưa được cấu hình trên backend.",
+        )
+
+    provided = (request.headers.get("x-tunnel-secret") or "").strip()
+    if not provided:
+        auth_hdr = (request.headers.get("authorization") or "").strip()
+        if auth_hdr.lower().startswith("bearer "):
+            provided = auth_hdr[7:].strip()
+
+    if not provided or not hmac.compare_digest(provided, expected_secret):
+        raise HTTPException(status_code=401, detail="X-Tunnel-Secret không hợp lệ.")
+
+    new_url = _validate_remote_worker_url(req.remote_url)
+    updates: dict[str, str] = {"REMOTE_INFERENCE_URL": new_url}
+    token_updated = False
+    if req.remote_token is not None and req.remote_token.strip():
+        updates["REMOTE_INFERENCE_TOKEN"] = req.remote_token.strip()
+        token_updated = True
+
+    _set_run_defaults(updates)
+    try:
+        from utils.llm_client import llm_client
+
+        llm_client._circuit_breaker_until.clear()
+    except Exception:
+        pass
+
+    return {
+        "status": "registered",
+        "remote_worker": new_url,
+        "token_updated": token_updated,
+        "worker_profile": req.worker_profile or "",
+        "git_commit_sha": req.git_commit_sha or "",
     }
 
 
@@ -748,6 +842,8 @@ def get_config():
 
         "execution_mode": settings.EXECUTION_MODE,
 
+        "supervisor_mode": settings.SUPERVISOR_MODE,
+
         "remote_worker": settings.REMOTE_INFERENCE_URL or "Local API",
 
         "max_upload_mb": 50,
@@ -943,9 +1039,37 @@ async def apply_agent_preset(req: ApplyPresetRequest):
 
 def get_agents():
 
-    """Returns machine-readable specs for the 5 Specialized Agents."""
+    """Returns machine-readable specs for the Supervisor Hub and all 6 Autonomous Specialist Agents."""
 
     agents = [
+
+        {
+
+            "role": "SupervisorHub",
+
+            "name": "0. Supervisor Hub & Planner",
+
+            "purpose": "Lập kế hoạch thống nhất, điều phối Hub-and-Spoke và cổng kiểm duyệt quyết định (Gatekeeper)",
+
+            "stages": ["Unified Query/DAG Planning", "AgentTask Dispatch & Parallel Scheduling", "Policy & Budget Gatekeeper"],
+
+            "guard": "Ngân sách handoff tách theo loại, chống lặp chữ ký chuẩn hóa, bảo vệ ngân sách verifier.",
+
+        },
+
+        {
+
+            "role": "ScoutAgent",
+
+            "name": "0b. Literature Scout Agent",
+
+            "purpose": "Xác thực tài liệu đính kèm hoặc trinh sát bài báo học thuật trên arXiv/OpenAlex",
+
+            "stages": ["Document Scope Validation", "Academic Search & Ranking", "Deduplicated PDF Acquisition"],
+
+            "guard": "Không tải trùng tài liệu đã có (SHA-256) và từ chối ngoài phạm vi.",
+
+        },
 
         {
 
@@ -1052,6 +1176,8 @@ def get_diagnostics():
         },
 
         "mode": settings.EXECUTION_MODE,
+
+        "supervisor_mode": settings.SUPERVISOR_MODE,
 
         "remote_inference_url": settings.REMOTE_INFERENCE_URL or "N/A",
 
@@ -1876,11 +2002,16 @@ def get_run_checkpoints(run_id: str):
         raise HTTPException(status_code=404, detail="Run not found.")
     checkpoints = db.list_run_checkpoints(run_id)
     latest = checkpoints[-1] if checkpoints else None
+    latest_state = (latest.get("state") or {}) if isinstance(latest, dict) else {}
     return {
         "run_id": run_id,
         "checkpoint_count": len(checkpoints),
         "latest_step": latest["step_index"] if latest else None,
         "latest_node": latest["node_name"] if latest else None,
+        "supervisor_mode": latest_state.get("supervisor_mode") or settings.SUPERVISOR_MODE,
+        "handoff_budgets": latest_state.get("handoff_budgets") or {},
+        "agent_messages": latest_state.get("agent_messages") or [],
+        "last_result": latest_state.get("last_result") or {},
         "evidence_store": latest["evidence_store"] if latest else {},
         "research_dag": latest["dag"] if latest else {},
         "checkpoints": [
@@ -2097,6 +2228,7 @@ async def create_run(req: CreateRunRequest):
         chat_history=req.chat_history or [],
         session_id=req.session_id,
         answer_language=req.answer_language,
+        supervisor_mode=req.supervisor_mode,
     ))
     return {
         **run.record,
@@ -2304,6 +2436,7 @@ def _legacy_research_request(req: DirectResearchRequest) -> ResearchRequest:
         comparison_timeout_seconds=req.comparison_timeout_seconds,
         token_budget=req.token_budget,
         answer_language=req.answer_language,
+        supervisor_mode=req.supervisor_mode,
     )
 
 
@@ -2333,6 +2466,9 @@ async def execute_direct_research(req: DirectResearchRequest):
         "citation_references": citation_references(trace, spans, db.list_documents()) if spans else [],
         "figures": answer_figures(trace),
         "retrieved_docs": state.get("retrieved_docs") or [],
+        "supervisor_mode": state.get("supervisor_mode") or settings.SUPERVISOR_MODE,
+        "handoff_budgets": state.get("handoff_budgets") or {},
+        "agent_messages": state.get("agent_messages") or [],
         "reasoning_trace": trace,
         "document_ids": record.get("document_ids") or [],
         "documents": record.get("documents") or [],
@@ -2384,6 +2520,13 @@ async def execute_research_stream(req: DirectResearchRequest):
                             {**entry, "message": _trace_message(entry)} for entry in traces
                             if entry.get("action") in _HANDOFF_ACTIONS
                         ],
+                        "agent_messages": output.get("agent_messages") or [],
+                        "last_result": output.get("last_result") if isinstance(output.get("last_result"), dict) else None,
+                        "tools_used": (
+                            (output.get("last_result") or {}).get("tools_used")
+                            if isinstance(output.get("last_result"), dict)
+                            else (output.get("tools_used") or [])
+                        ),
                     },
                 })
             record = (await run.result()).record

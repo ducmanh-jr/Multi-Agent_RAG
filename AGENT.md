@@ -14,15 +14,18 @@
 
 ## 1. Project Context & Architecture Map
 
-Hệ thống RAG Đa tác tử phân tích, trích xuất và thẩm định bài báo khoa học, bao gồm 6 Agents và 7 Chế độ thực thi song song:
+Hệ thống RAG Đa tác tử phân tích, trích xuất và thẩm định bài báo khoa học, bao gồm 6 Agents và 6 Chế độ thực thi chính (`gpu_ft` là alias tương thích ngược của `gpu_finetune`):
 
 ### 1.1 Thư mục Lõi (`main/core/`)
-- `state.py`: Hợp đồng trạng thái LangGraph (`AgentState`), các dataclass `SourceUnit`, `AtomicClaim`, `ClaimCheckResult`, `EvidenceGap`.
-- `graph.py`: StateGraph DAG Orchestrator kết nối toàn bộ 5 nodes chính, vòng lặp tự sửa lỗi (Self-Correction Loop) và Escalation.
-- `supervisor.py`: Agentic Supervisor lập kế hoạch truy vấn, phân loại intent, xác định độ phức tạp (LOW/MEDIUM/HIGH) và sinh sub-queries.
-- `verifier.py`: Bộ kiểm chứng số học, ngày tháng và đối soát trích dẫn nguyên văn với ranh giới từ (word boundaries).
-- `db.py`: Động cơ SQLite (`main/data/workspace.db`) quản lý tài liệu, lịch sử hội thoại, cache LLM và log API.
-- `config.py`: Quản lý cấu hình toàn cục (`settings`).
+- `state.py`: Hợp đồng trạng thái LangGraph (`AgentState`), các dataclass `SourceUnit`, `AtomicClaim`, `ClaimCheckResult`, `EvidenceGap`, cùng các trường điều phối Hub (`supervisor_mode`, `pending_tasks`, `last_result`, `agent_messages`, `handoff_budgets`, `disabled_agent_handoffs`).
+- `graph.py`: StateGraph LangGraph hỗ trợ chế độ mặc định **Hub-and-Spoke** (`supervisor_mode="hub"`, gồm `orchestrator_router -> supervisor_node <-> {6 specialists + parallel_dispatch_node + comparison_review_node}`) và chế độ đối chứng `pipeline`; toàn bộ node bọc `RunnableLambda(_sync, afunc=_async)` để không chặn event loop FastAPI.
+- `supervisor_hub.py` & `coordination.py`: Bộ điều phối Hub-and-Spoke + Supervisor Gatekeeper (ma trận quyền không nhánh chết, chữ ký chống lặp do Supervisor tự tính lại, ngân sách tách theo loại + bảo vệ ngân sách verifier, điều phối song song qua `TaskScheduler`, tùy chọn LLM arbiter khi mâu thuẫn mơ hồ).
+- `agent_protocol.py` & `agent_decisions.py`: Hợp đồng giao tiếp có kiểu (`AgentTask`, `AgentResult`, `make_agent_message`) và động cơ ra quyết định tự chủ `AgentDecision` cho toàn bộ 6 specialist (`scout`, `retrieval`, `reader`, `summarizer`, `fact_checker`, `writer`).
+- `base_agent.py`: Lớp nền `BaseAgent` hỗ trợ `run_task(state, task)` và vòng gọi tool cục bộ có chặn `run_bounded_tool_loop(..., max_steps<=4)` ghi nhận `tools_used`.
+- `supervisor.py`: Unified Planner lập kế hoạch truy vấn (intent, độ phức tạp LOW/MEDIUM/HIGH, sub-queries, Research DAG) dùng chung cho mọi chế độ.
+- `verifier.py`: Bộ kiểm chứng số học, ngày tháng, bảng biểu, toán học và đối soát trích dẫn nguyên văn với ranh giới từ (word boundaries).
+- `db.py`: Động cơ SQLite (`main/data/workspace.db`) quản lý tài liệu, lịch sử hội thoại, checkpoint phục hồi (`resume`), cache LLM và log API.
+- `config.py`: Quản lý cấu hình toàn cục (`settings`, `RunConfig`, `SUPERVISOR_MODE`, `ROLE_MAX_TOKENS`).
 - `tools.py`: Đăng ký công cụ trích xuất PDF và xử lý toán học an toàn có chặn giới hạn tràn bộ nhớ.
 
 ### 1.2 6 Tác tử Chuyên môn hóa (`main/agents/`)
@@ -33,14 +36,13 @@ Hệ thống RAG Đa tác tử phân tích, trích xuất và thẩm định bà
 - `agent4_fact_checker`: Thẩm phán NLI SciFact, đối soát số liệu, ngày tháng và kiểm chứng mã nguồn (Zero Hallucination).
 - `agent5_writer`: Tác tử biên soạn báo cáo nghiên cứu học thuật hai nửa (Executive Summary + Audit Ledger) và radar khoảng trống tri thức.
 
-### 1.3 7 Chế độ Vận hành Độc lập (`main/modes/`)
-- `gemini`: Đám mây tốc độ cao qua Gemini 2.5/1.5 Flash API với cơ chế tự động xoay vòng model.
-- `cpu_min`: Chế độ siêu nhẹ chạy offline 100% trên CPU bất kỳ (FTS5 + BM25 + Extractive Guard, latency < 100ms).
+### 1.3 6 Chế độ Vận hành Độc lập (`main/modes/`)
+- `gemini`: Đám mây tốc độ cao qua Gemini Flash API (cấu hình qua `DEFAULT_LLM_MODEL`, vd. `gemini-3.5-flash`) với cơ chế tự động xoay vòng model.
+- `cpu_min`: Chế độ siêu nhẹ chạy offline 100% trên CPU bất kỳ (FTS5 + BM25 + Extractive Guard, latency thấp).
 - `cpu_max`: Chế độ CPU đa luồng kết hợp Vulkan Ollama cục bộ và động cơ C-Engine FTS5.
-- `gpu_ft`: Chế độ GPU tinh chỉnh với các adapter LoRA chuyên biệt.
-- `gpu_finetune`: Chế độ GPU 7-Model SOTA với BGE-Reranker NLI Head đạt F1 = 1.0.
-- `gpu_max`: Chế độ suy luận sâu chuỗi tư duy (CoT) 32B trên hạ tầng GPU lớn.
-- `hybrid`: Chế độ lai cờ đầu tự động dò tìm năng lực phần cứng và định tuyến thông minh giữa GPU, CPU và Cloud.
+- `gpu_finetune` (alias: `gpu_ft`): Chế độ GPU Kaggle với cụm model Qwen + BGE-Reranker NLI Head và bộ trích xuất/layout chuyên biệt.
+- `gpu_max`: Chế độ suy luận sâu chuỗi tư duy (CoT) trên hạ tầng GPU lớn.
+- `hybrid`: Chế độ lai cờ đầu tự động dò tìm năng lực phần cứng và định tuyến thông minh giữa Kaggle GPU, CPU cục bộ và Gemini API (luôn giữ Fact-Checker cross-family, không dùng Gemini để tự thẩm định).
 
 ### 1.4 API Backend & Web UI
 - `main/api/app.py`: FastAPI server hỗ trợ SSE streaming sự kiện thời gian thực, upload file giới hạn 100MB, và endpoint quản trị.
@@ -55,7 +57,7 @@ Hệ thống RAG Đa tác tử phân tích, trích xuất và thẩm định bà
    - *Kịch bản 1 (Có trong tài liệu):* Trả lời trực diện, nguyên tắc cốt lõi **"ĐÚNG VÀ ĐỦ"**, kèm mỏ neo trích dẫn `[1]` *(Trang X)* và bảo toàn số liệu, công thức, khối cấu hình/code.
    - *Kịch bản 2 (Không có thông tin):* BẮT BUỘC trả về `NOT_FOUND_IN_DOCUMENT` kèm thông điệp từ chối trung thực: *"Dựa trên các bài báo/tài liệu hiện có trong hệ thống, thông tin về \"{query}\" **hoàn toàn không được đề cập**. Vui lòng hỏi các câu hỏi liên quan đến nội dung tài liệu được cung cấp hoặc tải thêm tài liệu liên quan lên hệ thống để phân tích."*
    - *Kịch bản 3 (Có đề cập nhưng mơ hồ / phân nhánh):* Khử mơ hồ chủ động (*Active Disambiguation*): Khẳng định có thông tin, liệt kê 2–4 khía cạnh/bảng kết quả có trong bài và yêu cầu làm rõ: *"Vui lòng cung cấp thêm chi tiết để tôi hỗ trợ chính xác hơn dựa trên tài liệu."*
-3. **Tính tương thích cả 7 Chế độ:** Bất kỳ sửa đổi nào ở tầng `core` hoặc `agents` không được làm gãy bất kỳ chế độ nào trong 7 chế độ vận hành.
+3. **Tính tương thích các Chế độ:** Bất kỳ sửa đổi nào ở tầng `core` hoặc `agents` không được làm gãy bất kỳ chế độ nào trong 6 chế độ vận hành (`cpu_min`, `cpu_max`, `gemini`, `gpu_finetune`, `gpu_max`, `hybrid`).
 4. **An toàn Môi trường Windows & PowerShell:**
    - Luôn sử dụng encoding `utf-8` khi đọc/ghi file hoặc in ra màn hình console.
    - Thao tác đường dẫn phải dùng `os.path` hoặc `pathlib` để tương thích Windows (`\\` vs `/`).
@@ -90,10 +92,8 @@ Một nhiệm vụ chỉ được xem là hoàn thành khi thỏa mãn đầy đ
 1. Yêu cầu của người dùng được giải quyết triệt để và hoạt động ổn định.
 2. Không sinh ra file rác, dead code, hoặc import mồ côi.
 3. **100% các bộ kiểm thử tự động vượt qua (PASS):**
-   - Unit tests: `python -m pytest main/tests/root_suite/unit -o "pythonpath=main"`
-   - Integration tests: `python -m pytest main/tests/root_suite/integration -o "pythonpath=main"`
-   - Architecture tests: `python -m pytest main/tests/test_modes_architecture.py -o "pythonpath=main"`
-   - System Sanity Check: `python main/tests/system_sanity_check.py`
+   - Toàn bộ test hồi quy & tích hợp: `python -m pytest main/tests -o "pythonpath=main"`
+   - Cổng hồi quy M0 (60 mẫu chuẩn + 60 câu bẫy): `python main/eval/m0_regression_gate.py`
 4. **Tuyệt đối không có lệnh `git commit` nào được thực thi.**
 
 ---

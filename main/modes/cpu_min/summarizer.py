@@ -127,6 +127,12 @@ def extract_clean_sentences(text: str) -> list[str]:
     lines = [l.strip() for l in cleaned.split("\n")]
     unwrapped: list[str] = []
     brace_depth = 0
+    _plain_table_measure_re = re.compile(
+        r"\b\d+(?:[.,]\d+)?\s*(?:%|ms|s|sec|liters?|litres?|lít|mg/l|g/l|km/h|km|m|cm|mm|nm|"
+        r"gb|mb|kb|hz|khz|mhz|ghz|db|ppm|ppb|days?|hours?|minutes?|phút|ngày|tokens?/s|tok/s|"
+        r"points?|pts?|v|mv|a|ma|w|mw|ohm|°c|°f)\b",
+        re.IGNORECASE,
+    )
     for l in lines:
         if not l:
             continue
@@ -137,6 +143,26 @@ def extract_clean_sentences(text: str) -> list[str]:
             unwrapped.append(l)
             continue
         if unwrapped and unwrapped[-1].startswith("|") and unwrapped[-1].endswith("|"):
+            unwrapped.append(l)
+            continue
+        # Keep standalone plain-text table rows (e.g. "Drip irrigation 42 liters", "Sprinkler 57 liters")
+        # separated from short column headers or sibling rows so tabular values are not lost.
+        is_tabular_data_line = (
+            len(l) <= 120
+            and (l[0].isupper() or l[0].isdigit())
+            and bool(_plain_table_measure_re.search(l))
+        )
+        prev_is_tabular_ctx = bool(
+            unwrapped
+            and len(unwrapped[-1]) <= 95
+            and unwrapped[-1][-1] not in ".!?;\"”}"
+            and (
+                bool(_plain_table_measure_re.search(unwrapped[-1]))
+                or bool(re.search(r"\((?:liters?|litres?|%|ms|km/h|mg/l|g/l|s|sec|units?|phút|ngày)\)", unwrapped[-1], re.I))
+                or bool(re.match(r"^(?:Table|Tab\.?|Bảng|Bang)\s+[A-Z0-9]", unwrapped[-1], re.I))
+            )
+        )
+        if is_tabular_data_line and prev_is_tabular_ctx:
             unwrapped.append(l)
             continue
         if unwrapped and (
@@ -196,16 +222,34 @@ def extract_clean_sentences(text: str) -> list[str]:
         is_eq_line = any(op in s_clean for op in ("=", "≈", "≤", "≥", "∑", "∫", "√", "softmax("))
         is_table_row = s_clean.startswith("|") and s_clean.endswith("|") and s_clean.count("|") >= 3
         is_table_block = (
-            bool(re.search(r"\b(?:Table|Tab\.?|Bảng|Bang)\s*[A-Z]?\d+(?:[.-]\d+)*\s*[:.\-–]", s_clean, re.I))
+            bool(re.search(r"\b(?:Table|Tab\.?|Bảng|Bang)\s*(?:[A-Z]\b|[A-Z]?\d+(?:[.-]\d+)*)\s*[:.\-–]?", s_clean, re.I))
             and len(re.findall(r"\b\d+(?:[.,]\d+)?%?\b", s_clean)) >= 2
         )
+        is_plain_table_row = (
+            not is_table_row
+            and 12 <= len(s_clean) <= 140
+            and (s_clean[0].isupper() or s_clean[0].isdigit())
+            and bool(_plain_table_measure_re.search(s_clean))
+        )
+        is_bare_table_header = (
+            not is_table_row
+            and not is_table_block
+            and not is_plain_table_row
+            and not is_eq_line
+            and not re.search(r"\d", s_clean)
+            and s_clean.endswith(")")
+            and not re.search(r"[.!?]", s_clean)
+            and bool(re.search(r"\((?:liters?|litres?|%|ms|km/h|mg/l|g/l|s|sec|units?|phút|ngày|tokens?/s)\)\s*$", s_clean, re.I))
+        )
+        if is_bare_table_header:
+            continue
 
-        if len(s_clean) < 20 and not (is_eq_line and len(s_clean) >= 5) and not is_table_row and not is_table_block:
+        if len(s_clean) < 20 and not (is_eq_line and len(s_clean) >= 5) and not is_table_row and not is_table_block and not is_plain_table_row:
             continue
         if s_clean.startswith("#") or s_clean.startswith("---"):
             continue
         # Filter table artifacts and metadata banners (preserve numbered data table captions like 'Bảng 1: ...')
-        if not is_table_row and not is_table_block and re.match(
+        if not is_table_row and not is_table_block and not is_plain_table_row and re.match(
             r"^\*{0,2}(?:Task|Người thực hiện|Ước lượng|Point|STT|Tác giả|Năm xuất bản|Nguồn công bố|Liên kết|Quyền riêng tư|Ảnh:|Theo tư liệu)\b",
             s_clean,
             re.I,
@@ -230,6 +274,7 @@ def extract_clean_sentences(text: str) -> list[str]:
             not is_eq_line
             and not is_table_row
             and not is_table_block
+            and not is_plain_table_row
             and s_clean[-1] not in valid_endings
             and not re.search(
                 r"\b(?:nginx|systemctl|curl|docker|openssl|certbot|server|upstream|proxy_pass)\b",
@@ -712,7 +757,7 @@ class CPUMinSummarizerAgent(BaseAgent):
         )
         is_quantity_q = bool(
             re.search(
-                r"\b(bao nhiêu|mấy|số lượng|định lượng|tổng số|tỷ lệ|%)\b",
+                r"\b(bao nhiêu|mấy|số lượng|định lượng|tổng số|tỷ lệ|%|how\s+many|how\s+much)\b",
                 clean_q,
                 re.I,
             )
@@ -1175,8 +1220,8 @@ class CPUMinSummarizerAgent(BaseAgent):
                         score += 9
                     if any(w in s_lower for w in ["nhóm", "vấn đề", "nội dung", "gồm", "tập trung", "bước", "thuật toán"]):
                         score += 4
-                if is_quantity_q and has_num:
-                    score += 5
+                if is_quantity_q:
+                    score += 6 if has_num else -6
 
                 richness = 4 if 70 <= len(s) <= 450 else 1
                 score += richness
@@ -1218,10 +1263,20 @@ class CPUMinSummarizerAgent(BaseAgent):
                     continue
 
                 if score >= 3 and (bigram_hits >= 1 or token_hits >= 1 or ent_hits >= 1 or tech_hits >= 1 or is_general_summary):
+                    is_plain_measure_row = (
+                        not is_pipe_row
+                        and 12 <= len(s) <= 140
+                        and s[-1] not in ".!?;:"
+                        and has_num
+                    )
                     if is_pipe_row:
                         table_ctx_parts = [part for part in (u_caption, u_pipe_header, s) if part]
                         passage = " | ".join(table_ctx_parts) if len(table_ctx_parts) > 1 else s
                         verbatim_quote = "\n".join(part for part in (u_pipe_header, s) if part)
+                        consumed_indices = [idx_s]
+                    elif is_plain_measure_row:
+                        passage = s
+                        verbatim_quote = s
                         consumed_indices = [idx_s]
                     else:
                         passage, consumed_indices = build_contextual_passage(sents, idx_s, max_chars=620, max_extra_sents=3)

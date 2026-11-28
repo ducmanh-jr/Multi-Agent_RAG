@@ -17,10 +17,20 @@ def manifest_event(
     config: RunConfig, *, mode: str | None, auto_scout: bool, scout_enabled: bool,
     reflection_loops: int | None, parallel_retrieval: bool = False, comparison_plan: bool = False,
     token_budget: int | None = None,
+    supervisor_mode: str | None = None,
 ) -> dict[str, Any]:
     with use_run_config(config):
         limit = reflection_limit({} if reflection_loops is None else {"max_reflection_loops": reflection_loops})
 
+    resolved_supervisor_mode = (
+        "pipeline"
+        if str(
+            supervisor_mode
+            if supervisor_mode is not None
+            else getattr(config, "SUPERVISOR_MODE", "hub")
+        ).strip().lower() == "pipeline"
+        else "hub"
+    )
     agent_modes = resolve_agent_modes(config, mode)
     parallel_pilot_enabled = bool(parallel_retrieval and agent_modes["retrieval"] == "cpu_min")
     parallel_mode = (
@@ -35,6 +45,7 @@ def manifest_event(
         "configuration": {
             "execution_mode": config.EXECUTION_MODE,
             "mode_override": normalize_mode(mode) if mode else None,
+            "supervisor_mode": resolved_supervisor_mode,
             "agent_modes": agent_modes,
             "auto_scout_requested": auto_scout,
             "auto_scout_enabled": scout_enabled,
@@ -174,6 +185,7 @@ def get_run_manifest(record: dict[str, Any]) -> dict[str, Any] | None:
             "branch_count": int(
                 event.get("branch_count")
                 or event.get("document_count")
+                or event.get("total_tasks")
                 or event.get("completed_branches")
                 or event.get("completed_documents")
                 or 0
@@ -181,12 +193,17 @@ def get_run_manifest(record: dict[str, Any]) -> dict[str, Any] | None:
             "completed_branches": int(
                 event.get("completed_branches")
                 or event.get("completed_documents")
+                or event.get("completed_tasks")
                 or 0
             ),
-            "merged_chunks": int(event.get("merged_chunks", 0) or 0),
+            "merged_chunks": int(event.get("merged_chunks") or event.get("merged_docs_count") or 0),
         }
         for event in trace
-        if event.get("action") in {"research_dag_executed", "document_fanout_dag_executed"}
+        if event.get("action") in {
+            "research_dag_executed",
+            "document_fanout_dag_executed",
+            "supervisor_parallel_batch_completed",
+        }
         and event.get("status") != "skipped"
     ]
     return {

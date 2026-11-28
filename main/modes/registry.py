@@ -47,12 +47,21 @@ MODE_ALIASES = {
 }
 
 
+VALID_CANONICAL_MODES = frozenset({"gemini", "cpu_min", "cpu_max", "gpu_finetune", "gpu_max", "hybrid", "kaggle_max"})
+
+
 def normalize_mode(mode: Optional[str]) -> str:
-    """Normalize user or config mode string to one of the canonical modes."""
+    """Normalize user or config mode string to one of the canonical modes; raise ValueError on unknown modes."""
     if not mode:
         return "cpu_min"
-    clean = mode.lower().strip()
-    return MODE_ALIASES.get(clean, clean)
+    clean = str(mode).lower().strip()
+    if not clean:
+        return "cpu_min"
+    resolved = MODE_ALIASES.get(clean, clean)
+    if resolved not in VALID_CANONICAL_MODES:
+        valid_list = ", ".join(sorted(m for m in VALID_CANONICAL_MODES if m != "kaggle_max"))
+        raise ValueError(f"Unknown execution mode '{mode}'. Valid modes: {valid_list}")
+    return resolved
 
 
 def get_agent_class(agent_name: str, mode: str):
@@ -105,7 +114,7 @@ def get_agent_class(agent_name: str, mode: str):
             "factchecker": m.HybridFactCheckerAgent,
             "writer": m.HybridWriterAgent,
         }
-    else:  # default cpu_max
+    elif canon_mode == "cpu_max":
         import modes.cpu_max as m
         mapping = {
             "retrieval": m.CPUMaxRetrievalAgent,
@@ -114,6 +123,8 @@ def get_agent_class(agent_name: str, mode: str):
             "factchecker": m.CPUMaxFactCheckerAgent,
             "writer": m.CPUMaxWriterAgent,
         }
+    else:
+        raise ValueError(f"Unsupported canonical mode '{canon_mode}'")
 
     cls = mapping.get(clean_agent)
     if not cls:

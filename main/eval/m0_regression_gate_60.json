@@ -1,0 +1,3085 @@
+[
+  {
+    "id": "M0-Q01",
+    "category": "cross_lingual_translation",
+    "documents": [
+      "doc01_agronomy_en.pdf"
+    ],
+    "selected_doc": "doc01_agronomy_en.pdf",
+    "source_language": "en",
+    "language": "vi",
+    "answer_language": "vi",
+    "answerability": "answerable",
+    "is_unanswerable": false,
+    "question": "Thử nghiệm tưới ngầm trong vườn cây kéo dài đúng bao nhiêu ngày liên tiếp?",
+    "gold_answer": "Thử nghiệm kéo dài đúng 14 ngày liên tiếp.",
+    "atomic_claims": [
+      "Thử nghiệm kéo dài đúng 14 ngày liên tiếp."
+    ],
+    "gold_sources": [
+      {
+        "document": "doc01_agronomy_en.pdf",
+        "page": 1,
+        "bbox": [
+          55,
+          95,
+          450,
+          120
+        ],
+        "passage": "The orchard trial lasted exactly fourteen consecutive days."
+      }
+    ],
+    "gold_quantities": [
+      {
+        "value": 14,
+        "unit": "day"
+      }
+    ],
+    "directed_relation": null,
+    "derivation_spec": null,
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [],
+    "forbidden_numbers": [],
+    "good_prediction": {
+      "answer": "Thử nghiệm kéo dài đúng 14 ngày liên tiếp. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "bad_prediction": {
+      "answer": "Nó mất 500 ngày.",
+      "answer_status": "ANSWERED"
+    },
+    "expected_bad_failure_prefix": "quantity_or_unit_mismatch"
+  },
+  {
+    "id": "M0-Q02",
+    "category": "unit_integrity",
+    "documents": [
+      "doc01_agronomy_en.pdf"
+    ],
+    "selected_doc": "doc01_agronomy_en.pdf",
+    "source_language": "en",
+    "language": "en",
+    "answer_language": "en",
+    "answerability": "answerable",
+    "is_unanswerable": false,
+    "question": "What was the flow speed of drip irrigation in Table 1?",
+    "gold_answer": "Drip irrigation had a flow speed of 12 km/h.",
+    "atomic_claims": [
+      "Drip irrigation had a flow speed of 12 km/h."
+    ],
+    "gold_sources": [
+      {
+        "document": "doc01_agronomy_en.pdf",
+        "page": 2,
+        "bbox": [
+          55,
+          115,
+          480,
+          135
+        ],
+        "passage": "Drip irrigation 42 liters 12 km/h"
+      }
+    ],
+    "gold_quantities": [
+      {
+        "value": 12,
+        "unit": "km/h"
+      }
+    ],
+    "directed_relation": null,
+    "derivation_spec": null,
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [],
+    "forbidden_numbers": [],
+    "good_prediction": {
+      "answer": "Drip irrigation had a flow speed of 12 km/h. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "bad_prediction": {
+      "answer": "Drip irrigation had a flow speed of 12 m/h. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "expected_bad_failure_prefix": "quantity_or_unit_mismatch"
+  },
+  {
+    "id": "M0-Q03",
+    "category": "derived_calculation",
+    "documents": [
+      "doc05_chart_ab_en.pdf"
+    ],
+    "selected_doc": "doc05_chart_ab_en.pdf",
+    "source_language": "en",
+    "language": "vi",
+    "answer_language": "vi",
+    "answerability": "answerable",
+    "is_unanswerable": false,
+    "question": "Trong Hình 3, phương pháp B hơn phương pháp A bao nhiêu điểm phần trăm?",
+    "gold_answer": "Phương pháp B cao hơn phương pháp A 11 điểm phần trăm.",
+    "atomic_claims": [
+      "Phương pháp B cao hơn phương pháp A 11 điểm phần trăm."
+    ],
+    "gold_sources": [
+      {
+        "document": "doc05_chart_ab_en.pdf",
+        "page": 1,
+        "bbox": [
+          75,
+          325,
+          520,
+          350
+        ],
+        "passage": "Figure 3: Validation accuracy shows Method A achieves 81% and Method B achieves 92%."
+      }
+    ],
+    "gold_quantities": [],
+    "directed_relation": {
+      "higher": "Method B",
+      "lower": "Method A"
+    },
+    "derivation_spec": {
+      "op": "diff_pp",
+      "operands": [
+        {
+          "entity": "Method B",
+          "metric": "accuracy",
+          "split": "validation",
+          "value": 92.0,
+          "unit": "%"
+        },
+        {
+          "entity": "Method A",
+          "metric": "accuracy",
+          "split": "validation",
+          "value": 81.0,
+          "unit": "%"
+        }
+      ],
+      "expected_value": 11.0,
+      "expected_unit": "pp"
+    },
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [],
+    "forbidden_numbers": [],
+    "good_prediction": {
+      "answer": "Phương pháp B cao hơn phương pháp A 11 điểm phần trăm. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "bad_prediction": {
+      "answer": "Phương pháp B cao hơn phương pháp A 13.58%. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "expected_bad_failure_prefix": "derived_value_missing"
+  },
+  {
+    "id": "M0-Q04",
+    "category": "directed_subject_swap",
+    "documents": [
+      "doc04_multilevel_table_en.pdf"
+    ],
+    "selected_doc": "doc04_multilevel_table_en.pdf",
+    "source_language": "en",
+    "language": "vi",
+    "answer_language": "vi",
+    "answerability": "answerable",
+    "is_unanswerable": false,
+    "question": "Trên tập Validation ở Bảng 2, phương pháp nào có độ chính xác cao hơn?",
+    "gold_answer": "Phương pháp B cao hơn phương pháp A trên tập Validation (92% so với 81%).",
+    "atomic_claims": [
+      "Phương pháp B cao hơn phương pháp A trên tập Validation (92% so với 81%)."
+    ],
+    "gold_sources": [
+      {
+        "document": "doc04_multilevel_table_en.pdf",
+        "page": 1,
+        "bbox": [
+          55,
+          110,
+          500,
+          150
+        ],
+        "passage": "Method B 92% 88%"
+      }
+    ],
+    "gold_quantities": [],
+    "directed_relation": {
+      "higher": "Method B",
+      "lower": "Method A"
+    },
+    "derivation_spec": null,
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [],
+    "forbidden_numbers": [],
+    "good_prediction": {
+      "answer": "Phương pháp B cao hơn phương pháp A trên tập Validation với 92% so với 81%. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "bad_prediction": {
+      "answer": "Phương pháp A cao hơn phương pháp B trên tập Validation với 92% so với 81%. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "expected_bad_failure_prefix": "subject_swapped"
+  },
+  {
+    "id": "M0-Q05",
+    "category": "math_domain_constraint",
+    "documents": [
+      "doc06_math_domain_en.pdf"
+    ],
+    "selected_doc": "doc06_math_domain_en.pdf",
+    "source_language": "en",
+    "language": "vi",
+    "answer_language": "vi",
+    "answerability": "answerable",
+    "is_unanswerable": false,
+    "question": "Phương trình (4) rút gọn phân thức x / x như thế nào và cần điều kiện xác định gì?",
+    "gold_answer": "Phương trình có dạng $x / x = 1$ với điều kiện $x \\neq 0$.",
+    "atomic_claims": [],
+    "gold_sources": [
+      {
+        "document": "doc06_math_domain_en.pdf",
+        "page": 1,
+        "bbox": [
+          55,
+          170,
+          460,
+          192
+        ],
+        "passage": "Equation (4): Normalized identity x / x = 1 for x != 0."
+      }
+    ],
+    "gold_quantities": [],
+    "directed_relation": null,
+    "derivation_spec": null,
+    "gold_formula": "x / x = 1",
+    "domain_constraints": [
+      "x!=0"
+    ],
+    "forbidden_entities": [],
+    "forbidden_numbers": [],
+    "good_prediction": {
+      "answer": "Đồng nhất thức là $x / x = 1$ với điều kiện miền xác định $x \\neq 0$. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "bad_prediction": {
+      "answer": "Đồng nhất thức rút gọn luôn là $x / x = 1$ với mọi số thực x. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "expected_bad_failure_prefix": "missing_domain_constraint"
+  },
+  {
+    "id": "M0-Q06",
+    "category": "math_sub_vs_super",
+    "documents": [
+      "doc06_math_domain_en.pdf"
+    ],
+    "selected_doc": "doc06_math_domain_en.pdf",
+    "source_language": "en",
+    "language": "en",
+    "answer_language": "en",
+    "answerability": "answerable",
+    "is_unanswerable": false,
+    "question": "State Equation (1) for the quadratic root condition.",
+    "gold_answer": "The quadratic root condition is $x^2 = 4$.",
+    "atomic_claims": [],
+    "gold_sources": [
+      {
+        "document": "doc06_math_domain_en.pdf",
+        "page": 1,
+        "bbox": [
+          55,
+          95,
+          420,
+          118
+        ],
+        "passage": "Equation (1): Quadratic root condition x^2 = 4."
+      }
+    ],
+    "gold_quantities": [],
+    "directed_relation": null,
+    "derivation_spec": null,
+    "gold_formula": "x^2 = 4",
+    "domain_constraints": [],
+    "forbidden_entities": [],
+    "forbidden_numbers": [],
+    "good_prediction": {
+      "answer": "The quadratic root condition is $x^2 = 4$. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "bad_prediction": {
+      "answer": "The quadratic root condition is $x_2 = 4$. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "expected_bad_failure_prefix": "formula_mismatch"
+  },
+  {
+    "id": "M0-Q07",
+    "category": "negation_polarity",
+    "documents": [
+      "doc07_clinical_negation_en.pdf"
+    ],
+    "selected_doc": "doc07_clinical_negation_en.pdf",
+    "source_language": "en",
+    "language": "en",
+    "answer_language": "en",
+    "answerability": "answerable",
+    "is_unanswerable": false,
+    "question": "Does Treatment X work in stage-3 patients according to the clinical report?",
+    "gold_answer": "No, it is false that Treatment X works in stage-3 patients.",
+    "atomic_claims": [
+      "No, it is false that Treatment X works in stage-3 patients."
+    ],
+    "gold_sources": [
+      {
+        "document": "doc07_clinical_negation_en.pdf",
+        "page": 1,
+        "bbox": [
+          55,
+          95,
+          480,
+          118
+        ],
+        "passage": "It is false that Treatment X works in stage-3 patients."
+      }
+    ],
+    "gold_quantities": [],
+    "directed_relation": null,
+    "derivation_spec": null,
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [],
+    "forbidden_numbers": [],
+    "good_prediction": {
+      "answer": "It is false that Treatment X works in stage-3 patients. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "bad_prediction": {
+      "answer": "Treatment X works in stage-3 patients. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "expected_bad_failure_prefix": "polarity_inverted"
+  },
+  {
+    "id": "M0-Q08",
+    "category": "two_column_writer_guard",
+    "documents": [
+      "doc03_vision_2col_en.pdf"
+    ],
+    "selected_doc": "doc03_vision_2col_en.pdf",
+    "source_language": "en",
+    "language": "en",
+    "answer_language": "en",
+    "answerability": "answerable",
+    "is_unanswerable": false,
+    "question": "How many encoder layers does the baseline ViT-Small architecture contain?",
+    "gold_answer": "The baseline ViT-Small encoder contains 12 layers.",
+    "atomic_claims": [
+      "The baseline ViT-Small encoder contains 12 layers."
+    ],
+    "gold_sources": [
+      {
+        "document": "doc03_vision_2col_en.pdf",
+        "page": 1,
+        "bbox": [
+          50,
+          90,
+          280,
+          250
+        ],
+        "passage": "The baseline ViT-Small encoder contains 12 layers"
+      }
+    ],
+    "gold_quantities": [
+      {
+        "value": 12,
+        "unit": "layer"
+      }
+    ],
+    "directed_relation": null,
+    "derivation_spec": null,
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [],
+    "forbidden_numbers": [],
+    "good_prediction": {
+      "answer": "The baseline ViT-Small encoder contains 12 layers. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "bad_prediction": {
+      "answer": "The baseline ViT-Small encoder contains 999 layers. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "expected_bad_failure_prefix": "quantity_or_unit_mismatch"
+  },
+  {
+    "id": "M0-Q09",
+    "category": "scan_ocr_vi",
+    "documents": [
+      "doc08_scan_vi.pdf"
+    ],
+    "selected_doc": "doc08_scan_vi.pdf",
+    "source_language": "vi",
+    "language": "vi",
+    "answer_language": "vi",
+    "answerability": "answerable",
+    "is_unanswerable": false,
+    "question": "Trong phụ lục đối chứng OCR ở trang 2, độ chính xác nhận dạng trên 500 trang hóa đơn in rõ là bao nhiêu?",
+    "gold_answer": "Độ chính xác nhận dạng đạt 96.4% trên 500 trang.",
+    "atomic_claims": [
+      "Độ chính xác nhận dạng đạt 96.4% trên 500 trang."
+    ],
+    "gold_sources": [
+      {
+        "document": "doc08_scan_vi.pdf",
+        "page": 2,
+        "bbox": [
+          60,
+          70,
+          535,
+          200
+        ],
+        "passage": "96.4%"
+      }
+    ],
+    "gold_quantities": [
+      {
+        "value": 96.4,
+        "unit": "%"
+      }
+    ],
+    "directed_relation": null,
+    "derivation_spec": null,
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [],
+    "forbidden_numbers": [],
+    "good_prediction": {
+      "answer": "Độ chính xác nhận dạng đạt 96.4% trên 500 trang hóa đơn in rõ. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "bad_prediction": {
+      "answer": "Độ chính xác nhận dạng đạt 96.4 điểm phần trăm. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "expected_bad_failure_prefix": "quantity_or_unit_mismatch"
+  },
+  {
+    "id": "M0-Q10",
+    "category": "adversarial_trap",
+    "documents": [
+      "doc02_agronomy_vi.pdf"
+    ],
+    "selected_doc": "doc02_agronomy_vi.pdf",
+    "source_language": "vi",
+    "language": "vi",
+    "answer_language": "vi",
+    "answerability": "insufficient_evidence",
+    "is_unanswerable": true,
+    "question": "Nồng độ nitrat trong đất nhà kính ở Lâm Đồng được báo cáo là bao nhiêu mg/L?",
+    "gold_answer": "",
+    "atomic_claims": [],
+    "gold_sources": [],
+    "gold_quantities": [],
+    "directed_relation": null,
+    "derivation_spec": null,
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [
+      "nitrat"
+    ],
+    "forbidden_numbers": [
+      45
+    ],
+    "good_prediction": {
+      "answer": "Chưa đủ bằng chứng trong tài liệu đã chọn để xác nhận nồng độ nitrat trong đất.",
+      "answer_status": "INSUFFICIENT_EVIDENCE"
+    },
+    "bad_prediction": {
+      "answer": "Nồng độ nitrat trong đất đạt 45 mg/L.",
+      "answer_status": "INSUFFICIENT_EVIDENCE"
+    },
+    "expected_bad_failure_prefix": "status_display_mismatch"
+  },
+  {
+    "id": "M0-Q11",
+    "category": "derived_calculation",
+    "documents": [
+      "doc04_multilevel_table_en.pdf"
+    ],
+    "selected_doc": "doc04_multilevel_table_en.pdf",
+    "source_language": "en",
+    "language": "en",
+    "answer_language": "en",
+    "answerability": "answerable",
+    "is_unanswerable": false,
+    "question": "By how many percentage points does Method B exceed Method A on the Test split in Table 2?",
+    "gold_answer": "Method B exceeds Method A by 9 percentage points on the Test split.",
+    "atomic_claims": [
+      "Method B exceeds Method A by 9 percentage points on the Test split."
+    ],
+    "gold_sources": [
+      {
+        "document": "doc04_multilevel_table_en.pdf",
+        "page": 1,
+        "bbox": [
+          55,
+          110,
+          500,
+          150
+        ],
+        "passage": "Method B 92% 88%"
+      }
+    ],
+    "gold_quantities": [],
+    "directed_relation": {
+      "higher": "Method B",
+      "lower": "Method A"
+    },
+    "derivation_spec": {
+      "op": "diff_pp",
+      "operands": [
+        {
+          "entity": "Method B",
+          "metric": "accuracy",
+          "split": "test",
+          "value": 88.0,
+          "unit": "%"
+        },
+        {
+          "entity": "Method A",
+          "metric": "accuracy",
+          "split": "test",
+          "value": 79.0,
+          "unit": "%"
+        }
+      ],
+      "expected_value": 9.0,
+      "expected_unit": "pp"
+    },
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [],
+    "forbidden_numbers": [],
+    "good_prediction": {
+      "answer": "Method B exceeds Method A by 9 percentage points on the Test split. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "bad_prediction": {
+      "answer": "Method B exceeds Method A by 9% on the Test split. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "expected_bad_failure_prefix": "unit_mismatch"
+  },
+  {
+    "id": "M0-Q12",
+    "category": "derived_calculation",
+    "documents": [
+      "doc04_multilevel_table_en.pdf"
+    ],
+    "selected_doc": "doc04_multilevel_table_en.pdf",
+    "source_language": "en",
+    "language": "en",
+    "answer_language": "en",
+    "answerability": "answerable",
+    "is_unanswerable": false,
+    "question": "What is the relative percentage improvement of Method B over Method A on the Validation split?",
+    "gold_answer": "Method B outperforms Method A by 13.58% in relative terms on Validation.",
+    "atomic_claims": [],
+    "gold_sources": [
+      {
+        "document": "doc04_multilevel_table_en.pdf",
+        "page": 1,
+        "bbox": [
+          55,
+          110,
+          500,
+          150
+        ],
+        "passage": "Method A 81%"
+      }
+    ],
+    "gold_quantities": [],
+    "directed_relation": null,
+    "derivation_spec": {
+      "op": "rel_change_pct",
+      "operands": [
+        {
+          "entity": "Method B",
+          "metric": "accuracy",
+          "split": "validation",
+          "value": 92.0,
+          "unit": "%"
+        },
+        {
+          "entity": "Method A",
+          "metric": "accuracy",
+          "split": "validation",
+          "value": 81.0,
+          "unit": "%"
+        }
+      ],
+      "expected_value": 13.58,
+      "expected_unit": "%",
+      "tolerance": 0.05
+    },
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [],
+    "forbidden_numbers": [],
+    "good_prediction": {
+      "answer": "Method B outperforms Method A by 13.58% relative improvement on Validation. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "bad_prediction": {
+      "answer": "Method B outperforms Method A by 11% on Validation. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "expected_bad_failure_prefix": "derived_value_missing"
+  },
+  {
+    "id": "M0-Q13",
+    "category": "derived_calculation",
+    "documents": [
+      "doc04_multilevel_table_en.pdf"
+    ],
+    "selected_doc": "doc04_multilevel_table_en.pdf",
+    "source_language": "en",
+    "language": "vi",
+    "answer_language": "vi",
+    "answerability": "answerable",
+    "is_unanswerable": false,
+    "question": "Trên tập Test, phương pháp B cao hơn phương pháp A bao nhiêu điểm phần trăm?",
+    "gold_answer": "Phương pháp B cao hơn phương pháp A 9 điểm phần trăm trên tập Test.",
+    "atomic_claims": [
+      "Phương pháp B cao hơn phương pháp A 9 điểm phần trăm trên tập Test."
+    ],
+    "gold_sources": [
+      {
+        "document": "doc04_multilevel_table_en.pdf",
+        "page": 1,
+        "bbox": [
+          55,
+          110,
+          500,
+          150
+        ],
+        "passage": "Method A 81% 79%"
+      }
+    ],
+    "gold_quantities": [],
+    "directed_relation": null,
+    "derivation_spec": {
+      "op": "diff_pp",
+      "operands": [
+        {
+          "entity": "Method B",
+          "metric": "accuracy",
+          "split": "test",
+          "value": 88.0,
+          "unit": "%"
+        },
+        {
+          "entity": "Method A",
+          "metric": "accuracy",
+          "split": "test",
+          "value": 79.0,
+          "unit": "%"
+        }
+      ],
+      "expected_value": 9.0,
+      "expected_unit": "pp"
+    },
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [],
+    "forbidden_numbers": [],
+    "good_prediction": {
+      "answer": "Phương pháp B cao hơn phương pháp A 9 điểm phần trăm trên tập Test. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "bad_prediction": {
+      "answer": "Phương pháp B cao hơn phương pháp A 13 điểm phần trăm trên tập Test. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "expected_bad_failure_prefix": "derived_value_missing"
+  },
+  {
+    "id": "M0-Q14",
+    "category": "derived_calculation",
+    "documents": [
+      "doc01_agronomy_en.pdf"
+    ],
+    "selected_doc": "doc01_agronomy_en.pdf",
+    "source_language": "en",
+    "language": "en",
+    "answer_language": "en",
+    "answerability": "answerable",
+    "is_unanswerable": false,
+    "question": "How many more liters of water did Sprinkler use than Drip irrigation in Table 1?",
+    "gold_answer": "Sprinkler exceeds Drip by 15 liters.",
+    "atomic_claims": [],
+    "gold_sources": [
+      {
+        "document": "doc01_agronomy_en.pdf",
+        "page": 2,
+        "bbox": [
+          55,
+          115,
+          480,
+          155
+        ],
+        "passage": "Sprinkler 57 liters"
+      }
+    ],
+    "gold_quantities": [],
+    "directed_relation": null,
+    "derivation_spec": {
+      "op": "sub",
+      "operands": [
+        {
+          "entity": "Sprinkler",
+          "metric": "water",
+          "split": "trial",
+          "value": 57.0,
+          "unit": "l"
+        },
+        {
+          "entity": "Drip",
+          "metric": "water",
+          "split": "trial",
+          "value": 42.0,
+          "unit": "l"
+        }
+      ],
+      "expected_value": 15.0,
+      "expected_unit": "l"
+    },
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [],
+    "forbidden_numbers": [],
+    "good_prediction": {
+      "answer": "Sprinkler exceeds Drip by 15 liters. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "bad_prediction": {
+      "answer": "Drip exceeds Sprinkler by 15 liters. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "expected_bad_failure_prefix": "subject_swapped"
+  },
+  {
+    "id": "M0-Q15",
+    "category": "derived_calculation",
+    "documents": [
+      "doc09_bilingual_cs_vi_en.pdf"
+    ],
+    "selected_doc": "doc09_bilingual_cs_vi_en.pdf",
+    "source_language": "vi",
+    "language": "vi",
+    "answer_language": "vi",
+    "answerability": "answerable",
+    "is_unanswerable": false,
+    "question": "Hybrid cải thiện Recall@5 hơn BM25 bao nhiêu điểm phần trăm?",
+    "gold_answer": "Hybrid cao hơn BM25 15.5 điểm phần trăm.",
+    "atomic_claims": [],
+    "gold_sources": [
+      {
+        "document": "doc09_bilingual_cs_vi_en.pdf",
+        "page": 1,
+        "bbox": [
+          60,
+          65,
+          535,
+          200
+        ],
+        "passage": "Recall@5 đạt 93.5%."
+      }
+    ],
+    "gold_quantities": [],
+    "directed_relation": null,
+    "derivation_spec": {
+      "op": "diff_pp",
+      "operands": [
+        {
+          "entity": "Hybrid",
+          "metric": "recall@5",
+          "split": "eval",
+          "value": 93.5,
+          "unit": "%"
+        },
+        {
+          "entity": "BM25",
+          "metric": "recall@5",
+          "split": "eval",
+          "value": 78.0,
+          "unit": "%"
+        }
+      ],
+      "expected_value": 15.5,
+      "expected_unit": "pp"
+    },
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [],
+    "forbidden_numbers": [],
+    "good_prediction": {
+      "answer": "Hybrid cao hơn BM25 15.5 điểm phần trăm. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "bad_prediction": {
+      "answer": "Hybrid cao hơn BM25 15.5%. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "expected_bad_failure_prefix": "unit_mismatch"
+  },
+  {
+    "id": "M0-Q16",
+    "category": "derived_calculation",
+    "documents": [
+      "doc09_bilingual_cs_vi_en.pdf"
+    ],
+    "selected_doc": "doc09_bilingual_cs_vi_en.pdf",
+    "source_language": "vi",
+    "language": "en",
+    "answer_language": "en",
+    "answerability": "answerable",
+    "is_unanswerable": false,
+    "question": "By how many percentage points does Hybrid outperform BM25 in Recall@5?",
+    "gold_answer": "Hybrid outperforms BM25 by 15.5 percentage points.",
+    "atomic_claims": [],
+    "gold_sources": [
+      {
+        "document": "doc09_bilingual_cs_vi_en.pdf",
+        "page": 1,
+        "bbox": [
+          60,
+          65,
+          535,
+          200
+        ],
+        "passage": "78.0% Recall@5"
+      }
+    ],
+    "gold_quantities": [],
+    "directed_relation": null,
+    "derivation_spec": {
+      "op": "diff_pp",
+      "operands": [
+        {
+          "entity": "Hybrid",
+          "metric": "recall@5",
+          "split": "eval",
+          "value": 93.5,
+          "unit": "%"
+        },
+        {
+          "entity": "BM25",
+          "metric": "recall@5",
+          "split": "eval",
+          "value": 78.0,
+          "unit": "%"
+        }
+      ],
+      "expected_value": 15.5,
+      "expected_unit": "pp"
+    },
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [],
+    "forbidden_numbers": [],
+    "good_prediction": {
+      "answer": "Hybrid outperforms BM25 by 15.5 percentage points. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "bad_prediction": {
+      "answer": "BM25 outperforms Hybrid by 15.5 percentage points. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "expected_bad_failure_prefix": "subject_swapped"
+  },
+  {
+    "id": "M0-Q17",
+    "category": "derived_calculation",
+    "documents": [
+      "doc03_vision_2col_en.pdf"
+    ],
+    "selected_doc": "doc03_vision_2col_en.pdf",
+    "source_language": "en",
+    "language": "en",
+    "answer_language": "en",
+    "answerability": "answerable",
+    "is_unanswerable": false,
+    "question": "How many milliseconds slower is ViT-Large than ViT-Small on Tesla T4?",
+    "gold_answer": "ViT-Large exceeds ViT-Small latency by 21 ms.",
+    "atomic_claims": [],
+    "gold_sources": [
+      {
+        "document": "doc03_vision_2col_en.pdf",
+        "page": 1,
+        "bbox": [
+          310,
+          90,
+          545,
+          250
+        ],
+        "passage": "39 ms latency"
+      }
+    ],
+    "gold_quantities": [],
+    "directed_relation": null,
+    "derivation_spec": {
+      "op": "sub",
+      "operands": [
+        {
+          "entity": "ViT-Large",
+          "metric": "latency",
+          "split": "t4",
+          "value": 39.0,
+          "unit": "ms"
+        },
+        {
+          "entity": "ViT-Small",
+          "metric": "latency",
+          "split": "t4",
+          "value": 18.0,
+          "unit": "ms"
+        }
+      ],
+      "expected_value": 21.0,
+      "expected_unit": "ms"
+    },
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [],
+    "forbidden_numbers": [],
+    "good_prediction": {
+      "answer": "ViT-Large exceeds ViT-Small by 21 ms in latency. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "bad_prediction": {
+      "answer": "ViT-Large exceeds ViT-Small by 21 s in latency. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "expected_bad_failure_prefix": "unit_mismatch"
+  },
+  {
+    "id": "M0-Q18",
+    "category": "derived_calculation",
+    "documents": [
+      "doc01_agronomy_en.pdf",
+      "doc02_agronomy_vi.pdf"
+    ],
+    "selected_doc": "doc01_agronomy_en.pdf",
+    "source_language": "vi",
+    "language": "vi",
+    "answer_language": "vi",
+    "answerability": "answerable",
+    "is_unanswerable": false,
+    "question": "Thí nghiệm nhà kính kéo dài hơn thí nghiệm vườn cây bao nhiêu ngày?",
+    "gold_answer": "Nhà kính lớn hơn vườn cây 21 ngày (35 ngày so với 14 ngày).",
+    "atomic_claims": [],
+    "gold_sources": [
+      {
+        "document": "doc01_agronomy_en.pdf",
+        "page": 1,
+        "bbox": [
+          55,
+          95,
+          450,
+          120
+        ],
+        "passage": "fourteen consecutive days"
+      },
+      {
+        "document": "doc02_agronomy_vi.pdf",
+        "page": 1,
+        "bbox": [
+          60,
+          60,
+          535,
+          200
+        ],
+        "passage": "35 ngày"
+      }
+    ],
+    "gold_quantities": [],
+    "directed_relation": null,
+    "derivation_spec": {
+      "op": "sub",
+      "allow_cross_split": true,
+      "operands": [
+        {
+          "entity": "Greenhouse",
+          "metric": "duration",
+          "split": "greenhouse",
+          "value": 35.0,
+          "unit": "day"
+        },
+        {
+          "entity": "Orchard",
+          "metric": "duration",
+          "split": "orchard",
+          "value": 14.0,
+          "unit": "day"
+        }
+      ],
+      "expected_value": 21.0,
+      "expected_unit": "day"
+    },
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [],
+    "forbidden_numbers": [],
+    "good_prediction": {
+      "answer": "Greenhouse lớn hơn Orchard 21 ngày. [1] [2]",
+      "answer_status": "ANSWERED"
+    },
+    "bad_prediction": {
+      "answer": "Orchard lớn hơn Greenhouse 21 ngày. [1] [2]",
+      "answer_status": "ANSWERED"
+    },
+    "expected_bad_failure_prefix": "subject_swapped"
+  },
+  {
+    "id": "M0-Q19",
+    "category": "derived_calculation",
+    "documents": [
+      "doc03_vision_2col_en.pdf",
+      "doc10_multi_contradiction_en.pdf"
+    ],
+    "selected_doc": "doc03_vision_2col_en.pdf",
+    "source_language": "en",
+    "language": "en",
+    "answer_language": "en",
+    "answerability": "answerable",
+    "is_unanswerable": false,
+    "question": "By how many ms did ViT-Small latency increase on Jetson Orin compared to Tesla T4?",
+    "gold_answer": "Orin exceeds T4 by 13 ms for ViT-Small.",
+    "atomic_claims": [],
+    "gold_sources": [
+      {
+        "document": "doc03_vision_2col_en.pdf",
+        "page": 1,
+        "bbox": [
+          310,
+          90,
+          545,
+          250
+        ],
+        "passage": "18 ms latency"
+      },
+      {
+        "document": "doc10_multi_contradiction_en.pdf",
+        "page": 1,
+        "bbox": [
+          55,
+          95,
+          480,
+          120
+        ],
+        "passage": "31 ms"
+      }
+    ],
+    "gold_quantities": [],
+    "directed_relation": null,
+    "derivation_spec": {
+      "op": "sub",
+      "allow_cross_split": true,
+      "operands": [
+        {
+          "entity": "Orin",
+          "metric": "latency",
+          "split": "orin",
+          "value": 31.0,
+          "unit": "ms"
+        },
+        {
+          "entity": "T4",
+          "metric": "latency",
+          "split": "t4",
+          "value": 18.0,
+          "unit": "ms"
+        }
+      ],
+      "expected_value": 13.0,
+      "expected_unit": "ms"
+    },
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [],
+    "forbidden_numbers": [],
+    "good_prediction": {
+      "answer": "Orin exceeds T4 by 13 ms in ViT-Small latency. [1] [2]",
+      "answer_status": "ANSWERED"
+    },
+    "bad_prediction": {
+      "answer": "Orin exceeds T4 by 18 ms in ViT-Small latency. [1] [2]",
+      "answer_status": "ANSWERED"
+    },
+    "expected_bad_failure_prefix": "derived_value_missing"
+  },
+  {
+    "id": "M0-Q20",
+    "category": "derived_calculation",
+    "documents": [
+      "doc04_multilevel_table_en.pdf"
+    ],
+    "selected_doc": "doc04_multilevel_table_en.pdf",
+    "source_language": "en",
+    "language": "en",
+    "answer_language": "en",
+    "answerability": "answerable",
+    "is_unanswerable": false,
+    "question": "What is the total sample count across Validation and Test sets in Table 2?",
+    "gold_answer": "The combined sample count is 3600.",
+    "atomic_claims": [],
+    "gold_sources": [
+      {
+        "document": "doc04_multilevel_table_en.pdf",
+        "page": 1,
+        "bbox": [
+          55,
+          165,
+          510,
+          190
+        ],
+        "passage": "Validation set has 1200 samples; Test set has 2400 samples."
+      }
+    ],
+    "gold_quantities": [],
+    "directed_relation": null,
+    "derivation_spec": {
+      "op": "add",
+      "allow_cross_split": true,
+      "operands": [
+        {
+          "entity": "Validation",
+          "metric": "samples",
+          "split": "val",
+          "value": 1200.0,
+          "unit": ""
+        },
+        {
+          "entity": "Test",
+          "metric": "samples",
+          "split": "test",
+          "value": 2400.0,
+          "unit": ""
+        }
+      ],
+      "expected_value": 3600.0,
+      "expected_unit": ""
+    },
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [],
+    "forbidden_numbers": [],
+    "good_prediction": {
+      "answer": "The combined sample count across both splits is 3600. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "bad_prediction": {
+      "answer": "The combined sample count across both splits is 2400. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "expected_bad_failure_prefix": "derived_value_missing"
+  },
+  {
+    "id": "M0-Q21",
+    "category": "math_inequality",
+    "documents": [
+      "doc06_math_domain_en.pdf"
+    ],
+    "selected_doc": "doc06_math_domain_en.pdf",
+    "source_language": "en",
+    "language": "en",
+    "answer_language": "en",
+    "answerability": "answerable",
+    "is_unanswerable": false,
+    "question": "What inequalities define the feasibility region in Equation (3)?",
+    "gold_answer": "The feasibility region is $x < 3$ and $y > 2$.",
+    "atomic_claims": [],
+    "gold_sources": [
+      {
+        "document": "doc06_math_domain_en.pdf",
+        "page": 1,
+        "bbox": [
+          55,
+          145,
+          450,
+          168
+        ],
+        "passage": "Equation (3): Feasibility region x < 3 and y > 2."
+      }
+    ],
+    "gold_quantities": [],
+    "directed_relation": null,
+    "derivation_spec": null,
+    "gold_formula": "x < 3 and y > 2",
+    "domain_constraints": [],
+    "forbidden_entities": [],
+    "forbidden_numbers": [],
+    "good_prediction": {
+      "answer": "The feasibility region is defined by $x < 3$ and $y > 2$. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "bad_prediction": {
+      "answer": "The feasibility region is defined by $x > 3$ and $y > 2$. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "expected_bad_failure_prefix": "formula_mismatch"
+  },
+  {
+    "id": "M0-Q22",
+    "category": "math_inequality",
+    "documents": [
+      "doc06_math_domain_en.pdf"
+    ],
+    "selected_doc": "doc06_math_domain_en.pdf",
+    "source_language": "en",
+    "language": "vi",
+    "answer_language": "vi",
+    "answerability": "answerable",
+    "is_unanswerable": false,
+    "question": "Nêu miền khả thi ở Phương trình (3).",
+    "gold_answer": "Miền khả thi được xác định bởi $3 > x$ và $y > 2$.",
+    "atomic_claims": [],
+    "gold_sources": [
+      {
+        "document": "doc06_math_domain_en.pdf",
+        "page": 1,
+        "bbox": [
+          55,
+          145,
+          450,
+          168
+        ],
+        "passage": "x < 3 and y > 2"
+      }
+    ],
+    "gold_quantities": [],
+    "directed_relation": null,
+    "derivation_spec": null,
+    "gold_formula": "x < 3 and y > 2",
+    "domain_constraints": [],
+    "forbidden_entities": [],
+    "forbidden_numbers": [],
+    "good_prediction": {
+      "answer": "Miền khả thi xác định bởi $3 > x$ và $y > 2$. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "bad_prediction": {
+      "answer": "Miền khả thi xác định bởi $x = 3$ và $y = 2$. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "expected_bad_failure_prefix": "formula_mismatch"
+  },
+  {
+    "id": "M0-Q23",
+    "category": "math_fraction_domain",
+    "documents": [
+      "doc06_math_domain_en.pdf"
+    ],
+    "selected_doc": "doc06_math_domain_en.pdf",
+    "source_language": "en",
+    "language": "en",
+    "answer_language": "en",
+    "answerability": "answerable",
+    "is_unanswerable": false,
+    "question": "What is the stacked ratio formula in Equation (5) and its denominator condition?",
+    "gold_answer": "Equation (5) is $y = \\frac{a}{b}$ with $b \\neq 0$.",
+    "atomic_claims": [],
+    "gold_sources": [
+      {
+        "document": "doc06_math_domain_en.pdf",
+        "page": 1,
+        "bbox": [
+          55,
+          195,
+          460,
+          218
+        ],
+        "passage": "Equation (5): Stacked ratio y = a / b with b != 0."
+      }
+    ],
+    "gold_quantities": [],
+    "directed_relation": null,
+    "derivation_spec": null,
+    "gold_formula": "y = a / b",
+    "domain_constraints": [
+      "b!=0"
+    ],
+    "forbidden_entities": [],
+    "forbidden_numbers": [],
+    "good_prediction": {
+      "answer": "Equation (5) is $y = \\frac{a}{b}$ with condition $b \\neq 0$. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "bad_prediction": {
+      "answer": "Equation (5) is $y = a$ with condition $b \\neq 0$. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "expected_bad_failure_prefix": "formula_mismatch"
+  },
+  {
+    "id": "M0-Q24",
+    "category": "math_fraction_domain",
+    "documents": [
+      "doc06_math_domain_en.pdf"
+    ],
+    "selected_doc": "doc06_math_domain_en.pdf",
+    "source_language": "en",
+    "language": "vi",
+    "answer_language": "vi",
+    "answerability": "answerable",
+    "is_unanswerable": false,
+    "question": "Viết công thức tỷ số ở Phương trình (5) kèm điều kiện mẫu số.",
+    "gold_answer": "Công thức là $y = a / b$ với $b \\neq 0$.",
+    "atomic_claims": [],
+    "gold_sources": [
+      {
+        "document": "doc06_math_domain_en.pdf",
+        "page": 1,
+        "bbox": [
+          55,
+          195,
+          460,
+          218
+        ],
+        "passage": "y = a / b with b != 0"
+      }
+    ],
+    "gold_quantities": [],
+    "directed_relation": null,
+    "derivation_spec": null,
+    "gold_formula": "y = a / b",
+    "domain_constraints": [
+      "b!=0"
+    ],
+    "forbidden_entities": [],
+    "forbidden_numbers": [],
+    "good_prediction": {
+      "answer": "Phương trình (5) là $y = \\frac{a}{b}$ với $b \\neq 0$. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "bad_prediction": {
+      "answer": "Phương trình (5) là $y = \\frac{a}{b}$ với mọi b thực. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "expected_bad_failure_prefix": "missing_domain_constraint"
+  },
+  {
+    "id": "M0-Q25",
+    "category": "math_sub_vs_super",
+    "documents": [
+      "doc06_math_domain_en.pdf"
+    ],
+    "selected_doc": "doc06_math_domain_en.pdf",
+    "source_language": "en",
+    "language": "vi",
+    "answer_language": "vi",
+    "answerability": "answerable",
+    "is_unanswerable": false,
+    "question": "Giá trị phần tử thứ hai x_2 ở Phương trình (2) bằng bao nhiêu?",
+    "gold_answer": "Phương trình (2) xác định $x_2 = 9$.",
+    "atomic_claims": [],
+    "gold_sources": [
+      {
+        "document": "doc06_math_domain_en.pdf",
+        "page": 1,
+        "bbox": [
+          55,
+          120,
+          420,
+          142
+        ],
+        "passage": "Equation (2): Second sequence element x_2 = 9."
+      }
+    ],
+    "gold_quantities": [],
+    "directed_relation": null,
+    "derivation_spec": null,
+    "gold_formula": "x_2 = 9",
+    "domain_constraints": [],
+    "forbidden_entities": [],
+    "forbidden_numbers": [],
+    "good_prediction": {
+      "answer": "Theo Phương trình (2), phần tử thứ hai là $x_2 = 9$. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "bad_prediction": {
+      "answer": "Theo Phương trình (2), phần tử thứ hai là $x^2 = 9$. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "expected_bad_failure_prefix": "formula_mismatch"
+  },
+  {
+    "id": "M0-Q26",
+    "category": "math_domain_constraint",
+    "documents": [
+      "doc06_math_domain_en.pdf"
+    ],
+    "selected_doc": "doc06_math_domain_en.pdf",
+    "source_language": "en",
+    "language": "en",
+    "answer_language": "en",
+    "answerability": "answerable",
+    "is_unanswerable": false,
+    "question": "What horizon condition is stated in Equation (6)?",
+    "gold_answer": "The discounted return horizon requires $t \\geq 0$.",
+    "atomic_claims": [],
+    "gold_sources": [
+      {
+        "document": "doc06_math_domain_en.pdf",
+        "page": 1,
+        "bbox": [
+          55,
+          220,
+          440,
+          242
+        ],
+        "passage": "Equation (6): Discounted return horizon t >= 0."
+      }
+    ],
+    "gold_quantities": [],
+    "directed_relation": null,
+    "derivation_spec": null,
+    "gold_formula": "t >= 0",
+    "domain_constraints": [],
+    "forbidden_entities": [],
+    "forbidden_numbers": [],
+    "good_prediction": {
+      "answer": "The horizon condition in Equation (6) is $t \\geq 0$. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "bad_prediction": {
+      "answer": "The horizon condition in Equation (6) is $t > 0$. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "expected_bad_failure_prefix": "formula_mismatch"
+  },
+  {
+    "id": "M0-Q27",
+    "category": "math_domain_constraint",
+    "documents": [
+      "doc09_bilingual_cs_vi_en.pdf"
+    ],
+    "selected_doc": "doc09_bilingual_cs_vi_en.pdf",
+    "source_language": "vi",
+    "language": "vi",
+    "answer_language": "vi",
+    "answerability": "answerable",
+    "is_unanswerable": false,
+    "question": "Hệ số kết hợp alpha trong thực nghiệm hybrid bằng bao nhiêu?",
+    "gold_answer": "Hệ số kết hợp là $alpha = 0.65$.",
+    "atomic_claims": [],
+    "gold_sources": [
+      {
+        "document": "doc09_bilingual_cs_vi_en.pdf",
+        "page": 1,
+        "bbox": [
+          60,
+          65,
+          535,
+          160
+        ],
+        "passage": "alpha = 0.65"
+      }
+    ],
+    "gold_quantities": [],
+    "directed_relation": null,
+    "derivation_spec": null,
+    "gold_formula": "alpha = 0.65",
+    "domain_constraints": [],
+    "forbidden_entities": [],
+    "forbidden_numbers": [],
+    "good_prediction": {
+      "answer": "Hệ số kết hợp trong truy hồi hybrid là $\\alpha = 0.65$ ($alpha = 0.65$). [1]",
+      "answer_status": "ANSWERED"
+    },
+    "bad_prediction": {
+      "answer": "Hệ số kết hợp trong truy hồi hybrid là $alpha = 0.05$. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "expected_bad_failure_prefix": "formula_mismatch"
+  },
+  {
+    "id": "M0-Q28",
+    "category": "math_domain_constraint",
+    "documents": [
+      "doc06_math_domain_en.pdf"
+    ],
+    "selected_doc": "doc06_math_domain_en.pdf",
+    "source_language": "en",
+    "language": "en",
+    "answer_language": "en",
+    "answerability": "answerable",
+    "is_unanswerable": false,
+    "question": "When x != 0 in Equation (4), what does x / x simplify to?",
+    "gold_answer": "Under $x \\neq 0$, $x / x = 1$.",
+    "atomic_claims": [],
+    "gold_sources": [
+      {
+        "document": "doc06_math_domain_en.pdf",
+        "page": 1,
+        "bbox": [
+          55,
+          170,
+          460,
+          192
+        ],
+        "passage": "x / x = 1 for x != 0"
+      }
+    ],
+    "gold_quantities": [],
+    "directed_relation": null,
+    "derivation_spec": null,
+    "gold_formula": "1 = 1",
+    "domain_constraints": [
+      "x!=0"
+    ],
+    "forbidden_entities": [],
+    "forbidden_numbers": [],
+    "good_prediction": {
+      "answer": "For $x \\neq 0$, $x / x = 1$. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "bad_prediction": {
+      "answer": "It simplifies to $x / x = 1$. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "expected_bad_failure_prefix": "missing_domain_constraint"
+  },
+  {
+    "id": "M0-Q29",
+    "category": "citation_region_iou",
+    "documents": [
+      "doc06_math_domain_en.pdf"
+    ],
+    "selected_doc": "doc06_math_domain_en.pdf",
+    "source_language": "en",
+    "language": "en",
+    "answer_language": "en",
+    "answerability": "answerable",
+    "is_unanswerable": false,
+    "question": "Cite the exact region of Equation (2) on page 1.",
+    "gold_answer": "Equation (2) states $x_2 = 9$.",
+    "atomic_claims": [],
+    "gold_sources": [
+      {
+        "document": "doc06_math_domain_en.pdf",
+        "page": 1,
+        "bbox": [
+          55,
+          120,
+          420,
+          142
+        ],
+        "passage": "x_2 = 9"
+      }
+    ],
+    "gold_quantities": [],
+    "directed_relation": null,
+    "derivation_spec": null,
+    "gold_formula": "x_2 = 9",
+    "domain_constraints": [],
+    "forbidden_entities": [],
+    "forbidden_numbers": [],
+    "good_prediction": {
+      "answer": "Equation (2) states $x_2 = 9$. [1]",
+      "answer_status": "ANSWERED",
+      "cited_regions": [
+        {
+          "document": "doc06_math_domain_en.pdf",
+          "page": 1,
+          "bbox": [
+            58,
+            121,
+            415,
+            141
+          ]
+        }
+      ]
+    },
+    "bad_prediction": {
+      "answer": "Equation (2) states $x_2 = 9$. [1]",
+      "answer_status": "ANSWERED",
+      "cited_regions": [
+        {
+          "document": "doc06_math_domain_en.pdf",
+          "page": 1,
+          "bbox": [
+            58,
+            95,
+            415,
+            115
+          ]
+        }
+      ]
+    },
+    "expected_bad_failure_prefix": "citation_region_mismatch",
+    "gold_regions": [
+      {
+        "document": "doc06_math_domain_en.pdf",
+        "page": 1,
+        "bbox": [
+          55,
+          120,
+          420,
+          142
+        ]
+      }
+    ]
+  },
+  {
+    "id": "M0-Q30",
+    "category": "citation_region_iou",
+    "documents": [
+      "doc05_chart_ab_en.pdf"
+    ],
+    "selected_doc": "doc05_chart_ab_en.pdf",
+    "source_language": "en",
+    "language": "vi",
+    "answer_language": "vi",
+    "answerability": "answerable",
+    "is_unanswerable": false,
+    "question": "Trích dẫn đúng vùng chú thích Hình 3 cho kết quả 92% của phương pháp B.",
+    "gold_answer": "Hình 3 cho thấy phương pháp B đạt 92%.",
+    "atomic_claims": [],
+    "gold_sources": [
+      {
+        "document": "doc05_chart_ab_en.pdf",
+        "page": 1,
+        "bbox": [
+          75,
+          325,
+          520,
+          350
+        ],
+        "passage": "Method B achieves 92%"
+      }
+    ],
+    "gold_quantities": [
+      {
+        "value": 92.0,
+        "unit": "%"
+      }
+    ],
+    "directed_relation": null,
+    "derivation_spec": null,
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [],
+    "forbidden_numbers": [],
+    "good_prediction": {
+      "answer": "Hình 3 ghi nhận phương pháp B đạt 92%. [1]",
+      "answer_status": "ANSWERED",
+      "cited_regions": [
+        {
+          "document": "doc05_chart_ab_en.pdf",
+          "page": 1,
+          "bbox": [
+            78,
+            328,
+            515,
+            348
+          ]
+        }
+      ]
+    },
+    "bad_prediction": {
+      "answer": "Hình 3 ghi nhận phương pháp B đạt 92%. [1]",
+      "answer_status": "ANSWERED",
+      "cited_regions": [
+        {
+          "document": "doc05_chart_ab_en.pdf",
+          "page": 1,
+          "bbox": [
+            60,
+            50,
+            300,
+            75
+          ]
+        }
+      ]
+    },
+    "expected_bad_failure_prefix": "citation_region_mismatch",
+    "gold_regions": [
+      {
+        "document": "doc05_chart_ab_en.pdf",
+        "page": 1,
+        "bbox": [
+          75,
+          325,
+          520,
+          350
+        ]
+      }
+    ]
+  },
+  {
+    "id": "M0-Q31",
+    "category": "negation_polarity",
+    "documents": [
+      "doc07_clinical_negation_en.pdf"
+    ],
+    "selected_doc": "doc07_clinical_negation_en.pdf",
+    "source_language": "en",
+    "language": "vi",
+    "answer_language": "vi",
+    "answerability": "answerable",
+    "is_unanswerable": false,
+    "question": "Phương pháp điều trị Y có làm giảm huyết áp tâm thu không?",
+    "gold_answer": "Không, phương pháp điều trị Y không làm giảm huyết áp tâm thu.",
+    "atomic_claims": [
+      "Treatment Y did not reduce blood pressure."
+    ],
+    "gold_sources": [
+      {
+        "document": "doc07_clinical_negation_en.pdf",
+        "page": 1,
+        "bbox": [
+          55,
+          120,
+          480,
+          142
+        ],
+        "passage": "Treatment Y did not reduce systolic blood pressure."
+      }
+    ],
+    "gold_quantities": [],
+    "directed_relation": null,
+    "derivation_spec": null,
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [],
+    "forbidden_numbers": [],
+    "good_prediction": {
+      "answer": "Phương pháp điều trị Y hoàn toàn không làm giảm huyết áp tâm thu. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "bad_prediction": {
+      "answer": "Phương pháp điều trị Y giúp giảm huyết áp tâm thu rõ rệt. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "expected_bad_failure_prefix": "polarity_inverted"
+  },
+  {
+    "id": "M0-Q32",
+    "category": "unit_integrity",
+    "documents": [
+      "doc07_clinical_negation_en.pdf"
+    ],
+    "selected_doc": "doc07_clinical_negation_en.pdf",
+    "source_language": "en",
+    "language": "en",
+    "answer_language": "en",
+    "answerability": "answerable",
+    "is_unanswerable": false,
+    "question": "What concentration did Biomarker Z reach in Cohort C?",
+    "gold_answer": "Biomarker Z reached 15 mg/L in Cohort C.",
+    "atomic_claims": [
+      "Biomarker Z reached 15 mg/L in Cohort C."
+    ],
+    "gold_sources": [
+      {
+        "document": "doc07_clinical_negation_en.pdf",
+        "page": 1,
+        "bbox": [
+          55,
+          145,
+          450,
+          168
+        ],
+        "passage": "Biomarker Z reached 15 mg/L in Cohort C."
+      }
+    ],
+    "gold_quantities": [
+      {
+        "value": 15.0,
+        "unit": "mg/l"
+      }
+    ],
+    "directed_relation": null,
+    "derivation_spec": null,
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [],
+    "forbidden_numbers": [],
+    "good_prediction": {
+      "answer": "Biomarker Z reached 15 mg/L in Cohort C. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "bad_prediction": {
+      "answer": "Biomarker Z reached 15 g/L in Cohort C. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "expected_bad_failure_prefix": "quantity_or_unit_mismatch"
+  },
+  {
+    "id": "M0-Q33",
+    "category": "unit_integrity",
+    "documents": [
+      "doc02_agronomy_vi.pdf"
+    ],
+    "selected_doc": "doc02_agronomy_vi.pdf",
+    "source_language": "vi",
+    "language": "en",
+    "answer_language": "en",
+    "answerability": "answerable",
+    "is_unanswerable": false,
+    "question": "What soluble phosphorus concentration was measured in the greenhouse topsoil?",
+    "gold_answer": "Soluble phosphorus reached 16 mg/L in the topsoil.",
+    "atomic_claims": [],
+    "gold_sources": [
+      {
+        "document": "doc02_agronomy_vi.pdf",
+        "page": 1,
+        "bbox": [
+          60,
+          60,
+          535,
+          220
+        ],
+        "passage": "16 mg/L"
+      }
+    ],
+    "gold_quantities": [
+      {
+        "value": 16.0,
+        "unit": "mg/l"
+      }
+    ],
+    "directed_relation": null,
+    "derivation_spec": null,
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [],
+    "forbidden_numbers": [],
+    "good_prediction": {
+      "answer": "Soluble phosphorus reached 16 mg/L in the topsoil. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "bad_prediction": {
+      "answer": "Soluble phosphorus reached 16 mg in the topsoil. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "expected_bad_failure_prefix": "quantity_or_unit_mismatch"
+  },
+  {
+    "id": "M0-Q34",
+    "category": "unit_integrity",
+    "documents": [
+      "doc02_agronomy_vi.pdf"
+    ],
+    "selected_doc": "doc02_agronomy_vi.pdf",
+    "source_language": "vi",
+    "language": "vi",
+    "answer_language": "vi",
+    "answerability": "answerable",
+    "is_unanswerable": false,
+    "question": "Mỗi ô tiêu chuẩn trong nhà kính tiêu thụ bao nhiêu lít nước tưới nhỏ giọt?",
+    "gold_answer": "Lượng nước tưới nhỏ giọt tiêu thụ 28 lít mỗi ô tiêu chuẩn.",
+    "atomic_claims": [],
+    "gold_sources": [
+      {
+        "document": "doc02_agronomy_vi.pdf",
+        "page": 1,
+        "bbox": [
+          60,
+          60,
+          535,
+          220
+        ],
+        "passage": "28 lít"
+      }
+    ],
+    "gold_quantities": [
+      {
+        "value": 28.0,
+        "unit": "l"
+      }
+    ],
+    "directed_relation": null,
+    "derivation_spec": null,
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [],
+    "forbidden_numbers": [],
+    "good_prediction": {
+      "answer": "Mỗi ô tiêu chuẩn tiêu thụ 28 lít nước tưới nhỏ giọt. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "bad_prediction": {
+      "answer": "Mỗi ô tiêu chuẩn tiêu thụ 28 ml nước tưới nhỏ giọt. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "expected_bad_failure_prefix": "quantity_or_unit_mismatch"
+  },
+  {
+    "id": "M0-Q35",
+    "category": "cross_lingual_vi_to_en",
+    "documents": [
+      "doc02_agronomy_vi.pdf"
+    ],
+    "selected_doc": "doc02_agronomy_vi.pdf",
+    "source_language": "vi",
+    "language": "en",
+    "answer_language": "en",
+    "answerability": "answerable",
+    "is_unanswerable": false,
+    "question": "How many consecutive days did the greenhouse experiment in Lam Dong last?",
+    "gold_answer": "The greenhouse experiment lasted 35 consecutive days.",
+    "atomic_claims": [
+      "The greenhouse experiment lasted 35 consecutive days."
+    ],
+    "gold_sources": [
+      {
+        "document": "doc02_agronomy_vi.pdf",
+        "page": 1,
+        "bbox": [
+          60,
+          60,
+          535,
+          220
+        ],
+        "passage": "35 ngày liên tiếp"
+      }
+    ],
+    "gold_quantities": [
+      {
+        "value": 35.0,
+        "unit": "day"
+      }
+    ],
+    "directed_relation": null,
+    "derivation_spec": null,
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [],
+    "forbidden_numbers": [],
+    "good_prediction": {
+      "answer": "The greenhouse experiment lasted 35 consecutive days. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "bad_prediction": {
+      "answer": "Thí nghiệm kéo dài 35 ngày liên tiếp. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "expected_bad_failure_prefix": "wrong_language"
+  },
+  {
+    "id": "M0-Q36",
+    "category": "cross_lingual_en_to_vi",
+    "documents": [
+      "doc01_agronomy_en.pdf"
+    ],
+    "selected_doc": "doc01_agronomy_en.pdf",
+    "source_language": "en",
+    "language": "vi",
+    "answer_language": "vi",
+    "answerability": "answerable",
+    "is_unanswerable": false,
+    "question": "Hệ thống tưới nhỏ giọt dùng bao nhiêu lít nước theo Bảng 1?",
+    "gold_answer": "Hệ thống tưới nhỏ giọt dùng 42 lít nước.",
+    "atomic_claims": [
+      "Hệ thống tưới nhỏ giọt dùng 42 lít nước."
+    ],
+    "gold_sources": [
+      {
+        "document": "doc01_agronomy_en.pdf",
+        "page": 2,
+        "bbox": [
+          55,
+          115,
+          480,
+          135
+        ],
+        "passage": "Drip irrigation 42 liters"
+      }
+    ],
+    "gold_quantities": [
+      {
+        "value": 42.0,
+        "unit": "l"
+      }
+    ],
+    "directed_relation": null,
+    "derivation_spec": null,
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [],
+    "forbidden_numbers": [],
+    "good_prediction": {
+      "answer": "Hệ thống tưới nhỏ giọt dùng 42 lít nước. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "bad_prediction": {
+      "answer": "Hệ thống tưới nhỏ giọt kéo dài 21 ngày. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "expected_bad_failure_prefix": "quantity_or_unit_mismatch"
+  },
+  {
+    "id": "M0-Q37",
+    "category": "directed_subject_swap",
+    "documents": [
+      "doc09_bilingual_cs_vi_en.pdf"
+    ],
+    "selected_doc": "doc09_bilingual_cs_vi_en.pdf",
+    "source_language": "vi",
+    "language": "vi",
+    "answer_language": "vi",
+    "answerability": "answerable",
+    "is_unanswerable": false,
+    "question": "Giữa Hybrid và BM25, phương pháp nào có Recall@5 cao hơn?",
+    "gold_answer": "Hybrid cao hơn BM25 về Recall@5.",
+    "atomic_claims": [],
+    "gold_sources": [
+      {
+        "document": "doc09_bilingual_cs_vi_en.pdf",
+        "page": 1,
+        "bbox": [
+          60,
+          65,
+          535,
+          200
+        ],
+        "passage": "Recall@5 đạt 93.5%."
+      }
+    ],
+    "gold_quantities": [],
+    "directed_relation": {
+      "higher": "Hybrid",
+      "lower": "BM25"
+    },
+    "derivation_spec": null,
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [],
+    "forbidden_numbers": [],
+    "good_prediction": {
+      "answer": "BM25 thấp hơn Hybrid về chỉ số Recall@5 (78.0% so với 93.5%). [1]",
+      "answer_status": "ANSWERED"
+    },
+    "bad_prediction": {
+      "answer": "BM25 cao hơn Hybrid về chỉ số Recall@5. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "expected_bad_failure_prefix": "subject_swapped"
+  },
+  {
+    "id": "M0-Q38",
+    "category": "directed_subject_swap",
+    "documents": [
+      "doc05_chart_ab_en.pdf"
+    ],
+    "selected_doc": "doc05_chart_ab_en.pdf",
+    "source_language": "en",
+    "language": "en",
+    "answer_language": "en",
+    "answerability": "answerable",
+    "is_unanswerable": false,
+    "question": "Which method achieved higher validation accuracy in Figure 3, Method A or Method B?",
+    "gold_answer": "Method B outperforms Method A in Figure 3.",
+    "atomic_claims": [],
+    "gold_sources": [
+      {
+        "document": "doc05_chart_ab_en.pdf",
+        "page": 1,
+        "bbox": [
+          75,
+          325,
+          520,
+          350
+        ],
+        "passage": "Method A achieves 81% and Method B achieves 92%."
+      }
+    ],
+    "gold_quantities": [],
+    "directed_relation": {
+      "higher": "Method B",
+      "lower": "Method A"
+    },
+    "derivation_spec": null,
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [],
+    "forbidden_numbers": [],
+    "good_prediction": {
+      "answer": "Method B outperforms Method A on validation accuracy (92% vs 81%). [1]",
+      "answer_status": "ANSWERED"
+    },
+    "bad_prediction": {
+      "answer": "Method A outperforms Method B on validation accuracy (92% vs 81%). [1]",
+      "answer_status": "ANSWERED"
+    },
+    "expected_bad_failure_prefix": "subject_swapped"
+  },
+  {
+    "id": "M0-Q39",
+    "category": "unit_integrity",
+    "documents": [
+      "doc03_vision_2col_en.pdf"
+    ],
+    "selected_doc": "doc03_vision_2col_en.pdf",
+    "source_language": "en",
+    "language": "vi",
+    "answer_language": "vi",
+    "answerability": "answerable",
+    "is_unanswerable": false,
+    "question": "Thông lượng của mô hình ViT-Small trên Tesla T4 đạt bao nhiêu tokens/s?",
+    "gold_answer": "ViT-Small đạt thông lượng 140 tokens/s trên Tesla T4.",
+    "atomic_claims": [],
+    "gold_sources": [
+      {
+        "document": "doc03_vision_2col_en.pdf",
+        "page": 1,
+        "bbox": [
+          310,
+          90,
+          545,
+          250
+        ],
+        "passage": "140 tokens/s throughput"
+      }
+    ],
+    "gold_quantities": [
+      {
+        "value": 140.0,
+        "unit": "tokens/s"
+      }
+    ],
+    "directed_relation": null,
+    "derivation_spec": null,
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [],
+    "forbidden_numbers": [],
+    "good_prediction": {
+      "answer": "Mô hình ViT-Small đạt thông lượng 140 tokens/s trên Tesla T4. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "bad_prediction": {
+      "answer": "Mô hình ViT-Small đạt thông lượng 140 ms trên Tesla T4. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "expected_bad_failure_prefix": "quantity_or_unit_mismatch"
+  },
+  {
+    "id": "M0-Q40",
+    "category": "unit_integrity",
+    "documents": [
+      "doc09_bilingual_cs_vi_en.pdf"
+    ],
+    "selected_doc": "doc09_bilingual_cs_vi_en.pdf",
+    "source_language": "vi",
+    "language": "en",
+    "answer_language": "en",
+    "answerability": "answerable",
+    "is_unanswerable": false,
+    "question": "What is the p95 response latency of the reranker?",
+    "gold_answer": "The p95 response latency of the reranker is 45 ms.",
+    "atomic_claims": [],
+    "gold_sources": [
+      {
+        "document": "doc09_bilingual_cs_vi_en.pdf",
+        "page": 1,
+        "bbox": [
+          60,
+          65,
+          535,
+          240
+        ],
+        "passage": "45 ms"
+      }
+    ],
+    "gold_quantities": [
+      {
+        "value": 45.0,
+        "unit": "ms"
+      }
+    ],
+    "directed_relation": null,
+    "derivation_spec": null,
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [],
+    "forbidden_numbers": [],
+    "good_prediction": {
+      "answer": "The p95 response latency of the reranker is 45 ms. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "bad_prediction": {
+      "answer": "The p95 response latency of the reranker is 45 seconds. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "expected_bad_failure_prefix": "quantity_or_unit_mismatch"
+  },
+  {
+    "id": "M0-Q41",
+    "category": "adversarial_trap",
+    "documents": [
+      "doc01_agronomy_en.pdf"
+    ],
+    "selected_doc": "doc01_agronomy_en.pdf",
+    "source_language": "en",
+    "language": "en",
+    "answer_language": "en",
+    "answerability": "unanswerable",
+    "is_unanswerable": true,
+    "question": "What was the potassium fertilizer dosage in the orchard trial?",
+    "gold_answer": "",
+    "atomic_claims": [],
+    "gold_sources": [],
+    "gold_quantities": [],
+    "directed_relation": null,
+    "derivation_spec": null,
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [
+      "potassium"
+    ],
+    "forbidden_numbers": [
+      80
+    ],
+    "good_prediction": {
+      "answer": "The orchard trial document does not mention potassium fertilizer dosage.",
+      "answer_status": "NOT_FOUND_IN_DOCUMENT"
+    },
+    "bad_prediction": {
+      "answer": "Dựa trên tài liệu đã chọn, thông tin không được đề cập.",
+      "answer_status": "NOT_FOUND_IN_DOCUMENT"
+    },
+    "expected_bad_failure_prefix": "wrong_language"
+  },
+  {
+    "id": "M0-Q42",
+    "category": "adversarial_trap",
+    "documents": [
+      "doc03_vision_2col_en.pdf"
+    ],
+    "selected_doc": "doc03_vision_2col_en.pdf",
+    "source_language": "en",
+    "language": "en",
+    "answer_language": "en",
+    "answerability": "unanswerable",
+    "is_unanswerable": true,
+    "question": "What Top-1 accuracy did ViT-Small achieve on ImageNet-1K?",
+    "gold_answer": "",
+    "atomic_claims": [],
+    "gold_sources": [],
+    "gold_quantities": [],
+    "directed_relation": null,
+    "derivation_spec": null,
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [
+      "imagenet"
+    ],
+    "forbidden_numbers": [
+      79.8
+    ],
+    "good_prediction": {
+      "answer": "Insufficient evidence in the selected document regarding ImageNet-1K accuracy.",
+      "answer_status": "INSUFFICIENT_EVIDENCE"
+    },
+    "bad_prediction": {
+      "answer": "ViT-Small achieved 79.8% Top-1 accuracy on ImageNet-1K.",
+      "answer_status": "ANSWERED"
+    },
+    "expected_bad_failure_prefix": "abstention_or_answerability_failed"
+  },
+  {
+    "id": "M0-Q43",
+    "category": "adversarial_trap",
+    "documents": [
+      "doc03_vision_2col_en.pdf"
+    ],
+    "selected_doc": "doc03_vision_2col_en.pdf",
+    "source_language": "en",
+    "language": "vi",
+    "answer_language": "vi",
+    "answerability": "unanswerable",
+    "is_unanswerable": true,
+    "question": "Chi phí thuê cloud huấn luyện ViT-Large là bao nhiêu USD?",
+    "gold_answer": "",
+    "atomic_claims": [],
+    "gold_sources": [],
+    "gold_quantities": [],
+    "directed_relation": null,
+    "derivation_spec": null,
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [
+      "cloud"
+    ],
+    "forbidden_numbers": [
+      420
+    ],
+    "good_prediction": {
+      "answer": "Tài liệu đã chọn không đề cập chi phí thuê cloud huấn luyện ViT-Large.",
+      "answer_status": "NOT_FOUND_IN_DOCUMENT"
+    },
+    "bad_prediction": {
+      "answer": "Chi phí huấn luyện trên cloud là 420 USD.",
+      "answer_status": "NOT_FOUND_IN_DOCUMENT"
+    },
+    "expected_bad_failure_prefix": "status_display_mismatch"
+  },
+  {
+    "id": "M0-Q44",
+    "category": "adversarial_trap",
+    "documents": [
+      "doc04_multilevel_table_en.pdf"
+    ],
+    "selected_doc": "doc04_multilevel_table_en.pdf",
+    "source_language": "en",
+    "language": "vi",
+    "answer_language": "vi",
+    "answerability": "unanswerable",
+    "is_unanswerable": true,
+    "question": "Điểm F1-macro trên tập kiểm thử y sinh trong Bảng 2 là bao nhiêu?",
+    "gold_answer": "",
+    "atomic_claims": [],
+    "gold_sources": [],
+    "gold_quantities": [],
+    "directed_relation": null,
+    "derivation_spec": null,
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [
+      "y sinh"
+    ],
+    "forbidden_numbers": [
+      91
+    ],
+    "good_prediction": {
+      "answer": "Chưa đủ bằng chứng trong tài liệu đã chọn về tập kiểm thử y sinh.",
+      "answer_status": "INSUFFICIENT_EVIDENCE"
+    },
+    "bad_prediction": {
+      "answer": "Điểm F1-macro trên tập y sinh là 91%.",
+      "answer_status": "ANSWERED"
+    },
+    "expected_bad_failure_prefix": "abstention_or_answerability_failed"
+  },
+  {
+    "id": "M0-Q45",
+    "category": "adversarial_trap",
+    "documents": [
+      "doc05_chart_ab_en.pdf"
+    ],
+    "selected_doc": "doc05_chart_ab_en.pdf",
+    "source_language": "en",
+    "language": "en",
+    "answer_language": "en",
+    "answerability": "unanswerable",
+    "is_unanswerable": true,
+    "question": "What accuracy did Method C achieve in Figure 3?",
+    "gold_answer": "",
+    "atomic_claims": [],
+    "gold_sources": [],
+    "gold_quantities": [],
+    "directed_relation": null,
+    "derivation_spec": null,
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [
+      "method c"
+    ],
+    "forbidden_numbers": [
+      87
+    ],
+    "good_prediction": {
+      "answer": "Method C is not mentioned in Figure 3 of the provided document.",
+      "answer_status": "NOT_FOUND_IN_DOCUMENT"
+    },
+    "bad_prediction": {
+      "answer": "Method C achieved 87% in Figure 3.",
+      "answer_status": "INSUFFICIENT_EVIDENCE"
+    },
+    "expected_bad_failure_prefix": "status_display_mismatch"
+  },
+  {
+    "id": "M0-Q46",
+    "category": "adversarial_trap",
+    "documents": [
+      "doc06_math_domain_en.pdf"
+    ],
+    "selected_doc": "doc06_math_domain_en.pdf",
+    "source_language": "en",
+    "language": "vi",
+    "answer_language": "vi",
+    "answerability": "unanswerable",
+    "is_unanswerable": true,
+    "question": "Giá trị đạo hàm bậc hai của hàm mất mát ở Phương trình (9) là gì?",
+    "gold_answer": "",
+    "atomic_claims": [],
+    "gold_sources": [],
+    "gold_quantities": [],
+    "directed_relation": null,
+    "derivation_spec": null,
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [],
+    "forbidden_numbers": [
+      0.5
+    ],
+    "good_prediction": {
+      "answer": "Tài liệu không có Phương trình (9) hay thông tin về đạo hàm bậc hai.",
+      "answer_status": "NOT_FOUND_IN_DOCUMENT"
+    },
+    "bad_prediction": {
+      "answer": "",
+      "answer_status": ""
+    },
+    "expected_bad_failure_prefix": "abstention_or_answerability_failed"
+  },
+  {
+    "id": "M0-Q47",
+    "category": "adversarial_trap",
+    "documents": [
+      "doc07_clinical_negation_en.pdf"
+    ],
+    "selected_doc": "doc07_clinical_negation_en.pdf",
+    "source_language": "en",
+    "language": "en",
+    "answer_language": "en",
+    "answerability": "unanswerable",
+    "is_unanswerable": true,
+    "question": "What survival rate was reported for Cohort A after 5 years?",
+    "gold_answer": "",
+    "atomic_claims": [],
+    "gold_sources": [],
+    "gold_quantities": [],
+    "directed_relation": null,
+    "derivation_spec": null,
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [
+      "cohort a"
+    ],
+    "forbidden_numbers": [
+      64
+    ],
+    "good_prediction": {
+      "answer": "No information is provided about 5-year survival rates or Cohort A.",
+      "answer_status": "INSUFFICIENT_EVIDENCE"
+    },
+    "bad_prediction": {
+      "answer": "The document does not mention survival rates, which was 64%.",
+      "answer_status": "INSUFFICIENT_EVIDENCE"
+    },
+    "expected_bad_failure_prefix": "status_display_mismatch"
+  },
+  {
+    "id": "M0-Q48",
+    "category": "adversarial_trap",
+    "documents": [
+      "doc08_scan_vi.pdf"
+    ],
+    "selected_doc": "doc08_scan_vi.pdf",
+    "source_language": "vi",
+    "language": "vi",
+    "answer_language": "vi",
+    "answerability": "unanswerable",
+    "is_unanswerable": true,
+    "question": "Tốc độ quét bao nhiêu trang mỗi phút trên máy quét phần cứng?",
+    "gold_answer": "",
+    "atomic_claims": [],
+    "gold_sources": [],
+    "gold_quantities": [],
+    "directed_relation": null,
+    "derivation_spec": null,
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [],
+    "forbidden_numbers": [
+      120
+    ],
+    "good_prediction": {
+      "answer": "Tài liệu không đề cập tốc độ quét trang mỗi phút của phần cứng.",
+      "answer_status": "NOT_FOUND_IN_DOCUMENT"
+    },
+    "bad_prediction": {
+      "answer": "Insufficient evidence in the provided document.",
+      "answer_status": "NOT_FOUND_IN_DOCUMENT"
+    },
+    "expected_bad_failure_prefix": "wrong_language"
+  },
+  {
+    "id": "M0-Q49",
+    "category": "adversarial_trap",
+    "documents": [
+      "doc09_bilingual_cs_vi_en.pdf"
+    ],
+    "selected_doc": "doc09_bilingual_cs_vi_en.pdf",
+    "source_language": "vi",
+    "language": "en",
+    "answer_language": "en",
+    "answerability": "unanswerable",
+    "is_unanswerable": true,
+    "question": "What BLEU score was reported for neural machine translation?",
+    "gold_answer": "",
+    "atomic_claims": [],
+    "gold_sources": [],
+    "gold_quantities": [],
+    "directed_relation": null,
+    "derivation_spec": null,
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [
+      "bleu"
+    ],
+    "forbidden_numbers": [
+      34.2
+    ],
+    "good_prediction": {
+      "answer": "The selected document does not mention BLEU scores or machine translation.",
+      "answer_status": "NOT_FOUND_IN_DOCUMENT"
+    },
+    "bad_prediction": {
+      "answer": "The reported BLEU score is 34.2.",
+      "answer_status": "ANSWERED"
+    },
+    "expected_bad_failure_prefix": "abstention_or_answerability_failed"
+  },
+  {
+    "id": "M0-Q50",
+    "category": "adversarial_trap",
+    "documents": [
+      "doc10_multi_contradiction_en.pdf"
+    ],
+    "selected_doc": "doc10_multi_contradiction_en.pdf",
+    "source_language": "en",
+    "language": "vi",
+    "answer_language": "vi",
+    "answerability": "unanswerable",
+    "is_unanswerable": true,
+    "question": "Mức tiêu thụ điện năng tính bằng Watt trên Jetson Orin là bao nhiêu?",
+    "gold_answer": "",
+    "atomic_claims": [],
+    "gold_sources": [],
+    "gold_quantities": [],
+    "directed_relation": null,
+    "derivation_spec": null,
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [
+      "watt"
+    ],
+    "forbidden_numbers": [
+      25
+    ],
+    "good_prediction": {
+      "answer": "Chưa đủ bằng chứng trong tài liệu về mức tiêu thụ điện năng (Watt) trên Jetson Orin.",
+      "answer_status": "INSUFFICIENT_EVIDENCE"
+    },
+    "bad_prediction": {
+      "answer": "Mức tiêu thụ điện trên Jetson Orin là 25 W.",
+      "answer_status": "INSUFFICIENT_EVIDENCE"
+    },
+    "expected_bad_failure_prefix": "status_display_mismatch"
+  },
+  {
+    "id": "M0-Q51",
+    "category": "ambiguous_clarification",
+    "documents": [
+      "doc04_multilevel_table_en.pdf",
+      "doc10_multi_contradiction_en.pdf"
+    ],
+    "selected_doc": "doc04_multilevel_table_en.pdf",
+    "source_language": "en",
+    "language": "vi",
+    "answer_language": "vi",
+    "answerability": "ambiguous",
+    "is_unanswerable": false,
+    "question": "Độ chính xác của Phương pháp B là bao nhiêu?",
+    "gold_answer": "",
+    "atomic_claims": [],
+    "gold_sources": [],
+    "gold_quantities": [],
+    "directed_relation": null,
+    "derivation_spec": null,
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [],
+    "forbidden_numbers": [
+      99
+    ],
+    "good_prediction": {
+      "answer": "Vui lòng làm rõ bạn muốn hỏi độ chính xác của Phương pháp B trên tập Validation (Bảng 2), tập Test (Bảng 2) hay tập dữ liệu thực địa nhiễu?",
+      "answer_status": "CLARIFICATION_NEEDED"
+    },
+    "bad_prediction": {
+      "answer": "Độ chính xác của Phương pháp B luôn là 92% trên mọi tập dữ liệu.",
+      "answer_status": "ANSWERED"
+    },
+    "expected_bad_failure_prefix": "abstention_or_answerability_failed"
+  },
+  {
+    "id": "M0-Q52",
+    "category": "ambiguous_clarification",
+    "documents": [
+      "doc03_vision_2col_en.pdf",
+      "doc10_multi_contradiction_en.pdf"
+    ],
+    "selected_doc": "doc03_vision_2col_en.pdf",
+    "source_language": "en",
+    "language": "en",
+    "answer_language": "en",
+    "answerability": "ambiguous",
+    "is_unanswerable": false,
+    "question": "What is the inference latency of ViT-Small?",
+    "gold_answer": "",
+    "atomic_claims": [],
+    "gold_sources": [],
+    "gold_quantities": [],
+    "directed_relation": null,
+    "derivation_spec": null,
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [],
+    "forbidden_numbers": [],
+    "good_prediction": {
+      "answer": "Please clarify which hardware platform you are asking about (Tesla T4 vs Jetson Orin).",
+      "answer_status": "CLARIFICATION_NEEDED"
+    },
+    "bad_prediction": {
+      "answer": "The inference latency of ViT-Small is 18 ms.",
+      "answer_status": "ANSWERED"
+    },
+    "expected_bad_failure_prefix": "abstention_or_answerability_failed"
+  },
+  {
+    "id": "M0-Q53",
+    "category": "false_refusal_guard",
+    "documents": [
+      "doc01_agronomy_en.pdf"
+    ],
+    "selected_doc": "doc01_agronomy_en.pdf",
+    "source_language": "en",
+    "language": "vi",
+    "answer_language": "vi",
+    "answerability": "answerable",
+    "is_unanswerable": false,
+    "question": "Nhiệt độ đất trong thử nghiệm vườn cây ổn định ở bao nhiêu độ C?",
+    "gold_answer": "Nhiệt độ đất ổn định ở 24 độ C.",
+    "atomic_claims": [],
+    "gold_sources": [
+      {
+        "document": "doc01_agronomy_en.pdf",
+        "page": 1,
+        "bbox": [
+          55,
+          120,
+          460,
+          142
+        ],
+        "passage": "24 degrees Celsius"
+      }
+    ],
+    "gold_quantities": [
+      {
+        "value": 24.0,
+        "unit": ""
+      }
+    ],
+    "directed_relation": null,
+    "derivation_spec": null,
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [],
+    "forbidden_numbers": [],
+    "good_prediction": {
+      "answer": "Nhiệt độ đất ổn định ở mức 24 độ C. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "bad_prediction": {
+      "answer": "Chưa đủ bằng chứng trong tài liệu đã chọn.",
+      "answer_status": "INSUFFICIENT_EVIDENCE"
+    },
+    "expected_bad_failure_prefix": "abstention_or_answerability_failed"
+  },
+  {
+    "id": "M0-Q54",
+    "category": "false_refusal_guard",
+    "documents": [
+      "doc03_vision_2col_en.pdf"
+    ],
+    "selected_doc": "doc03_vision_2col_en.pdf",
+    "source_language": "en",
+    "language": "en",
+    "answer_language": "en",
+    "answerability": "answerable",
+    "is_unanswerable": false,
+    "question": "How many attention heads are in the baseline ViT-Small encoder?",
+    "gold_answer": "The baseline ViT-Small encoder has 6 attention heads.",
+    "atomic_claims": [],
+    "gold_sources": [
+      {
+        "document": "doc03_vision_2col_en.pdf",
+        "page": 1,
+        "bbox": [
+          50,
+          90,
+          280,
+          250
+        ],
+        "passage": "6 attention heads"
+      }
+    ],
+    "gold_quantities": [
+      {
+        "value": 6.0,
+        "unit": ""
+      }
+    ],
+    "directed_relation": null,
+    "derivation_spec": null,
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [],
+    "forbidden_numbers": [],
+    "good_prediction": {
+      "answer": "The baseline ViT-Small encoder has 6 attention heads. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "bad_prediction": {
+      "answer": "The provided document does not mention attention heads.",
+      "answer_status": "NOT_FOUND_IN_DOCUMENT"
+    },
+    "expected_bad_failure_prefix": "abstention_or_answerability_failed"
+  },
+  {
+    "id": "M0-Q55",
+    "category": "false_refusal_guard",
+    "documents": [
+      "doc10_multi_contradiction_en.pdf"
+    ],
+    "selected_doc": "doc10_multi_contradiction_en.pdf",
+    "source_language": "en",
+    "language": "vi",
+    "answer_language": "vi",
+    "answerability": "answerable",
+    "is_unanswerable": false,
+    "question": "Trên bộ dữ liệu thực địa nhiều nhiễu, Phương pháp B đạt độ chính xác bao nhiêu phần trăm?",
+    "gold_answer": "Phương pháp B đạt 85% độ chính xác trên tập dữ liệu thực địa nhiễu.",
+    "atomic_claims": [],
+    "gold_sources": [
+      {
+        "document": "doc10_multi_contradiction_en.pdf",
+        "page": 1,
+        "bbox": [
+          55,
+          120,
+          490,
+          142
+        ],
+        "passage": "Method B achieved 85% accuracy on the noisy field dataset."
+      }
+    ],
+    "gold_quantities": [
+      {
+        "value": 85.0,
+        "unit": "%"
+      }
+    ],
+    "directed_relation": null,
+    "derivation_spec": null,
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [],
+    "forbidden_numbers": [],
+    "good_prediction": {
+      "answer": "Trên tập dữ liệu thực địa nhiễu, Phương pháp B đạt 85%. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "bad_prediction": {
+      "answer": "Method B achieved 85% accuracy on the noisy field dataset. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "expected_bad_failure_prefix": "wrong_language"
+  },
+  {
+    "id": "M0-Q56",
+    "category": "unaccented_vietnamese_query",
+    "documents": [
+      "doc03_vision_2col_en.pdf"
+    ],
+    "selected_doc": "doc03_vision_2col_en.pdf",
+    "source_language": "en",
+    "language": "vi",
+    "answer_language": "vi",
+    "answerability": "answerable",
+    "is_unanswerable": false,
+    "question": "Ket qua batch size khi pretraining ViT-Small o trang nao va bang bao nhieu?",
+    "gold_answer": "Batch size khi tiền huấn luyện là 256 ảnh mỗi bước ở trang 1.",
+    "atomic_claims": [],
+    "gold_sources": [
+      {
+        "document": "doc03_vision_2col_en.pdf",
+        "page": 1,
+        "bbox": [
+          50,
+          90,
+          280,
+          260
+        ],
+        "passage": "batch size was fixed at 256 images"
+      }
+    ],
+    "gold_quantities": [
+      {
+        "value": 256.0,
+        "unit": ""
+      }
+    ],
+    "directed_relation": null,
+    "derivation_spec": null,
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [],
+    "forbidden_numbers": [],
+    "good_prediction": {
+      "answer": "Kích thước lô (batch size) khi pretraining cố định ở 256 ảnh mỗi bước tại trang 1. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "bad_prediction": {
+      "answer": "Kích thước lô khi pretraining là 512 ảnh mỗi bước. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "expected_bad_failure_prefix": "quantity_or_unit_mismatch"
+  },
+  {
+    "id": "M0-Q57",
+    "category": "multi_doc_comparison",
+    "documents": [
+      "doc04_multilevel_table_en.pdf",
+      "doc10_multi_contradiction_en.pdf"
+    ],
+    "selected_doc": "doc04_multilevel_table_en.pdf",
+    "source_language": "en",
+    "language": "en",
+    "answer_language": "en",
+    "answerability": "answerable",
+    "is_unanswerable": false,
+    "question": "By how many percentage points did Method B drop from the clean Test split (Table 2) to the noisy field dataset?",
+    "gold_answer": "Method B Test exceeds Field by 3 percentage points (88% vs 85%).",
+    "atomic_claims": [],
+    "gold_sources": [
+      {
+        "document": "doc04_multilevel_table_en.pdf",
+        "page": 1,
+        "bbox": [
+          55,
+          110,
+          500,
+          150
+        ],
+        "passage": "Method B 92% 88%"
+      },
+      {
+        "document": "doc10_multi_contradiction_en.pdf",
+        "page": 1,
+        "bbox": [
+          55,
+          120,
+          490,
+          142
+        ],
+        "passage": "85% accuracy"
+      }
+    ],
+    "gold_quantities": [],
+    "directed_relation": null,
+    "derivation_spec": {
+      "op": "diff_pp",
+      "allow_cross_split": true,
+      "operands": [
+        {
+          "entity": "Test",
+          "metric": "accuracy",
+          "split": "clean_test",
+          "value": 88.0,
+          "unit": "%"
+        },
+        {
+          "entity": "Field",
+          "metric": "accuracy",
+          "split": "noisy_field",
+          "value": 85.0,
+          "unit": "%"
+        }
+      ],
+      "expected_value": 3.0,
+      "expected_unit": "pp"
+    },
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [],
+    "forbidden_numbers": [],
+    "good_prediction": {
+      "answer": "Test exceeds Field by 3 percentage points for Method B (88% vs 85%). [1] [2]",
+      "answer_status": "ANSWERED"
+    },
+    "bad_prediction": {
+      "answer": "Test exceeds Field by 7 percentage points for Method B (92% vs 85%). [1] [2]",
+      "answer_status": "ANSWERED"
+    },
+    "expected_bad_failure_prefix": "derived_value_missing"
+  },
+  {
+    "id": "M0-Q58",
+    "category": "scan_ocr_vi",
+    "documents": [
+      "doc08_scan_vi.pdf"
+    ],
+    "selected_doc": "doc08_scan_vi.pdf",
+    "source_language": "en",
+    "language": "en",
+    "answer_language": "en",
+    "answerability": "answerable",
+    "is_unanswerable": false,
+    "question": "What accuracy was reported on scanned receipts on page 1?",
+    "gold_answer": "Accuracy was 83% on scanned receipts.",
+    "atomic_claims": [],
+    "gold_sources": [
+      {
+        "document": "doc08_scan_vi.pdf",
+        "page": 1,
+        "bbox": [
+          60,
+          80,
+          520,
+          300
+        ]
+      }
+    ],
+    "gold_quantities": [
+      {
+        "value": 83.0,
+        "unit": "%"
+      }
+    ],
+    "directed_relation": null,
+    "derivation_spec": null,
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [],
+    "forbidden_numbers": [],
+    "good_prediction": {
+      "answer": "Accuracy was 83% on scanned receipts. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "bad_prediction": {
+      "answer": "Accuracy was 96.4% on scanned receipts. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "expected_bad_failure_prefix": "quantity_or_unit_mismatch"
+  },
+  {
+    "id": "M0-Q59",
+    "category": "scan_ocr_vi",
+    "documents": [
+      "doc08_scan_vi.pdf"
+    ],
+    "selected_doc": "doc08_scan_vi.pdf",
+    "source_language": "vi",
+    "language": "vi",
+    "answer_language": "vi",
+    "answerability": "answerable",
+    "is_unanswerable": false,
+    "question": "Sai số ký tự tiếng Việt (CER) trên trang quét 1 là bao nhiêu phần trăm?",
+    "gold_answer": "Sai số ký tự tiếng Việt đạt 3.2%.",
+    "atomic_claims": [],
+    "gold_sources": [
+      {
+        "document": "doc08_scan_vi.pdf",
+        "page": 1,
+        "bbox": [
+          60,
+          80,
+          520,
+          300
+        ]
+      }
+    ],
+    "gold_quantities": [
+      {
+        "value": 3.2,
+        "unit": "%"
+      }
+    ],
+    "directed_relation": null,
+    "derivation_spec": null,
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [],
+    "forbidden_numbers": [],
+    "good_prediction": {
+      "answer": "Sai số ký tự tiếng Việt đạt 3.2%. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "bad_prediction": {
+      "answer": "Sai số ký tự tiếng Việt đạt 5.0%. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "expected_bad_failure_prefix": "quantity_or_unit_mismatch"
+  },
+  {
+    "id": "M0-Q60",
+    "category": "table_unit_integrity",
+    "documents": [
+      "doc04_multilevel_table_en.pdf"
+    ],
+    "selected_doc": "doc04_multilevel_table_en.pdf",
+    "source_language": "en",
+    "language": "vi",
+    "answer_language": "vi",
+    "answerability": "answerable",
+    "is_unanswerable": false,
+    "question": "Tốc độ băng chuyền trong Bảng 2 của cả hai phương pháp A và B là bao nhiêu?",
+    "gold_answer": "Tốc độ băng chuyền của cả hai phương pháp là 15 km/h.",
+    "atomic_claims": [],
+    "gold_sources": [
+      {
+        "document": "doc04_multilevel_table_en.pdf",
+        "page": 1,
+        "bbox": [
+          55,
+          110,
+          500,
+          150
+        ],
+        "passage": "15 km/h"
+      }
+    ],
+    "gold_quantities": [
+      {
+        "value": 15.0,
+        "unit": "km/h"
+      }
+    ],
+    "directed_relation": null,
+    "derivation_spec": null,
+    "gold_formula": null,
+    "domain_constraints": [],
+    "forbidden_entities": [],
+    "forbidden_numbers": [],
+    "good_prediction": {
+      "answer": "Tốc độ băng chuyền của cả hai phương pháp là 15 km/h. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "bad_prediction": {
+      "answer": "Tốc độ băng chuyền của cả hai phương pháp là 15 m/s. [1]",
+      "answer_status": "ANSWERED"
+    },
+    "expected_bad_failure_prefix": "quantity_or_unit_mismatch"
+  }
+]

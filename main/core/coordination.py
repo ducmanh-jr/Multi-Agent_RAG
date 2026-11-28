@@ -23,6 +23,7 @@ DecisionAction = Literal[
     "request_unread_chunks",
     "revise_draft",
     "revise_rejected_claims",
+    "request_verification",
     "discover_additional_literature",
     "escalate_or_finalize",
     "proceed",
@@ -37,6 +38,7 @@ VALID_DECISION_ACTIONS: frozenset[str] = frozenset(
         "request_unread_chunks",
         "revise_draft",
         "revise_rejected_claims",
+        "request_verification",
         "discover_additional_literature",
         "escalate_or_finalize",
         "proceed",
@@ -50,7 +52,7 @@ VALID_DECISION_STATUSES: frozenset[str] = frozenset(
 ALLOWED_HANDOFF_TARGETS: dict[str, set[str]] = {
     "supervisor": {"scout", "retrieval"},
     "scout": {"retrieval"},
-    "retrieval": {"scout", "reader"},
+    "retrieval": {"scout", "reader", "retrieval"},
     "reader": {"retrieval", "reader", "scout"},
     "summarizer": {"retrieval", "reader", "summarizer"},
     "fact_checker": {"retrieval", "reader", "summarizer", "scout"},
@@ -62,8 +64,65 @@ ACTION_TO_HANDOFF_REASON: dict[str, str] = {
     "request_unread_chunks": "unread_chunks",
     "revise_draft": "revise_draft",
     "revise_rejected_claims": "revise_rejected_claims",
+    "request_verification": "request_verification",
     "discover_additional_literature": "discover_additional_literature",
 }
+
+HANDOFF_BUDGET_CATEGORIES: dict[str, str] = {
+    "request_more_evidence": "evidence",
+    "request_unread_chunks": "read",
+    "revise_draft": "revise",
+    "revise_rejected_claims": "verify",
+    "request_verification": "verify",
+    "discover_additional_literature": "scout",
+}
+
+PRE_VERIFICATION_SENDERS: frozenset[str] = frozenset({"scout", "retrieval", "reader", "summarizer"})
+
+
+def handoff_budget_category(decision: "AgentDecision") -> str:
+    """Map an AgentDecision to its isolated handoff budget bucket."""
+    if decision.action in HANDOFF_BUDGET_CATEGORIES:
+        cat = HANDOFF_BUDGET_CATEGORIES[decision.action]
+        if decision.source_agent in {"fact_checker", "writer"} and cat == "revise":
+            return "verify"
+        return cat
+    if decision.target_agent == "scout":
+        return "scout"
+    if decision.target_agent == "reader":
+        return "read"
+    if decision.target_agent == "retrieval":
+        return "evidence"
+    if decision.source_agent in {"fact_checker", "writer"}:
+        return "verify"
+    return "revise"
+
+
+def next_handoff_budgets(
+    current: Mapping[str, Any] | None,
+    category: str,
+    *,
+    fallback_total: int = 0,
+) -> dict[str, int]:
+    """Return an updated copy of per-category handoff usage counters plus total."""
+    budgets: dict[str, int] = {
+        "evidence": 0,
+        "read": 0,
+        "revise": 0,
+        "verify": 0,
+        "scout": 0,
+        "total": max(0, int(fallback_total or 0)),
+    }
+    if isinstance(current, Mapping):
+        for key, val in current.items():
+            try:
+                budgets[str(key)] = max(0, int(val))
+            except (TypeError, ValueError):
+                continue
+    budgets[category] = budgets.get(category, 0) + 1
+    cat_sum = sum(v for k, v in budgets.items() if k != "total")
+    budgets["total"] = max(budgets.get("total", 0) + 1, cat_sum)
+    return budgets
 
 
 def _compute_handoff_signature(
@@ -168,6 +227,8 @@ class AgentDecision:
                 resolved_target = "reader"
             elif resolved_action in {"revise_draft", "revise_rejected_claims"}:
                 resolved_target = "summarizer"
+            elif resolved_action == "request_verification":
+                resolved_target = "fact_checker"
             elif resolved_action == "discover_additional_literature":
                 resolved_target = "scout"
             elif resolved_action == "request_more_evidence":
@@ -383,19 +444,18 @@ def _handoff_to_decision(handoff: Handoff, state: AgentState) -> AgentDecision:
 def propose_agent_decision(sender: Sender, state: AgentState) -> AgentDecision | None:
     """
     Constructs a structured `AgentDecision` proposal from the agent's output state.
-    Supports both explicit `state["agent_decision"]` proposals (from Reader, Retrieval,
-    Summarizer, or Fact Checker) and built-in critic/verifier handoff heuristics.
+    Delegates to role-owned autonomous decision engines in `core.agent_decisions` so
+    `coordination.py` acts purely as the Supervisor Gatekeeper without duplicated rules.
     """
     explicit = _coerce_explicit_decision(sender, state.get("agent_decision"), state)
     if explicit is not None:
         return None if explicit.action == "proceed" else explicit
 
-    if sender == "summarizer":
-        handoff = _summarizer_request(state)
-        return _handoff_to_decision(handoff, state) if handoff else None
-    if sender == "fact_checker":
-        handoff = _checker_request(state)
-        return _handoff_to_decision(handoff, state) if handoff else None
+    if sender in {"summarizer", "fact_checker"}:
+        from core.agent_decisions import decide_for_role
+
+        proposed = decide_for_role(sender, state, {})
+        return None if proposed.action in {"proceed", "escalate_or_finalize"} else proposed
     return None
 
 
@@ -429,6 +489,45 @@ def supervisor_evaluate_decision(
     allowed_targets = ALLOWED_HANDOFF_TARGETS.get(decision.source_agent, set())
     target = decision.target_agent or ""
     canonical_signature = decision.compute_canonical_signature()
+    budget_cat = handoff_budget_category(decision)
+    raw_budgets = state.get("handoff_budgets") if isinstance(state.get("handoff_budgets"), Mapping) else {}
+    raw_limits = state.get("handoff_budget_limits") if isinstance(state.get("handoff_budget_limits"), Mapping) else {}
+    total_used = max(current_round, int(raw_budgets.get("total", 0) or 0))
+    cat_used = int(raw_budgets.get(budget_cat, 0) or 0)
+    verify_used = int(raw_budgets.get("verify", 0) or 0)
+    explicit_total_limit = raw_limits.get("total")
+    effective_total_limit = (
+        min(limit, max(0, int(explicit_total_limit)))
+        if explicit_total_limit is not None
+        else limit
+    )
+    explicit_cat_limit = raw_limits.get(budget_cat)
+    cat_limit = (
+        max(0, int(explicit_cat_limit))
+        if explicit_cat_limit is not None
+        else (
+            max(1, effective_total_limit - 1)
+            if effective_total_limit >= 2
+            and decision.source_agent in PRE_VERIFICATION_SENDERS
+            and budget_cat in {"evidence", "read", "revise", "scout"}
+            else effective_total_limit
+        )
+    )
+    # Reserve at least 1 slot for post-verification repair (fact_checker / writer) whenever total limit >= 2
+    # so pre-verification loops (reader/summarizer) cannot starve contradiction repair.
+    verifier_reserved = (
+        effective_total_limit >= 2
+        and decision.source_agent in PRE_VERIFICATION_SENDERS
+        and verify_used == 0
+        and explicit_cat_limit is None
+        and total_used >= (effective_total_limit - 1)
+    )
+
+    disabled_senders = {
+        str(item).strip().lower()
+        for item in (state.get("disabled_agent_handoffs") or [])
+        if isinstance(item, str) and item.strip()
+    }
 
     rejection_reason: str | None = None
     if expected_sender is not None and decision.source_agent != expected_sender:
@@ -441,7 +540,9 @@ def supervisor_evaluate_decision(
         rejection_reason = f"invalid_decision_status:{decision.status}"
     elif decision.action == "escalate_or_finalize":
         rejection_reason = None
-    elif current_round >= limit:
+    elif decision.source_agent in disabled_senders:
+        rejection_reason = f"agent_handoff_disabled:{decision.source_agent}"
+    elif total_used >= effective_total_limit:
         rejection_reason = "reflection_budget_exhausted"
     elif decision.round_index != current_round:
         rejection_reason = f"round_index_mismatch:{decision.round_index}!={current_round}"
@@ -451,6 +552,10 @@ def supervisor_evaluate_decision(
         rejection_reason = "scout_handoff_disabled"
     elif target == "retrieval" and state.get("no_new_evidence"):
         rejection_reason = "no_new_evidence_in_corpus"
+    elif cat_used >= cat_limit:
+        rejection_reason = f"category_budget_exhausted:{budget_cat}"
+    elif verifier_reserved:
+        rejection_reason = "verifier_budget_reserved"
     else:
         schema = state.get("document_schema")
         dag_info = schema.get("research_dag") if isinstance(schema, Mapping) else None
@@ -478,6 +583,7 @@ def supervisor_evaluate_decision(
         "proposed_status": decision.status,
         "proposed_round_index": decision.round_index,
         "target_agent": decision.target_agent,
+        "budget_category": budget_cat,
         "reason": decision.reason or decision.handoff_reason,
         "round_index": current_round,
         "approved": approved,

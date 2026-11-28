@@ -468,15 +468,42 @@ def run_30_questions_deep_eval(mode: str = "cpu_min"):
     print("=" * 100 + "\n")
 
 
+def format_scorecard_rating(score: float, *, metric_kind: str = "ratio") -> tuple[str, str]:
+    """Compute honest threshold-based rating badge and summary text from observed metric values."""
+    if metric_kind == "latency_s":
+        if score <= 1.0:
+            return "⚡ Rất nhanh", "Độ trễ trung bình ≤ 1.0s/câu hỏi"
+        if score <= 5.0:
+            return "🟢 Đạt yêu cầu", "Độ trễ trung bình 1.0s–5.0s/câu hỏi"
+        if score <= 15.0:
+            return "🟡 Trung bình", "Độ trễ trung bình 5.0s–15.0s/câu hỏi (cần theo dõi tải mô hình)"
+        return "🔴 Chậm", "Độ trễ trung bình > 15.0s/câu hỏi (cần tối ưu hàng đợi/timeout)"
+
+    if score >= 0.90:
+        return "🟢 Cao", "Đạt ngưỡng ≥ 90% trên tập câu hỏi được chấm"
+    if score >= 0.75:
+        return "🟡 Khá", "Đạt 75%–89%, còn dư địa cải thiện một số ca biên"
+    if score >= 0.50:
+        return "🟠 Trung bình", "Đạt 50%–74%, cần rà soát lỗi trích dẫn/từ chối"
+    return "🔴 Cần cải thiện", "Dưới 50%, cần ưu tiên khắc phục trước khi công bố"
+
+
 def generate_markdown_report(records: List[Dict[str, Any]], out_path: Path):
     total = len(records)
     f1_scored = [r["strict_f1"] for r in records if r.get("strict_f1") is not None]
     avg_f1 = (sum(f1_scored) / len(f1_scored)) if f1_scored else 0.0
-    avg_ground = sum(r["strict_groundedness"] for r in records) / total
-    avg_abstain = sum(r["strict_abstain"] for r in records) / total
-    avg_tone = sum(r["tone_score"] for r in records) / total
-    avg_pres = sum(r["presentation_score"] for r in records) / total
-    avg_lat = sum(r["latency_s"] for r in records) / total
+    avg_ground = (sum(r["strict_groundedness"] for r in records) / total) if total else 0.0
+    avg_abstain = (sum(r["strict_abstain"] for r in records) / total) if total else 0.0
+    avg_tone = (sum(r["tone_score"] for r in records) / total) if total else 0.0
+    avg_pres = (sum(r["presentation_score"] for r in records) / total) if total else 0.0
+    avg_lat = (sum(r["latency_s"] for r in records) / total) if total else 0.0
+
+    f1_badge, f1_note = format_scorecard_rating(avg_f1)
+    ground_badge, ground_note = format_scorecard_rating(avg_ground)
+    abstain_badge, abstain_note = format_scorecard_rating(avg_abstain)
+    tone_badge, tone_note = format_scorecard_rating(avg_tone)
+    pres_badge, pres_note = format_scorecard_rating(avg_pres)
+    lat_badge, lat_note = format_scorecard_rating(avg_lat, metric_kind="latency_s")
 
     lines = [
         "# BÁO CÁO ĐÁNH GIÁ CHUYÊN SÂU 30 CÂU HỎI BIÊN",
@@ -486,14 +513,14 @@ def generate_markdown_report(records: List[Dict[str, Any]], out_path: Path):
         "",
         "## I. BẢNG TỔNG HỢP HIỆU NĂNG TOÀN DIỆN (EXECUTIVE SCORECARD)",
         "",
-        "| Tiêu chí đánh giá | Điểm trung bình | Mức độ xếp hạng | Đánh giá tổng quan |",
+        "| Tiêu chí đánh giá | Điểm trung bình | Mức độ xếp hạng | Nhận xét theo ngưỡng thực đo |",
         "| :--- | :---: | :---: | :--- |",
-        f"| **Tỷ lệ Trích dẫn Chuẩn (Strict Citation F1, n={len(f1_scored)})** | **{avg_f1*100:.1f}%** | 🟢 Xuất sắc | Các trích dẫn `[n]` liên kết chính xác đoạn văn bản gốc trong PDF |",
-        f"| **Tỷ lệ Căn cứ Thực tế (Strict Groundedness)** | **{avg_ground*100:.1f}%** | 🟢 Rất cao | Không bịa đặt số liệu hay tên tác giả |",
-        f"| **Khả năng Từ chối Bẫy (Abstention Accuracy)** | **{avg_abstain*100:.1f}%** | 🟢 Tuyệt đối | Nhận diện 100% câu hỏi bẫy và từ chối dứt khoát |",
-        f"| **Văn phong Khoa học (Academic Tone)** | **{avg_tone*100:.1f}%** | 🟢 Chuyên nghiệp | Giọng văn trung lập, khách quan, thuật ngữ y khoa chuẩn mực |",
-        f"| **Cách Trình bày & Định dạng (Presentation)** | **{avg_pres*100:.1f}%** | 🟢 Trực quan | Bố cục Markdown phân cấp, in đậm từ khóa, trích dẫn rõ ràng |",
-        f"| **Độ trễ trung bình mỗi câu hỏi** | **{avg_lat:.2f}s** | ⚡ Siêu tốc | Xử lý ngay lập tức trên CPU/iGPU |",
+        f"| **Tỷ lệ Trích dẫn Chuẩn (Strict Citation F1, n={len(f1_scored)})** | **{avg_f1*100:.1f}%** | {f1_badge} | {f1_note} |",
+        f"| **Tỷ lệ Căn cứ Thực tế (Strict Groundedness)** | **{avg_ground*100:.1f}%** | {ground_badge} | {ground_note} |",
+        f"| **Khả năng Từ chối Bẫy (Abstention Accuracy)** | **{avg_abstain*100:.1f}%** | {abstain_badge} | {abstain_note} |",
+        f"| **Văn phong Khoa học (Academic Tone)** | **{avg_tone*100:.1f}%** | {tone_badge} | {tone_note} |",
+        f"| **Cách Trình bày & Định dạng (Presentation)** | **{avg_pres*100:.1f}%** | {pres_badge} | {pres_note} |",
+        f"| **Độ trễ trung bình mỗi câu hỏi** | **{avg_lat:.2f}s** | {lat_badge} | {lat_note} |",
         "",
         "---",
         "",

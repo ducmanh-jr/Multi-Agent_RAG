@@ -38,6 +38,27 @@ _AGENT_MODE_FIELDS = {
     "writer": "AGENT_WRITER_MODE",
 }
 
+ROLE_MAX_TOKENS: Mapping[str, int] = MappingProxyType({
+    "router": 384,
+    "planner": 384,
+    "arbiter": 256,
+    "critic": 512,
+    "fact_checker": 512,
+    "factchecker": 512,
+    "reader": 768,
+    "writer": 512,
+    "generator": 768,
+    "summarizer": 768,
+})
+
+
+def get_role_max_tokens(role: str | None, default: int = 1024) -> int:
+    """Return bounded output-token cap for a specialist role to prevent latency spikes/timeouts."""
+    if not role:
+        return int(default)
+    clean = str(role).strip().lower().replace("-", "_").replace("agent", "")
+    return int(ROLE_MAX_TOKENS.get(clean, default))
+
 
 @contextmanager
 def agent_inference_mode(mode: str):
@@ -69,6 +90,10 @@ class Settings(_AgentModeSettings):
     # Execution Mode: "local_api" | "kaggle_gpu" | "local_gpu"
     EXECUTION_MODE: str = field(
         default_factory=lambda: os.getenv("EXECUTION_MODE", "local_api").lower()
+    )
+    # Multi-Agent Orchestration Topology: "hub" (Hub-and-Spoke default) | "pipeline" (legacy ablation baseline)
+    SUPERVISOR_MODE: str = field(
+        default_factory=lambda: (os.getenv("SUPERVISOR_MODE", "hub").strip().lower() or "hub")
     )
 
     # Remote Kaggle Worker Endpoint (Cloudflare Tunnel or ngrok URL)
@@ -120,10 +145,16 @@ class Settings(_AgentModeSettings):
 
     # Foundation LLM Models (configurable via env, never hardcoded in agents)
     DEFAULT_LLM_MODEL: str = field(
-        default_factory=lambda: os.getenv("DEFAULT_LLM_MODEL", "gemini-3.8-flash")
+        default_factory=lambda: os.getenv("DEFAULT_LLM_MODEL", "gemini-3.5-flash")
     )
     FALLBACK_LLM_MODEL: str = field(
-        default_factory=lambda: os.getenv("FALLBACK_LLM_MODEL", "gemini-3.1-flash-lite")
+        default_factory=lambda: os.getenv("FALLBACK_LLM_MODEL", "gemini-3.5-flash-lite")
+    )
+    DEEPSEEK_MODEL: str = field(
+        default_factory=lambda: os.getenv("DEEPSEEK_MODEL", "deepseek-chat").strip() or "deepseek-chat"
+    )
+    OPENAI_MODEL: str = field(
+        default_factory=lambda: os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip() or "gpt-4o-mini"
     )
     # Hybrid Provider Routing Profile: "auto" | "gemini_first" | "local_only"
     HYBRID_PROVIDER_PROFILE: str = field(

@@ -72,6 +72,23 @@ WORKER_PROFILE_SPECS = {
         "prefetch_qwen": False,
         "description": "Hybrid specialist worker (GPU 1 retrieval/NLI without GPU 0 Qwen unless fallback enabled)",
     },
+    "hybrid_sota_base": {
+        "canonical_profile": "qa_dual_gpu",
+        "initial_mode": "gpu_finetune",
+        "server_profile": "hybrid_sota_base",
+        "prefetch_qwen": True,
+        "env_defaults": {
+            "QWEN_USE_BASE_INSTRUCT": "true",
+            "BASE_QWEN_MODEL_ID": "Qwen/Qwen3-8B",
+            "PREFER_HF_SOTA_NLI": "true",
+            "FACTCHECK_MODEL_ID": "MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7",
+            "EMBEDDING_MODEL": "BAAI/bge-m3",
+            "RERANKER_MODEL": "BAAI/bge-reranker-v2-m3",
+            "PRELOAD_RETRIEVAL_MODELS": "true",
+            "SKIP_DRIVE_LORA_BUNDLE": "true",
+        },
+        "description": "Best pure-base Dual-T4 stack before fine-tuning (GPU 0: Qwen3-8B NF4, GPU 1: BGE-M3 + BGE-Reranker-v2-M3 + mDeBERTa-v3 NLI fp16)",
+    },
     "gpu_max": {
         "canonical_profile": "32b_tp2",
         "initial_mode": "gpu_max",
@@ -90,6 +107,77 @@ def normalize_worker_profile(raw_profile: str | None) -> dict:
         f"Unsupported KAGGLE_WORKER_PROFILE={raw_profile!r}. "
         f"Expected one of: {', '.join(sorted(WORKER_PROFILE_SPECS))}."
     )
+
+
+def apply_profile_env_defaults(raw_profile: str | None, env: dict | None = None) -> dict[str, str]:
+    """Apply non-destructive default env vars defined by a worker profile (e.g., `hybrid_sota_base`)."""
+    spec = normalize_worker_profile(raw_profile)
+    target_env = os.environ if env is None else env
+    applied: dict[str, str] = {}
+    for k, v in (spec.get("env_defaults") or {}).items():
+        if not str(target_env.get(k) or "").strip():
+            target_env[k] = str(v)
+            applied[k] = str(v)
+    return applied
+
+
+def register_tunnel_with_backend(
+    tunnel_url: str,
+    inference_token: str,
+    *,
+    callback_url: str | None = None,
+    register_secret: str | None = None,
+    worker_profile: str | None = None,
+    git_commit_sha: str | None = None,
+    max_retries: int = 3,
+    timeout: float = 10.0,
+) -> dict:
+    """
+    Auto-register a freshly opened Cloudflare Tunnel URL with the local RAG backend
+    (`POST /api/config/remote-url/register`) using `X-Tunnel-Secret` authentication.
+    Returns a status dict and never raises so runner startup stays resilient.
+    """
+    cb = (callback_url if callback_url is not None else os.environ.get("LOCAL_RAG_CALLBACK_URL", "")).strip().rstrip("/")
+    if not cb:
+        return {"registered": False, "reason": "callback_url_not_configured"}
+    secret = (
+        register_secret
+        if register_secret is not None
+        else (os.environ.get("TUNNEL_REGISTER_SECRET") or inference_token or "")
+    ).strip()
+    endpoint = cb if cb.endswith("/api/config/remote-url/register") else f"{cb}/api/config/remote-url/register"
+    payload = json.dumps({
+        "remote_url": tunnel_url.strip().rstrip("/"),
+        "remote_token": inference_token,
+        "worker_profile": worker_profile or os.environ.get("KAGGLE_WORKER_PROFILE", "qa_dual_gpu"),
+        "git_commit_sha": git_commit_sha or os.environ.get("ACTIVE_GIT_COMMIT_SHA") or os.environ.get("GIT_COMMIT_SHA") or "unpinned",
+    }).encode("utf-8")
+    headers = {
+        "Content-Type": "application/json",
+        "X-Tunnel-Secret": secret,
+    }
+
+    last_error = ""
+    attempts = max(1, int(max_retries))
+    for attempt in range(1, attempts + 1):
+        try:
+            req = urllib.request.Request(endpoint, data=payload, headers=headers, method="POST")
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                body = json.loads(resp.read().decode("utf-8", errors="replace") or "{}")
+                if 200 <= getattr(resp, "status", 200) < 300:
+                    return {
+                        "registered": True,
+                        "status_code": getattr(resp, "status", 200),
+                        "endpoint": endpoint,
+                        "attempts": attempt,
+                        "response": body,
+                    }
+                last_error = f"HTTP {getattr(resp, 'status', 'unknown')}"
+        except Exception as exc:
+            last_error = f"{type(exc).__name__}: {exc}"
+        if attempt < attempts:
+            time.sleep(min(2.0, 0.5 * attempt))
+    return {"registered": False, "endpoint": endpoint, "attempts": attempts, "reason": last_error}
 
 
 def configure_runtime_tokens(env: dict | None = None, secret_loader=None) -> dict:
@@ -383,6 +471,12 @@ def run():
         print(f"    ❌ LỖI NGHIÊM TRỌNG: Không thể đọc hoặc phân tích weights_manifest.json: {e}")
         sys.exit(1)
 
+    # Apply profile-level env defaults early (e.g., `hybrid_sota_base` -> Qwen3-8B + BGE-M3 + mDeBERTa-v3)
+    worker_profile_raw_early = os.environ.get("KAGGLE_WORKER_PROFILE", "qa_dual_gpu").strip().lower()
+    applied_defaults = apply_profile_env_defaults(worker_profile_raw_early)
+    if applied_defaults:
+        print(f"    ⚡ Profile '{worker_profile_raw_early}' đã tự cấu hình mặc định: {', '.join(f'{k}={v}' for k, v in applied_defaults.items())}")
+
     # Check if user wants pure SOTA HuggingFace base models (skipping old Drive LoRA zip for fast testing)
     skip_drive_bundle = (
         os.environ.get("SKIP_DRIVE_LORA_BUNDLE", "false").strip().lower() in ("true", "1", "yes")
@@ -637,11 +731,22 @@ def run():
     tunnel = try_cloudflare(port=8000)
     tunnel_url = tunnel.tunnel.rstrip("/")
 
+    active_git_sha = (os.environ.get("ACTIVE_GIT_COMMIT_SHA") or os.environ.get("GIT_COMMIT_SHA") or "unpinned").strip()
+    reg_result = register_tunnel_with_backend(
+        tunnel_url,
+        inference_token,
+        worker_profile=worker_profile_raw,
+        git_commit_sha=active_git_sha,
+    )
+    if reg_result.get("registered"):
+        print(f"    ✔ Đã tự động đăng ký Tunnel URL về Backend ({reg_result.get('endpoint')})!")
+    elif reg_result.get("reason") != "callback_url_not_configured":
+        print(f"    ⚠️ Tự động đăng ký Tunnel thất bại ({reg_result.get('reason')}); vẫn giữ Tunnel hoạt động bình thường.")
+
     # -------------------------------------------------------------------------
     # 6. Beautiful Link Output Banner
     # -------------------------------------------------------------------------
     display_token = inference_token if token_auto_generated else "<da nap tu Kaggle Secrets / env>"
-    active_git_sha = (os.environ.get("ACTIVE_GIT_COMMIT_SHA") or os.environ.get("GIT_COMMIT_SHA") or "unpinned").strip()
     print("\n" + "╔" + "═" * 76 + "╗")
     print("║  🚀 THÔNG TIN KẾT NỐI CHO MULTI-AGENT RAG (HÃY SAO CHÉP CÁC DÒNG DƯỚI)   ║")
     print("╠" + "═" * 76 + "╣")

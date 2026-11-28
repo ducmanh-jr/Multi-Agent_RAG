@@ -887,6 +887,174 @@ def _format_markdown_rows(header_cells: list[str], rows: list[list[str]]) -> str
     return "\n".join(lines)
 
 
+def _rect_overlap_ratio(
+    a: tuple[float, float, float, float] | list[float],
+    b: tuple[float, float, float, float] | list[float],
+) -> float:
+    """Returns max(IoU, containment = inter / min(area_a, area_b)) so loose ONNX boxes wrapping a crisp grid deduplicate cleanly."""
+    ix0 = max(float(a[0]), float(b[0]))
+    iy0 = max(float(a[1]), float(b[1]))
+    ix1 = min(float(a[2]), float(b[2]))
+    iy1 = min(float(a[3]), float(b[3]))
+    if ix1 <= ix0 or iy1 <= iy0:
+        return 0.0
+    inter = (ix1 - ix0) * (iy1 - iy0)
+    area_a = max(0.0, float(a[2]) - float(a[0])) * max(0.0, float(a[3]) - float(a[1]))
+    area_b = max(0.0, float(b[2]) - float(b[0])) * max(0.0, float(b[3]) - float(b[1]))
+    min_area = min(area_a, area_b)
+    return inter / min_area if min_area > 0.0 else 0.0
+
+
+def _table_cell_signature(rows: list[list[str]]) -> set[str]:
+    return {c.strip().lower() for r in rows for c in r if c and c.strip()}
+
+
+def _materialize_table_entries(
+    tables: list[Any],
+    derot: fitz.Matrix,
+) -> list[tuple[list[float], list[list[str]]]]:
+    """
+    Immediately extracts `(bbox, cleaned_rows)` from PyMuPDF `Table` objects BEFORE any
+    subsequent `page.find_tables()` call can invoke `pymupdf.table.CHARS.clear()`.
+    """
+    entries: list[tuple[list[float], list[list[str]]]] = []
+    for tab in tables:
+        try:
+            raw_rows = tab.extract() or []
+        except Exception:
+            continue
+        cleaned = [[_clean_cell(c) for c in row] for row in raw_rows if isinstance(row, list)]
+        cleaned = [r for r in cleaned if any(c for c in r)]
+        if cleaned:
+            tb = fitz.Rect(getattr(tab, "bbox", (0.0, 0.0, 0.0, 0.0))) * derot
+            entries.append(([round(float(v), 2) for v in tb], cleaned))
+    return entries
+
+
+def _extract_page_table_entries_robust(
+    page: fitz.Page,
+    derot: fitz.Matrix | None = None,
+) -> list[tuple[list[float], list[list[str]]]]:
+    """
+    Extracts `(bbox, cleaned_rows)` tables consistently across PyMuPDF 1.24-1.27 and
+    PyMuPDF 1.28+/2.0 (where ONNX `use_layout=True` can drop/alter compact or headerless
+    vector-bordered tables).
+
+    CRITICAL: PyMuPDF's `find_tables()` clears module-global `CHARS` on every call, so we
+    hold `_INGEST_LOCK` and materialize `tab.extract()` immediately after EACH pass before
+    running any second pass.
+    """
+    if not hasattr(page, "find_tables"):
+        return []
+
+    mat = derot if derot is not None else getattr(page, "derotation_matrix", fitz.Identity)
+    has_drawings = False
+    try:
+        has_drawings = bool(page.get_drawings())
+    except Exception:
+        has_drawings = False
+
+    with _INGEST_LOCK:
+        classic_entries: list[tuple[list[float], list[list[str]]]] = []
+        if has_drawings:
+            # Path A: PyMuPDF 1.28.2+ / 2.0 explicit `use_layout=False` kwarg
+            kwarg_supported = False
+            try:
+                classic = page.find_tables(
+                    use_layout=False,
+                    vertical_strategy="lines",
+                    horizontal_strategy="lines",
+                )
+                classic_entries = _materialize_table_entries(list(getattr(classic, "tables", None) or []), mat)
+                kwarg_supported = True
+            except TypeError:
+                kwarg_supported = False
+            except Exception:
+                classic_entries = []
+                kwarg_supported = True
+
+            # Path B: PyMuPDF 2.0 module-level `use_layout(False)` toggle (if kwarg absent)
+            if not kwarg_supported:
+                try:
+                    import pymupdf as _pymupdf_mod
+                except Exception:
+                    _pymupdf_mod = fitz
+                use_layout_fn = getattr(_pymupdf_mod, "use_layout", None) or getattr(fitz, "use_layout", None)
+                if callable(use_layout_fn):
+                    prev_info = getattr(page, "layout_information", None)
+                    try:
+                        use_layout_fn(False)
+                        if hasattr(page, "layout_information"):
+                            page.layout_information = None
+                        classic = page.find_tables(
+                            vertical_strategy="lines",
+                            horizontal_strategy="lines",
+                        )
+                        classic_entries = _materialize_table_entries(list(getattr(classic, "tables", None) or []), mat)
+                    except Exception:
+                        classic_entries = []
+                    finally:
+                        try:
+                            use_layout_fn(True)
+                        except Exception:
+                            pass
+                        if hasattr(page, "layout_information"):
+                            page.layout_information = prev_info
+                else:
+                    # Path C: PyMuPDF 1.24-1.27 (suspend external `pymupdf_layout._get_layout` if present)
+                    get_layout_meth = getattr(page, "get_layout", None)
+                    globs = getattr(getattr(get_layout_meth, "__func__", None), "__globals__", None)
+                    prev_layout_fn = globs.get("_get_layout") if isinstance(globs, dict) else None
+                    prev_info = getattr(page, "layout_information", None)
+                    try:
+                        if isinstance(globs, dict) and "_get_layout" in globs:
+                            globs["_get_layout"] = None
+                        if hasattr(page, "layout_information"):
+                            page.layout_information = None
+                        classic = page.find_tables(
+                            vertical_strategy="lines",
+                            horizontal_strategy="lines",
+                        )
+                        classic_entries = _materialize_table_entries(list(getattr(classic, "tables", None) or []), mat)
+                    except Exception:
+                        classic_entries = []
+                    finally:
+                        if hasattr(page, "layout_information"):
+                            page.layout_information = prev_info
+                        if isinstance(globs, dict) and "_get_layout" in globs:
+                            globs["_get_layout"] = prev_layout_fn
+
+        # Default / layout-assisted pass (captures borderless tables & non-drawing pages)
+        try:
+            tabs = page.find_tables()
+            layout_entries = _materialize_table_entries(list(getattr(tabs, "tables", None) or []), mat)
+        except Exception:
+            layout_entries = []
+
+    if not classic_entries:
+        return layout_entries
+
+    # Prefer exact vector-grid tables first, then append genuinely disjoint borderless/layout tables
+    merged = list(classic_entries)
+    existing_boxes = [entry[0] for entry in merged]
+    existing_sigs = [_table_cell_signature(entry[1]) for entry in merged]
+    for lb, lrows in layout_entries:
+        if any(_rect_overlap_ratio(lb, eb) >= 0.35 for eb in existing_boxes):
+            continue
+        lsig = _table_cell_signature(lrows)
+        if lsig and any(
+            esig and (len(lsig & esig) / max(min(len(lsig), len(esig)), 1)) >= 0.5
+            for esig in existing_sigs
+        ):
+            continue
+        merged.append((lb, lrows))
+        existing_boxes.append(lb)
+        existing_sigs.append(lsig)
+
+    merged.sort(key=lambda entry: (round(float(entry[0][1]), 1), float(entry[0][0])))
+    return merged
+
+
 def extract_page_tables_sharded(
     page: fitz.Page,
     *,
@@ -906,23 +1074,7 @@ def extract_page_tables_sharded(
         return []
     derot = page.derotation_matrix
     rotation = int(page.rotation or 0)
-    try:
-        tabs = page.find_tables()
-        tables = list(getattr(tabs, "tables", None) or [])
-    except Exception:
-        tables = []
-
-    raw_table_entries: list[tuple[list[float], list[list[str]]]] = []
-    for tab in tables:
-        try:
-            raw_rows = tab.extract() or []
-        except Exception:
-            continue
-        cleaned = [[_clean_cell(c) for c in row] for row in raw_rows if isinstance(row, list)]
-        cleaned = [r for r in cleaned if any(c for c in r)]
-        if cleaned:
-            tb = fitz.Rect(getattr(tab, "bbox", (0.0, 0.0, 0.0, 0.0))) * derot
-            raw_table_entries.append(([round(float(v), 2) for v in tb], cleaned))
+    raw_table_entries = _extract_page_table_entries_robust(page, derot)
 
     if not raw_table_entries:
         raw_table_entries = _extract_pipe_tables_from_page_blocks(page, derot)

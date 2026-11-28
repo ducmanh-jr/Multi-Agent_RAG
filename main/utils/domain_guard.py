@@ -82,6 +82,288 @@ VN_ASCII_WORDS = {
 }
 
 
+# Generic academic / engineering words that users often mix into Vietnamese queries
+# and English papers may freely paraphrase (must NEVER trigger loanword OOD refusal).
+_CROSS_LINGUAL_GENERIC_TECH_WORDS = {
+    "paper", "study", "research", "method", "methods", "approach", "model", "models",
+    "system", "systems", "result", "results", "dataset", "datasets", "benchmark",
+    "metric", "metrics", "score", "scores", "value", "values", "number", "numbers",
+    "percent", "percentage", "baseline", "experiment", "experiments", "trial", "trials",
+    "author", "authors", "section", "table", "figure", "equation", "formula", "chart",
+    "graph", "plot", "diagram", "page", "appendix", "chapter", "overview", "summary",
+    "abstract", "introduction", "conclusion", "limitation", "limitations", "advantage",
+    "comparison", "compare", "contrast", "difference", "analysis", "evaluation",
+    "performance", "input", "output", "feature", "features", "process", "context",
+    "content", "example", "sample", "samples", "problem", "solution", "project",
+    "design", "target", "factor", "detail", "details", "status", "version", "report",
+    "review", "query", "prompt", "answer", "question", "document", "source", "sources",
+    "level", "stage", "phase", "total", "average", "median", "minimum", "maximum",
+    "error", "range", "limit", "scale", "ratio", "order", "count", "point", "points",
+    "train", "training", "testing", "validation", "valid", "split", "check", "audit",
+    "rank", "ranking", "search", "agent", "agents", "server", "client", "worker",
+    "cache", "batch", "token", "tokens", "chunk", "chunks", "claim", "claims",
+    "quote", "slide", "video", "email", "admin", "member", "config", "option",
+    "setting", "param", "params", "parameter", "parameters", "weight", "weights",
+    "layer", "layers", "block", "blocks", "index", "label", "labels", "class",
+    "title", "topic", "issue", "event", "cycle", "matrix", "vector", "vectors",
+    "script", "tools", "setup", "online", "offline", "local", "remote", "hybrid",
+}
+
+# Specific measurable physical, chemical, and domain concepts whose bilingual
+# equivalents must appear in the selected document(s) when explicitly queried
+# across languages (both VI->EN and EN->VI).
+# Format: concept_id -> (query_triggers, doc_evidence_terms, optional_doc_regex)
+_CROSS_LINGUAL_REQUIRED_CONCEPTS: dict[str, tuple[tuple[str, ...], tuple[str, ...], str | None]] = {
+    "concentration": (
+        ("nồng độ", "concentration"),
+        ("concentration", "concentrations", "mg/l", "g/l", "ppm", "ppb", "mmol", "mol/l", "molar", "salinity", "density", "nồng độ", "hàm lượng"),
+        r"\b\d+(?:[.,]\d+)?\s*(?:mg/l|g/l|ppm|ppb|mmol|mol/l)\b",
+    ),
+    "nitrate": (
+        ("nitrat", "nitrate", "nitrates"),
+        ("nitrat", "nitrate", "nitrates", "no3", "nitrogen", "nitơ"),
+        None,
+    ),
+    "phosphate": (
+        ("photphat", "phốt pho", "phosphate", "phosphates", "phosphorus"),
+        ("photphat", "phốt pho", "phosphate", "phosphates", "phosphorus", "po4"),
+        None,
+    ),
+    "ammonia": (
+        ("amoni", "amoniac", "ammonia", "ammonium"),
+        ("amoni", "amoniac", "ammonia", "ammonium", "nh3", "nh4"),
+        None,
+    ),
+    "salinity": (
+        ("độ mặn", "salinity"),
+        ("độ mặn", "mặn", "salinity", "saline", "g/l", "ppt", "psu"),
+        None,
+    ),
+    "dissolved_oxygen": (
+        ("oxy hòa tan", "dissolved oxygen"),
+        ("oxy hòa tan", "oxy", "dissolved oxygen", "oxygen", "do "),
+        None,
+    ),
+    "moisture": (
+        ("độ ẩm", "moisture", "humidity"),
+        ("độ ẩm", "moisture", "humidity", "humid"),
+        None,
+    ),
+    "temperature": (
+        ("nhiệt độ", "temperature"),
+        ("nhiệt độ", "temperature", "temp", "thermal", "celsius", "kelvin", "fahrenheit", "roomtemp"),
+        r"\b\d+(?:[.,]\d+)?\s*°?\s*[cf]\b",
+    ),
+    "pressure": (
+        ("áp suất", "pressure"),
+        ("áp suất", "pressure", "mpa", "kpa", "pascal", "bar", "atm"),
+        None,
+    ),
+    "rainfall": (
+        ("lượng mưa", "rainfall", "precipitation"),
+        ("lượng mưa", "mưa", "rainfall", "precipitation", "rain"),
+        None,
+    ),
+    "voltage": (
+        ("điện áp", "hiệu điện thế", "voltage"),
+        ("điện áp", "hiệu điện thế", "voltage", "volt", "volts", "cutoff"),
+        r"\b\d+(?:[.,]\d+)?\s*m?v\b",
+    ),
+    "impedance": (
+        ("trở kháng", "impedance"),
+        ("trở kháng", "impedance", "ohm", "resistance"),
+        None,
+    ),
+    "wavelength": (
+        ("bước sóng", "wavelength"),
+        ("bước sóng", "wavelength", "nm", "micrometer", "c-band"),
+        None,
+    ),
+    "propagation_loss": (
+        ("suy hao", "propagation loss", "attenuation"),
+        ("suy hao", "propagation loss", "attenuation", "db/cm", "loss"),
+        None,
+    ),
+    "mortality": (
+        ("tỷ lệ tử vong", "tử vong", "mortality", "fatality"),
+        ("tử vong", "mortality", "fatality", "death", "survival"),
+        None,
+    ),
+    "cost_budget": (
+        ("chi phí", "ngân sách", "cost", "budget"),
+        ("chi phí", "ngân sách", "giá", "cost", "costs", "budget", "price", "expense", "overhead", "fee", "usd", "vnd", "dollar"),
+        None,
+    ),
+    "invoice": (
+        ("hóa đơn", "invoice", "invoices"),
+        ("hóa đơn", "invoice", "invoices", "receipt", "receipts", "bill"),
+        None,
+    ),
+    "volume_liters": (
+        ("lít", "liters", "liter", "litres", "litre"),
+        ("lít", "liter", "liters", "litre", "litres", "ml", "gallon", "gallons", "volume"),
+        r"\b\d+(?:[.,]\d+)?\s*(?:l|ml|liters?|litres?|lít)\b",
+    ),
+}
+
+
+def _is_non_vietnamese_loanword(token: str) -> bool:
+    """
+    Detect polysyllabic or orthographically non-Vietnamese ASCII scientific/domain loanwords
+    (e.g., `nitrat`, `glucose`, `ethanol`, `pesticide`, `photonics`, `voltage`) embedded inside
+    a Vietnamese query. Native Vietnamese syllables are strictly monosyllabic and never use
+    letters `f`, `j`, `w`, `z` or two separate vowel nuclei inside a single space-delimited token.
+    """
+    t = (token or "").strip()
+    if len(t) < 5 or not t.isalpha() or has_vietnamese_diacritics(t):
+        return False
+    tl = t.lower()
+    if (
+        tl in VN_ASCII_WORDS
+        or tl in GENERIC_COMMON_WORDS
+        or tl in DOCUMENT_LOCATOR_WORDS
+        or tl in _CROSS_LINGUAL_GENERIC_TECH_WORDS
+    ):
+        return False
+    if any(ch in tl for ch in "fjwz"):
+        return True
+    # Strip Vietnamese labialized/palatalized onsets `qu` and `gi` before counting vowel nuclei
+    stem = re.sub(r"^(?:qu|gi)(?=[aeiouy])", "k", tl)
+    vowel_nuclei = re.findall(r"[aeiouy]+", stem)
+    return len(vowel_nuclei) >= 2
+
+
+def _active_doc_cache_keys(source_units: list[dict[str, Any]]) -> tuple[set[str], set[str]]:
+    """Collect active doc_ids and normalized paths/stems so cache scans never leak across unrelated PDFs."""
+    doc_ids: set[str] = set()
+    stems: set[str] = set()
+    for u in source_units:
+        did = str(getattr(u, "doc_id", None) or (u.get("doc_id", "") if isinstance(u, dict) else "")).strip().lower()
+        if did:
+            doc_ids.add(did)
+            stems.add(re.sub(r"\.pdf$", "", os.path.basename(did), flags=re.I))
+        sp = str(getattr(u, "source_path", None) or (u.get("source_path", "") if isinstance(u, dict) else "")).strip().lower()
+        if sp:
+            stems.add(os.path.splitext(os.path.basename(sp))[0])
+    return doc_ids, {s for s in stems if s}
+
+
+def _iter_active_cached_doc_texts(source_units: list[dict[str, Any]]) -> list[str]:
+    """Return full lowercase texts of cached PDFs belonging ONLY to the active `source_units`."""
+    try:
+        from core.tools import _PDF_CHUNK_CACHE
+    except Exception:
+        return []
+    active_doc_ids, active_stems = _active_doc_cache_keys(source_units)
+    if not active_doc_ids and not active_stems:
+        return []
+    texts: list[str] = []
+    for key, chunks in _PDF_CHUNK_CACHE.items():
+        if not chunks:
+            continue
+        key_str = str(key).lower()
+        key_stem = os.path.splitext(os.path.basename(key_str))[0]
+        matched = key_stem in active_stems
+        if not matched:
+            for c in chunks[:3]:
+                if isinstance(c, dict):
+                    cdid = str(c.get("doc_id") or "").strip().lower()
+                    if cdid and (cdid in active_doc_ids or re.sub(r"\.pdf$", "", os.path.basename(cdid), flags=re.I) in active_stems):
+                        matched = True
+                        break
+        if matched:
+            texts.append(" ".join(str(c.get("text", "")) for c in chunks if isinstance(c, dict)).lower())
+    return texts
+
+
+def _matches_loanword_in_doc(
+    term: str,
+    source_units: list[dict[str, Any]],
+    doc_l: str,
+    doc_unaccent: str,
+    query_has_accents: bool,
+) -> bool:
+    """Match a loanword via exact phrase, English morphological suffix (-e/-s/-es/-ed/-ing/-ic/-al), or bilingual map."""
+    if _has_phrase_in_sources_or_docs(term, source_units, doc_l, doc_unaccent, query_has_accents):
+        return True
+    tl = term.lower().strip()
+    morph_pat = re.compile(r"(?<![a-zA-Z0-9])" + re.escape(tl) + r"(?:e|es|s|ed|ing|ic|al)?(?![a-zA-Z0-9])")
+    cached_texts = _iter_active_cached_doc_texts(source_units)
+    all_texts = [doc_l, *cached_texts]
+    if any(morph_pat.search(txt) for txt in all_texts):
+        return True
+    try:
+        from utils.bilingual import BILINGUAL_PHRASE_MAP, ENGLISH_TO_VIETNAMESE
+        candidates: set[str] = set()
+        if tl in BILINGUAL_PHRASE_MAP:
+            candidates.update(BILINGUAL_PHRASE_MAP[tl])
+        for en_word, vi_list in ENGLISH_TO_VIETNAMESE.items():
+            if any(tl == v.lower() or tl in v.lower().split() for v in vi_list):
+                candidates.add(en_word)
+        for cand in candidates:
+            if _has_phrase_in_sources_or_docs(cand, source_units, doc_l, doc_unaccent, False):
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def _check_cross_lingual_target_absence(
+    clean_q: str,
+    foreign_terms: list[str],
+    source_units: list[dict[str, Any]],
+    doc_l: str,
+    doc_unaccent: str,
+    query_has_accents: bool,
+    query_is_vietnamese: bool,
+    doc_is_vietnamese: bool,
+) -> list[str]:
+    """
+    For cross-lingual queries (VI->EN or EN->VI), verify that explicitly queried
+    specific measurement concepts / chemical substances / non-Vietnamese scientific loanwords
+    have at least one bilingual match in the active document(s).
+    """
+    q_lower = clean_q.lower()
+    q_unaccent = strip_accents(q_lower)
+    cached_texts = _iter_active_cached_doc_texts(source_units)
+    all_doc_lower = [doc_l, *cached_texts]
+    all_doc_unaccent = [doc_unaccent, *(strip_accents(t) for t in cached_texts)]
+
+    missing: list[str] = []
+
+    # 1. Check specific bilingual measurement / substance concept groups
+    for concept_id, (triggers, evidence_terms, regex_pat) in _CROSS_LINGUAL_REQUIRED_CONCEPTS.items():
+        triggered = any(
+            _has_phrase(trig, q_lower, q_unaccent, has_vietnamese_diacritics(trig))
+            for trig in triggers
+        )
+        if not triggered:
+            continue
+        found = False
+        for ev in evidence_terms:
+            ev_has_acc = has_vietnamese_diacritics(ev)
+            if any(_has_phrase(ev, dl, du, ev_has_acc) for dl, du in zip(all_doc_lower, all_doc_unaccent)):
+                found = True
+                break
+        if not found and regex_pat:
+            compiled = re.compile(regex_pat, re.IGNORECASE)
+            if any(compiled.search(dl) for dl in all_doc_lower):
+                found = True
+        if not found:
+            missing.append(concept_id)
+
+    # 2. For Vietnamese queries over English docs, verify embedded scientific/chemical loanwords
+    if query_is_vietnamese and not doc_is_vietnamese:
+        for term in foreign_terms:
+            if not _is_non_vietnamese_loanword(term):
+                continue
+            if not _matches_loanword_in_doc(term, source_units, doc_l, doc_unaccent, query_has_accents):
+                if term.lower() not in missing:
+                    missing.append(term.lower())
+
+    return missing
+
+
 def _has_phrase(phrase: str, doc_lower: str, doc_unaccented: str, query_has_accents: bool) -> bool:
     """Matches a phrase or technical token with word boundary and multi-whitespace guards (treating '_' as separator)."""
     if not phrase:
@@ -134,15 +416,10 @@ def _has_phrase_in_sources_or_docs(
             if p_norm and (p_norm == stem_norm or p_norm in stem_norm or stem_norm in p_norm):
                 return True
 
-    # 3. Check full document text from cached chunks if available
-    try:
-        from core.tools import _PDF_CHUNK_CACHE
-        for key, chunks in _PDF_CHUNK_CACHE.items():
-            full_txt = " ".join(str(c.get("text", "")) for c in chunks).lower()
-            if _has_phrase(phrase, full_txt, strip_accents(full_txt), query_has_accents):
-                return True
-    except Exception:
-        pass
+    # 3. Check full document text from cached chunks belonging ONLY to active source_units
+    for full_txt in _iter_active_cached_doc_texts(source_units):
+        if _has_phrase(phrase, full_txt, strip_accents(full_txt), query_has_accents):
+            return True
 
     return False
 
@@ -280,9 +557,21 @@ def check_out_of_domain(query: str, source_units: list[dict[str, Any]]) -> Tuple
             return True, f"foreign_term_absent: {missing_tech}"
 
     # 4. Check core subject phrases & compound n-grams
-    # Skip verbatim lexical n-gram gating for BOTH cross-lingual directions (VI->EN and EN->VI),
-    # because translated phrases cannot appear verbatim in the opposite-language source; Steps 1 & 3 + NLI handle OOD.
+    # For cross-lingual queries (VI->EN and EN->VI), verbatim lexical n-gram gating cannot apply,
+    # so we verify explicitly queried measurement/substance concepts & scientific loanwords via bilingual mapping.
     if is_cross_lingual:
+        missing_targets = _check_cross_lingual_target_absence(
+            clean_q=clean_q,
+            foreign_terms=foreign_terms,
+            source_units=source_units,
+            doc_l=doc_l,
+            doc_unaccent=doc_unaccent,
+            query_has_accents=query_has_accents,
+            query_is_vietnamese=query_is_vietnamese,
+            doc_is_vietnamese=doc_is_vietnamese,
+        )
+        if missing_targets:
+            return True, f"cross_lingual_target_absent: {missing_targets}"
         return False, "cross_lingual_in_domain"
 
     phrases = extract_core_subject_phrases(clean_q)

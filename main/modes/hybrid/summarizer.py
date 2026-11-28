@@ -22,7 +22,7 @@ from utils.local_vulkan_setup import probe_all_capabilities
 
 
 class HybridSummarizerAgent(BaseAgent):
-    """Policy-driven Hybrid Summarizer routing between Gemini 3.8 Flash, Kaggle Qwen 7B, GPU Max, and Local CPU."""
+    """Policy-driven Hybrid Summarizer routing between Gemini 3.5 Flash, Kaggle Qwen 7B/8B, GPU Max, and Local CPU."""
 
     def __init__(self, max_internal_retry: int = 2):
         super().__init__(name="HybridSummarizerAgent", max_internal_retry=max_internal_retry)

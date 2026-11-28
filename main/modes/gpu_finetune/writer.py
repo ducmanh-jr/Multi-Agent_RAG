@@ -14,6 +14,7 @@ from typing import Any
 
 from core.citation_audit import claim_text, evidence_quote, citation_location
 from core.base_agent import BaseAgent
+from core.config import get_role_max_tokens
 from core.state import AgentState
 from agents.agent5_writer.components.report_builder import build_academic_report
 from utils.llm_client import llm_client
@@ -78,10 +79,10 @@ class GPUFinetuneWriterAgent(BaseAgent):
                 result = llm_client.call_kaggle_specialist(
                     endpoint="api/writer",
                     payload={"query": query, "answer": "", "claims": candidates,
-                             "format": "claim_order", "adapter": "writer"},
+                             "format": "claim_order", "adapter": "writer",
+                             "max_tokens": get_role_max_tokens("writer")},
                     fallback_prompt=json.dumps({"query": query, "claims": candidates}, ensure_ascii=False),
                     fallback_system=WRITER_TRAINING_SYSTEM_PROMPT, adapter="writer",
-                    timeout=float(self.settings.REMOTE_TIMEOUT_SECONDS or 90.0),
                 )
                 order = result.get("claim_order")
                 if (isinstance(order, list) and len(order) == len(indices)

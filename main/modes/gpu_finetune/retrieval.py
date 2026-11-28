@@ -113,7 +113,9 @@ class GPUFinetuneRetrievalAgent(BaseAgent):
         retry_count = state.get("retry_count", 0)
         seen_chunks = state.get("seen_chunks", []) or []
 
-        # 1. Start with local Supervisor plan, enrich with fine-tuned Router QLoRA
+        # 1. Single-Planner rule: reuse Supervisor plan whenever already planned; only invoke remote router standalone.
+        schema = state.get("document_schema") if isinstance(state.get("document_schema"), dict) else {}
+        supervisor_planned = bool(schema.get("planner_source"))
         local_plan = supervisor_planner.plan_query(query, state.get("evidence_gaps"), retry_count)
         sub_queries = list(state.get("sub_queries") or local_plan.sub_queries)
         required_entities = list(state.get("required_entities") or local_plan.required_entities)
@@ -121,7 +123,13 @@ class GPUFinetuneRetrievalAgent(BaseAgent):
         top_k = int(state.get("top_k") or local_plan.top_k)
         intent = local_plan.intent
 
-        if self.enable_remote_router and self.settings.REMOTE_INFERENCE_URL and retry_count == 0 and not sub_queries:
+        if (
+            not supervisor_planned
+            and self.enable_remote_router
+            and self.settings.REMOTE_INFERENCE_URL
+            and retry_count == 0
+            and not state.get("sub_queries")
+        ):
             try:
                 router_res = llm_client.call_kaggle_specialist(
                     endpoint="api/router",

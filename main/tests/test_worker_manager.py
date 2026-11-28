@@ -32,7 +32,10 @@ Verifies:
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import os
+from pathlib import Path
 import signal
 import subprocess
 import sys
@@ -54,15 +57,72 @@ from kaggle.worker_manager import (
     kill_process_group,
 )
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _stage_synthetic_weights_project(root: Path) -> Path:
+    """
+    Create an isolated offline project directory mirroring kaggle/weights_manifest.json
+    with deterministic synthetic weight files and matching SHA-256 digests so tests
+    never depend on untracked local `training_lab/final_weights` artifacts.
+    """
+    kaggle_dir = root / "kaggle"
+    kaggle_dir.mkdir(parents=True, exist_ok=True)
+    authoritative_manifest = json.loads(
+        (REPO_ROOT / "kaggle" / "weights_manifest.json").read_text(encoding="utf-8")
+    )
+    staged_checkpoints = []
+    weights_root = root / "training_lab" / "final_weights"
+
+    for cp in authoritative_manifest.get("checkpoints", []):
+        cp_copy = dict(cp)
+        cp_dir = weights_root / cp_copy["sub_path"]
+        cp_dir.mkdir(parents=True, exist_ok=True)
+        for req_name in cp_copy.get("required_files", []):
+            req_path = cp_dir / req_name
+            req_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = f"synthetic::{cp_copy['id']}::{req_name}".encode("utf-8")
+            req_path.write_bytes(payload)
+        if "primary_file" in cp_copy and isinstance(cp_copy["primary_file"], dict):
+            pf = dict(cp_copy["primary_file"])
+            pf_path = cp_dir / pf["filename"]
+            pf_bytes = f"primary::{cp_copy['id']}::{pf['filename']}".encode("utf-8")
+            pf_path.write_bytes(pf_bytes)
+            pf["size_bytes"] = len(pf_bytes)
+            pf["sha256"] = hashlib.sha256(pf_bytes).hexdigest()
+            cp_copy["primary_file"] = pf
+        staged_checkpoints.append(cp_copy)
+
+    authoritative_manifest["checkpoints"] = staged_checkpoints
+    (kaggle_dir / "weights_manifest.json").write_text(
+        json.dumps(authoritative_manifest, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return root
+
 
 @pytest.fixture
-def worker_manager():
-    return WorkerManager(project_dir=os.path.abspath("."))
+def worker_manager(tmp_path):
+    staged_root = _stage_synthetic_weights_project(tmp_path / "staged_project")
+    return WorkerManager(project_dir=str(staged_root))
 
 
 # =====================================================================
 # 1. Manifest Validation & Status Contract Tests
 # =====================================================================
+
+def test_clean_checkout_without_weights_reports_finetune_unavailable(tmp_path):
+    """In a clean git archive without training_lab/final_weights, capabilities gracefully report False."""
+    clean_root = tmp_path / "clean_checkout"
+    (clean_root / "kaggle").mkdir(parents=True)
+    (clean_root / "kaggle" / "weights_manifest.json").write_bytes(
+        (REPO_ROOT / "kaggle" / "weights_manifest.json").read_bytes()
+    )
+    wm = WorkerManager(project_dir=str(clean_root))
+    caps = wm.validate_manifest_checkpoints(verify_sha256=True)
+    assert all(val is False for val in caps.values())
+    status = wm.get_status_payload()
+    assert status["worker_profiles_available"]["gpu_finetune"] is False
 
 def test_manifest_validation_engine(worker_manager):
     """Verify that validate_manifest_checkpoints detects all present checkpoints accurately with SHA256."""
@@ -784,7 +844,7 @@ def test_finetune_server_health_requires_mandatory_models_and_adapters():
 
     with patch.object(srv, "_loaded_adapters", ["router", "critic", "writer"]), \
          patch.object(srv, "_models", {"qwen_cluster": MagicMock(), "factcheck": MagicMock()}), \
-         patch("torch.cuda.is_available", return_value=False):
+         patch.object(srv, "_cuda_available", return_value=False):
 
         # Missing 'generator'
         h = srv.healthcheck()
@@ -795,7 +855,7 @@ def test_finetune_server_health_requires_mandatory_models_and_adapters():
 
     with patch.object(srv, "_loaded_adapters", ["router", "generator", "critic", "writer"]), \
          patch.object(srv, "_models", {"qwen_cluster": MagicMock()}), \
-         patch("torch.cuda.is_available", return_value=False):
+         patch.object(srv, "_cuda_available", return_value=False):
 
         # Missing 'factcheck'
         h = srv.healthcheck()
@@ -806,7 +866,7 @@ def test_finetune_server_health_requires_mandatory_models_and_adapters():
 
     with patch.object(srv, "_loaded_adapters", ["router", "generator", "critic", "writer"]), \
          patch.object(srv, "_models", {"qwen_cluster": MagicMock(), "factcheck": MagicMock()}), \
-         patch("torch.cuda.is_available", return_value=False):
+         patch.object(srv, "_cuda_available", return_value=False):
 
         # All present
         h = srv.healthcheck()
@@ -820,23 +880,33 @@ def test_finetune_server_health_requires_mandatory_models_and_adapters():
 def test_finetune_factcheck_endpoint_fails_closed_when_model_missing():
     """
     CRITICAL Section 3: If Fact-Checker NLI model is missing, /api/factcheck
-    MUST raise HTTP 503 and NEVER return fake 'SUPPORT' verdicts with 0.95 confidence.
+    MUST explicitly report X-Research-Model-Status=unavailable and NOT_ENOUGH_INFO
+    (with 0.0 confidence), NEVER returning fake 'SUPPORT' verdicts.
     """
     from kaggle import kaggle_finetune_server as srv
-    from fastapi import HTTPException
+    from fastapi import Response
 
     with patch.object(srv, "load_factcheck_model", return_value=(None, None)):
         req = srv.FactCheckRequest(claims=["The moon is made of green cheese."])
-        with pytest.raises(HTTPException) as exc_info:
-            srv.factcheck_endpoint(req)
-        assert exc_info.value.status_code == 503
-        assert "Fact-Checker NLI model is not loaded" in exc_info.value.detail
+        resp = Response()
+        out = srv.factcheck_endpoint(req, resp)
+        assert resp.headers["X-Research-Model-Status"] == "unavailable"
+        assert resp.headers["X-Research-Input-Tokens"] == "0"
+        assert "X-Research-Revision" not in resp.headers
+        assert out["evaluations"] == [
+            {
+                "claim": "The moon is made of green cheese.",
+                "verdict": "NOT_ENOUGH_INFO",
+                "confidence": 0.0,
+                "reason": "NLI model unavailable",
+            }
+        ]
 
 
 def test_finetune_critic_endpoint_fails_closed_on_malformed_json():
     """
     CRITICAL Section 3: If Critic output cannot be parsed as JSON,
-    it MUST return action='rewrite' and NEVER default to action='accept'.
+    it MUST return is_supported=False and action='rewrite', NEVER defaulting to 'accept'.
     """
     from kaggle import kaggle_finetune_server as srv
 
@@ -848,9 +918,10 @@ def test_finetune_critic_endpoint_fails_closed_on_malformed_json():
             claims=["Transformers introduced in 2017."]
         )
         res = srv.summarize_critic(req)
+        assert res["is_supported"] is False
         assert res["action"] == "rewrite"
-        assert "critic_malformed_json_response" in res["issues_found"]
-        assert "Không thể phân tích phản hồi JSON" in res["critique"]
+        assert "Invalid critic output" in res["issues_found"]
+        assert res["critique"] == "Invalid critic output"
 
 
 def test_request_switch_mode_rollback_preserves_previous_selected_mode(worker_manager):
@@ -884,29 +955,31 @@ def test_request_switch_mode_rollback_preserves_previous_selected_mode(worker_ma
 
 def test_finetune_unimplemented_capabilities_fail_closed():
     """
-    CRITICAL: Unimplemented or unloaded capabilities (reranker, embed, reader)
-    MUST fail closed (HTTP 501) rather than returning mock results.
+    CRITICAL: Unloaded retrieval models fail closed with HTTP 503 (never returning mock rankings
+    or loading unpinned fallback weights), and disabled layout reader fails closed with HTTP 501.
     """
     from kaggle import kaggle_finetune_server as srv
     from fastapi import HTTPException
 
-    # 1. Reranker when model not in _models
-    with patch.dict(srv._models, {}, clear=True):
+    # 1. Reranker when model load fails offline -> 503
+    with patch.dict(srv._models, {}, clear=True), \
+         patch.object(srv, "load_reranker_model", side_effect=OSError("offline checkpoint unavailable")):
         req = srv.RerankRequest(query="test", candidates=["doc A", "doc B"])
         with pytest.raises(HTTPException) as exc_info:
             srv.rerank_endpoint(req)
-        assert exc_info.value.status_code == 501
-        assert "reranker" in exc_info.value.detail
+        assert exc_info.value.status_code == 503
+        assert "reranker unavailable" in exc_info.value.detail.lower()
 
-    # 2. Embed when model not in _models
-    with patch.dict(srv._models, {}, clear=True):
+    # 2. Embed when model load fails offline -> 503
+    with patch.dict(srv._models, {}, clear=True), \
+         patch.object(srv, "load_embedding_model", side_effect=OSError("offline checkpoint unavailable")):
         req = srv.EmbedRequest(texts=["sample text"])
         with pytest.raises(HTTPException) as exc_info:
             srv.embed_endpoint(req)
-        assert exc_info.value.status_code == 501
-        assert "embedding" in exc_info.value.detail
+        assert exc_info.value.status_code == 503
+        assert "embedding unavailable" in exc_info.value.detail.lower()
 
-    # 3. Reader layout when model not in _models
+    # 3. Reader layout when crop handler / model is not enabled -> 501
     with patch.dict(srv._models, {}, clear=True):
         req = srv.ReaderLayoutRequest(pdf_path="sample.pdf", pages=[0])
         with pytest.raises(HTTPException) as exc_info:
@@ -1209,6 +1282,76 @@ def test_truthful_capabilities_reporting_excludes_unloaded_models(worker_manager
     assert caps["embedding"] is False
     assert caps["reranker"] is False
     assert caps["vllm_32b_awq"] is False
+
+
+def test_worker_observations_accept_base_instruct_and_hub_40char_nli_commit():
+    """
+    Verify M0 observation fix:
+    1. Pure base Qwen3-8B (QWEN_USE_BASE_INSTRUCT=true -> X-Research-Adapter: none, 40-char Hub SHA)
+       is recorded as status='reported' without requiring an adapter SHA256.
+    2. HuggingFace Hub NLI model with 40-char commit SHA is recorded as status='reported'
+       (while still accepting 64-char local bundle SHA256).
+    """
+    import httpx
+    from core.worker_observations import capture_worker_observations, drain_worker_observations, record_worker_observation
+
+    gen_resp = httpx.Response(
+        200,
+        headers={
+            "X-Research-Model": "Qwen/Qwen3-8B",
+            "X-Research-Revision": "1" * 40,
+            "X-Research-Adapter": "none",
+        },
+        json={"answer": "ok", "claims": [], "evidence_spans": []},
+    )
+    nli_resp = httpx.Response(
+        200,
+        headers={
+            "X-Research-Model": "MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7",
+            "X-Research-Revision": "2" * 40,
+        },
+        json={"evaluations": []},
+    )
+    with capture_worker_observations():
+        record_worker_observation("api/summarize/generator", "generator", gen_resp)
+        record_worker_observation("api/factcheck", "factcheck", nli_resp)
+        events = drain_worker_observations()
+
+    assert len(events) == 2
+    assert events[0]["status"] == "reported"
+    assert events[0]["model"] == "Qwen/Qwen3-8B"
+    assert events[0]["revision"] == "1" * 40
+    assert events[0]["adapter"] == "none"
+    assert events[1]["status"] == "reported"
+    assert events[1]["model"] == "MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7"
+    assert events[1]["revision"] == "2" * 40
+
+
+def test_gateway_respects_gpu_max_model_id_env(monkeypatch):
+    """Verify gateway forwards GPU_MAX_MODEL_ID (e.g. Qwen/Qwen3-32B-AWQ) instead of hardcoded Qwen2.5-32B."""
+    from fastapi.testclient import TestClient
+    from kaggle import kaggle_supervisor_gateway as gw
+
+    monkeypatch.setenv("GPU_MAX_MODEL_ID", "Qwen/Qwen3-32B-AWQ")
+    gw.worker_manager.transition_state = "ready"
+    gw.worker_manager.active_worker = "gpu_max"
+
+    mock_vllm_resp = MagicMock()
+    mock_vllm_resp.status_code = 200
+    mock_vllm_resp.json.return_value = {
+        "model": "Qwen/Qwen3-32B-AWQ",
+        "choices": [{"message": {"content": '{"intent": "academic_research", "sub_queries": []}'}}],
+    }
+
+    client = TestClient(gw.app, raise_server_exceptions=False)
+    with patch.object(gw._http_client, "post", new_callable=AsyncMock, return_value=mock_vllm_resp) as mock_post:
+        resp = client.post("/api/router", json={"query": "Test Qwen3 32B routing"})
+        assert resp.status_code == 200
+        assert resp.json()["model"] == "Qwen3-32B-AWQ"
+        assert resp.headers["X-Research-Model"] == "Qwen/Qwen3-32B-AWQ"
+        sent_payload = mock_post.call_args[1]["json"]
+        assert sent_payload["model"] == "Qwen/Qwen3-32B-AWQ"
+
 
 
 

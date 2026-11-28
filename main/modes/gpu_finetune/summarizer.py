@@ -18,6 +18,7 @@ from agents.agent3_summarizer.components.generator import (
     pack_context_by_token_budget,
 )
 from core.base_agent import BaseAgent
+from core.config import get_role_max_tokens
 from core.handoff_inputs import revision_note
 from core.schemas import SummarizerCriticOutput, SummarizerGeneratorOutput
 from core.state import AgentState
@@ -84,11 +85,16 @@ class GPUFinetuneSummarizerAgent(BaseAgent):
             try:
                 gen_dict = llm_client.call_kaggle_specialist(
                     endpoint="api/summarize/generator",
-                    payload={"query": effective_q, "context": context_str, "feedback": feedback, "adapter": "generator"},
+                    payload={
+                        "query": effective_q,
+                        "context": context_str,
+                        "feedback": feedback,
+                        "adapter": "generator",
+                        "max_tokens": get_role_max_tokens("generator"),
+                    },
                     fallback_prompt=gen_prompt,
                     fallback_system=TRAINING_LAB_GENERATOR_SYSTEM_PROMPT,
                     adapter="generator",
-                    timeout=float(self.settings.REMOTE_TIMEOUT_SECONDS or 90.0),
                 )
                 raw_status = str(gen_dict.get("answer_status") or "").strip().upper() if isinstance(gen_dict, dict) else ""
                 if raw_status in {"NOT_FOUND_IN_DOCUMENT", "INSUFFICIENT_EVIDENCE", "CLARIFICATION_NEEDED"}:
@@ -130,11 +136,17 @@ class GPUFinetuneSummarizerAgent(BaseAgent):
                 critic_claims = [c["text"] for c in claims]
                 critic_dict = llm_client.call_kaggle_specialist(
                     endpoint="api/summarize/critic",
-                    payload={"query": clean_q, "answer": current_answer, "context": context_str, "claims": critic_claims, "adapter": "critic"},
+                    payload={
+                        "query": clean_q,
+                        "answer": current_answer,
+                        "context": context_str,
+                        "claims": critic_claims,
+                        "adapter": "critic",
+                        "max_tokens": get_role_max_tokens("critic"),
+                    },
                     fallback_prompt=f"Question: {clean_q}\nContext:\n{context_str}\nAnswer:\n{current_answer}\nClaims: {critic_claims}",
                     fallback_system=TRAINING_LAB_CRITIC_SYSTEM_PROMPT,
                     adapter="critic",
-                    timeout=float(self.settings.REMOTE_TIMEOUT_SECONDS or 90.0),
                 )
                 critic_out = SummarizerCriticOutput.from_dict(critic_dict)
                 critic_action = critic_out.action

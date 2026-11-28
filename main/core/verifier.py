@@ -1108,7 +1108,9 @@ def review_abstention(state):
         )
     )
     # A search over evidence can support an abstention, not an assertion about the entire PDF.
-    explicit_identifier = why.startswith("foreign_term_absent:") or why.startswith("quoted_entities_absent:")
+    explicit_identifier = why.startswith(
+        ("foreign_term_absent:", "quoted_entities_absent:", "cross_lingual_target_absent:")
+    )
     justified = bool(
         units
         and query.strip()

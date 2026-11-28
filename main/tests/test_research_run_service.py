@@ -646,8 +646,12 @@ def test_manifest_records_real_retrieval_outcome(client, tmp_path, monkeypatch, 
     assert manifest["configuration"]["retrieval"]["dense_enabled"] is True
     assert manifest["configuration"]["retrieval"]["rerank_enabled"] is True
     assert manifest["configuration"]["retrieval"]["parallel_requested"] is True
-    assert manifest["configuration"]["retrieval"]["parallel_enabled"] is False
+    assert manifest["configuration"]["retrieval"]["parallel_enabled"] is True
+    assert manifest["configuration"]["retrieval"]["parallel_mode"] == "research_dag"
+    assert manifest["configuration"]["retrieval"]["parallel_pilot_cpu_min"] is False
     assert manifest["observed"]["retrieval_schedules"] == []
+    assert manifest["observed"]["parallel_dag_executions"] == []
+    assert manifest["observed"]["parallel_execution_observed"] is False
     assert manifest["observed"]["generator_revision"] is None
     assert manifest["observed"]["verifier_revision"] is None
     attempt, = manifest["observed"]["retrieval_attempts"]

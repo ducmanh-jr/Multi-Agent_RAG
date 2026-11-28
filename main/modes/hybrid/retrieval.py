@@ -102,14 +102,20 @@ class HybridRetrievalAgent(BaseAgent):
         retry_count = state.get("retry_count", 0)
         seen_chunks = state.get("seen_chunks", []) or []
 
-        # Default Tier 3 Plan: Local Supervisor
-        caller_supplied_subqueries = bool(state.get("sub_queries"))
+        # Default Tier 3 Plan: Local Supervisor (Single-Planner rule: never re-plan when Supervisor already planned)
+        schema = state.get("document_schema") if isinstance(state.get("document_schema"), dict) else {}
+        supervisor_planned = bool(schema.get("planner_source"))
+        caller_supplied_subqueries = bool(state.get("sub_queries")) or supervisor_planned
         plan = supervisor_planner.plan_query(query, state.get("evidence_gaps"), retry_count)
         sub_queries = list(state.get("sub_queries") or plan.sub_queries)
         required_entities = list(state.get("required_entities") or plan.required_entities)
         top_k = int(state.get("top_k") or plan.top_k)
         alpha = float(state.get("alpha", plan.alpha))
-        planning_backend = "dag_preplanned" if caller_supplied_subqueries else "local_supervisor"
+        planning_backend = (
+            f"supervisor:{schema.get('planner_source')}"
+            if supervisor_planned
+            else ("dag_preplanned" if caller_supplied_subqueries else "local_supervisor")
+        )
 
         caps = probe_all_capabilities()
         from core.provider_router import provider_router
@@ -287,6 +293,14 @@ class HybridRetrievalAgent(BaseAgent):
             },
         )
 
+        tools_used = ["fts5_bm25_rrf"]
+        if dense_trace.get("status") == "used":
+            tools_used.append(f"dense_{dense_trace.get('backend', 'bge_m3')}")
+        if rerank_trace.get("status") == "used":
+            tools_used.append("cross_encoder_rerank")
+        if focused:
+            tools_used.append("referenced_table_lookup")
+
         return {
             "alpha": alpha,
             "perspectives": perspectives,
@@ -295,5 +309,6 @@ class HybridRetrievalAgent(BaseAgent):
             "retrieved_docs": merged_docs[: top_k + 4],
             "seen_chunks": all_seen,
             "no_new_evidence": no_new_evidence,
+            "tools_used": tools_used,
             "reasoning_trace": [trace],
         }

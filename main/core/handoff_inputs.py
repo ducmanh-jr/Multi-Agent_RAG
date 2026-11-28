@@ -35,8 +35,18 @@ def prepare_handoff_input(state: AgentState, request: dict) -> AgentState:
     if recipient == "retrieval":
         queries = [*focus[:3], state.get("query", ""), *(state.get("sub_queries") or [])]
         view["sub_queries"] = list(dict.fromkeys(q for q in queries if q))
+        feedback = dict(state.get("critic_feedback") or {})
         if focus:
-            view["critic_feedback"] = {**(state.get("critic_feedback") or {}), "retrieval_focus": True}
+            feedback["retrieval_focus"] = True
+        strategy_hint = request.get("strategy_hint")
+        if isinstance(strategy_hint, str) and strategy_hint.strip():
+            feedback["strategy_hint"] = strategy_hint.strip()
+            view["retrieval_strategy"] = strategy_hint.strip()
+            view["top_k"] = min(20, max(int(state.get("top_k") or 8) + 4, 10))
+            if strategy_hint.strip() == "broad_lexical_bilingual":
+                view["alpha"] = min(float(state.get("alpha") or 0.5), 0.35)
+        if feedback:
+            view["critic_feedback"] = feedback
         return view
     if recipient not in {"reader", "summarizer"}:
         return view

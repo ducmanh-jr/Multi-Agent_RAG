@@ -17,7 +17,7 @@ import time
 from typing import Any, Optional
 import httpx
 
-from core.config import get_run_settings
+from core.config import get_role_max_tokens, get_run_settings
 from core.db import get_cached_llm, log_api_usage, set_cached_llm
 from core.schemas import canonical_adapter_name
 from core.token_usage import TokenBudgetStop, metered_post
@@ -207,13 +207,20 @@ class UnifiedLLMClient:
         prompt: str,
         system_instruction: Optional[str] = None,
         temperature: float = 0.1,
+        max_tokens: Optional[int] = None,
         agent: Optional[str] = None,
     ) -> dict[str, Any]:
-        """Convenience wrapper ensuring valid JSON output."""
+        """Convenience wrapper ensuring valid JSON output with role-bounded token caps."""
+        effective_max_tokens = (
+            int(max_tokens)
+            if max_tokens is not None
+            else get_role_max_tokens(agent, default=2048)
+        )
         response = self.generate(
             prompt=prompt,
             system_instruction=system_instruction,
             temperature=temperature,
+            max_tokens=effective_max_tokens,
             json_mode=True,
             agent=agent,
         )
@@ -241,6 +248,25 @@ class UnifiedLLMClient:
         record_worker_observation(endpoint, adapter, response)
         return response
 
+    ENDPOINT_DEFAULT_TIMEOUTS: dict[str, float] = {
+        "api/router": 20.0,
+        "api/embed": 25.0,
+        "api/rerank": 25.0,
+        "api/factcheck": 30.0,
+        "api/reader/layout": 45.0,
+        "api/summarize/critic": 45.0,
+        "api/writer": 60.0,
+        "api/summarize/generator": 90.0,
+        "generate": 90.0,
+    }
+
+    def _endpoint_timeout(self, clean_ep: str, explicit_timeout: Optional[float]) -> float:
+        if explicit_timeout is not None:
+            return float(explicit_timeout)
+        configured = float(self.settings.REMOTE_TIMEOUT_SECONDS or 90.0)
+        default_ep = self.ENDPOINT_DEFAULT_TIMEOUTS.get(clean_ep, configured)
+        return min(configured, default_ep)
+
     def call_kaggle_specialist(
         self,
         endpoint: str,
@@ -252,7 +278,8 @@ class UnifiedLLMClient:
         allow_generate_fallback: bool = True,
     ) -> dict[str, Any]:
         """
-        Calls dedicated training_lab endpoints on Kaggle Multi-LoRA Worker:
+        Calls dedicated specialist endpoints on Kaggle Dual-T4 Worker with per-endpoint
+        timeouts and per-endpoint circuit breaker (so a slow generator never blocks GPU 1 NLI/embed):
           - /api/router
           - /api/summarize/generator
           - /api/summarize/critic
@@ -265,34 +292,62 @@ class UnifiedLLMClient:
 
         canon_adapter = canonical_adapter_name(adapter)
         clean_ep = endpoint.lstrip("/")
+        cb_key = f"{base_url}::{clean_ep}"
+        now = time.time()
+        blocked_until = self._circuit_breaker_until.get(cb_key, 0.0)
+        if now < blocked_until:
+            rem = max(1, int(blocked_until - now))
+            record_worker_observation(clean_ep, canon_adapter, status="circuit_open")
+            if not allow_generate_fallback:
+                return {}
+            raise RuntimeError(f"Kaggle endpoint /{clean_ep} tạm ngắt (Circuit Breaker active {rem}s).")
+
         try:
-            effective_timeout = float(timeout if timeout is not None else self.settings.REMOTE_TIMEOUT_SECONDS)
+            effective_timeout = self._endpoint_timeout(clean_ep, timeout)
             resp = self._post_worker(base_url, clean_ep, payload, effective_timeout, canon_adapter)
             if resp.status_code == 200:
+                self._circuit_breaker_until.pop(cb_key, None)
                 data = resp.json()
                 if isinstance(data, dict):
                     return data
+            elif resp.status_code == 503:
+                retry_hdr = resp.headers.get("Retry-After")
+                if retry_hdr is not None:
+                    try:
+                        retry_after = min(30.0, max(2.0, float(retry_hdr)))
+                    except (TypeError, ValueError):
+                        retry_after = 5.0
+                    self._circuit_breaker_until[cb_key] = time.time() + retry_after
+                if not allow_generate_fallback:
+                    return {}
+                retry_msg = f", Retry-After={retry_hdr}s" if retry_hdr is not None else ""
+                raise RuntimeError(f"Kaggle endpoint /{clean_ep} busy (HTTP 503{retry_msg}).")
         except TokenBudgetStop:
             raise
         except Exception as exc:
+            if isinstance(exc, (httpx.TimeoutException, httpx.ConnectError)):
+                self._circuit_breaker_until[cb_key] = time.time() + 10.0
             if not allow_generate_fallback:
                 logger.info("[Kaggle Specialist] Invalid or unavailable /%s (%s)", clean_ep, type(exc).__name__)
                 return {}
             logger.info(f"[Kaggle Specialist] Dedicated endpoint /{clean_ep} fallback to /generate ({exc})")
-            if "timeout" in str(exc).lower() or "timed out" in str(exc).lower():
+            if "timeout" in str(exc).lower() or "timed out" in str(exc).lower() or "http 503" in str(exc).lower():
                 raise exc
 
         if not allow_generate_fallback:
             return {}
 
         # Fallback to /generate with canonical adapter name ('router', 'generator', 'critic')
+        role_cap = get_role_max_tokens(canon_adapter, default=1024)
+        requested_cap = payload.get("max_tokens") or payload.get("max_new_tokens")
+        effective_max_tokens = min(int(requested_cap), 1536) if requested_cap else role_cap
         raw_out = self._call_remote_kaggle(
             task="generate",
             payload={
                 "prompt": fallback_prompt or json.dumps(payload, ensure_ascii=False),
                 "system_instruction": fallback_system,
                 "temperature": 0.1,
-                "max_tokens": 1536,
+                "max_tokens": effective_max_tokens,
                 "json_mode": True,
                 "adapter": canon_adapter,
             },
@@ -391,31 +446,38 @@ class UnifiedLLMClient:
             attempted_models.append(model)
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
-            contents = []
-            if system_instruction:
-                contents.append({"role": "user", "parts": [{"text": f"[System Instructions]: {system_instruction}"}]})
-                contents.append({"role": "model", "parts": [{"text": "Understood. I will follow these instructions."}]})
+            contents = [{"role": "user", "parts": [{"text": prompt}]}]
 
-            contents.append({"role": "user", "parts": [{"text": prompt}]})
-
-            generation_config: dict[str, Any] = {
-                "temperature": temperature,
-                "maxOutputTokens": max_tokens,
-            }
-            if json_mode:
-                generation_config["responseMimeType"] = "application/json"
-
-            payload = {
-                "contents": contents,
-                "generationConfig": generation_config,
-            }
+            effective_max_tokens = max(16, int(max_tokens or 1024))
+            no_thinking_models = getattr(self, "_no_thinking_budget_models", None)
+            if no_thinking_models is None:
+                no_thinking_models = set()
+                self._no_thinking_budget_models = no_thinking_models
+            use_thinking_budget = bool(json_mode) and (model not in no_thinking_models)
 
             headers = {
                 "Content-Type": "application/json",
                 "x-goog-api-key": self.settings.GEMINI_API_KEY or "",
             }
-            # Bounded single retry on transient 429/503 before cascading to next candidate model
-            for attempt in range(2):
+            # Bounded retries for transient 429/503, unsupported thinkingConfig (400), or MAX_TOKENS truncation
+            max_tokens_retried = False
+            for attempt in range(3):
+                generation_config: dict[str, Any] = {
+                    "temperature": temperature,
+                    "maxOutputTokens": effective_max_tokens,
+                }
+                if json_mode:
+                    generation_config["responseMimeType"] = "application/json"
+                    if use_thinking_budget:
+                        generation_config["thinkingConfig"] = {"thinkingBudget": 0}
+
+                payload: dict[str, Any] = {
+                    "contents": contents,
+                    "generationConfig": generation_config,
+                }
+                if system_instruction:
+                    payload["systemInstruction"] = {"parts": [{"text": system_instruction}]}
+
                 try:
                     resp = metered_post(
                         self.http_client.post, url, provider="gemini", operation="generateContent", protocol="gemini",
@@ -430,7 +492,9 @@ class UnifiedLLMClient:
                         actual_version = raw_version.strip() if isinstance(raw_version, str) and raw_version.strip() else model
                         cands = data.get("candidates", []) if isinstance(data, dict) else []
                         if cands:
-                            content = cands[0].get("content", {})
+                            cand0 = cands[0] if isinstance(cands[0], dict) else {}
+                            finish_reason = str(cand0.get("finishReason") or "").upper()
+                            content = cand0.get("content", {})
                             parts = content.get("parts", [])
                             non_thought = [
                                 p["text"]
@@ -438,6 +502,33 @@ class UnifiedLLMClient:
                                 if isinstance(p, dict) and isinstance(p.get("text"), str) and not p.get("thought")
                             ]
                             text_out = non_thought[-1] if non_thought else (parts[0]["text"] if parts and "text" in parts[0] else None)
+
+                            if finish_reason == "MAX_TOKENS":
+                                if not max_tokens_retried and effective_max_tokens < 8192:
+                                    max_tokens_retried = True
+                                    effective_max_tokens = min(8192, max(effective_max_tokens * 2, effective_max_tokens + 1024))
+                                    logger.warning(
+                                        "Gemini model %s hit finishReason=MAX_TOKENS; retrying with maxOutputTokens=%d",
+                                        model,
+                                        effective_max_tokens,
+                                    )
+                                    continue
+                                if json_mode and text_out is not None:
+                                    try:
+                                        json.loads(text_out)
+                                    except (TypeError, ValueError):
+                                        cascade_reasons.append(f"{model}:max_tokens_truncated_json")
+                                        last_error = RuntimeError(
+                                            f"Gemini model '{model}' truncated JSON response (finishReason=MAX_TOKENS)"
+                                        )
+                                        logger.warning(
+                                            "Gemini model %s returned truncated JSON with finishReason=MAX_TOKENS; cascading.",
+                                            model,
+                                        )
+                                        break
+                                cascade_reasons.append(f"{model}:max_tokens")
+                                logger.warning("Gemini model %s stopped at finishReason=MAX_TOKENS.", model)
+
                             if text_out is not None:
                                 cascaded = model != requested_model or bool(cascade_reasons)
                                 record_provider_observation(
@@ -454,6 +545,14 @@ class UnifiedLLMClient:
                         cascade_reasons.append(f"{model}:empty_candidates")
                         logger.warning(f"Gemini response has no text parts: {data}")
                         break
+                    elif resp.status_code == 400 and use_thinking_budget:
+                        use_thinking_budget = False
+                        no_thinking_models.add(model)
+                        logger.info(
+                            "Gemini model %s returned HTTP 400 with thinkingConfig; caching model and retrying without thinkingConfig.",
+                            model,
+                        )
+                        continue
                     elif resp.status_code == 404:
                         # Cache 404 retired model IDs (e.g. gemini-2.5-flash) for 1 hour so they are skipped immediately
                         cooldowns[model] = time.monotonic() + 3600.0
@@ -518,10 +617,12 @@ class UnifiedLLMClient:
             if self.settings.DEEPSEEK_API_KEY
             else "https://api.openai.com/v1"
         )
+        deepseek_model = (getattr(self.settings, "DEEPSEEK_MODEL", "") or "deepseek-chat").strip() or "deepseek-chat"
+        openai_model = (getattr(self.settings, "OPENAI_MODEL", "") or "gpt-4o-mini").strip() or "gpt-4o-mini"
         model = (
-            self.settings.FALLBACK_LLM_MODEL
+            deepseek_model
             if self.settings.DEEPSEEK_API_KEY
-            else "gpt-4o-mini"
+            else openai_model
         )
 
         messages = []

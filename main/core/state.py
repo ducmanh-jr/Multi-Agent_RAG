@@ -341,6 +341,17 @@ class AgentState(TypedDict, total=False):
     retry_count: int
     max_reflection_loops: int
     enable_reader_handoff: bool
+    allow_scout_handoff: bool
+    disabled_agent_handoffs: list[str]
+    handoff_budgets: dict[str, int]
+    handoff_budget_limits: dict[str, int]
+    dag_round_index: int
+    draft_revision_needed: bool
+    agent_decision: Optional[dict[str, Any]]
+    supervisor_mode: str  # "pipeline" | "hub"
+    pending_tasks: list[dict[str, Any]]
+    last_result: dict[str, Any]
+    agent_messages: Annotated[list[dict[str, Any]], operator.add]
     chat_history: list[dict[str, str]]
     query_with_context: Optional[str]
     resolved_query: Optional[str]

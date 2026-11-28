@@ -35,6 +35,7 @@ class GeminiFactCheckerAgent(BaseAgent):
     def run(self, state: AgentState) -> dict[str, Any]:
         result = review_claims(state, self._review)
         result["verifier_model_family"] = "gemini_flash"
+        result["tools_used"] = ["gemini_batch_nli", "deterministic_numeric_math_guard"]
         result.setdefault("reasoning_trace", []).append(
             self.log_action("gemini_fact_check_completed", {"label": result["fact_check_label"],
                             "verified_count": len(result["verified_claims"]), "rejected_count": len(result["rejected_claims"])}))

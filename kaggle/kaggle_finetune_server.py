@@ -12,7 +12,7 @@ GPU 0 (16GB VRAM):
     * fallback /generate
 
 GPU 1 (16GB VRAM):
-  - 04_agent4_fact_checker (BGE-Reranker-v2-m3 NLI Head, Macro F1=1.0) -> /api/factcheck
+  - 04_agent4_fact_checker (BGE-Reranker-v2-m3 / mDeBERTa NLI Head, fp16) -> /api/factcheck
   - 02_agent2_reader       (LayoutLMv3 Base 11-class Document Layout)  -> /api/reader/layout
   - BGE-M3 dense encoder (pinned BAAI checkpoint)                     -> /api/embed
   - BGE-Reranker-v2-M3 cross-encoder (pinned BAAI checkpoint)        -> /api/rerank
@@ -33,7 +33,19 @@ from threading import Lock
 from typing import Annotated, Any, Dict, List, Literal, Optional
 from fastapi import FastAPI, HTTPException, Response
 from pydantic import BaseModel, Field, StringConstraints
-import torch
+
+try:
+    import torch
+except ImportError:  # pragma: no cover - lightweight CPU/CI environments without PyTorch
+    torch = None  # type: ignore[assignment]
+
+
+def _cuda_available() -> bool:
+    return bool(torch is not None and getattr(torch, "cuda", None) and torch.cuda.is_available())
+
+
+def _cuda_device_count() -> int:
+    return int(torch.cuda.device_count()) if _cuda_available() else 0
 
 app = FastAPI(title="Kaggle Dual-T4 GPU Finetune Worker (7-Model SOTA Pipeline)")
 
@@ -42,6 +54,12 @@ _models: dict[str, Any] = {}
 _tokenizers: dict[str, Any] = {}
 _loaded_adapters: list[str] = []
 _qwen_generation_lock = Lock()
+_qwen_queue_state_lock = Lock()
+_qwen_queue_depth = 0
+_qwen_inflight = 0
+_qwen_total_tokens = 0
+_qwen_total_gen_sec = 0.0
+_qwen_last_tok_per_sec = 0.0
 _factcheck_load_lock = Lock()
 _retrieval_model_lock = Lock()
 _qwen_model_name = "qwen-base"
@@ -120,6 +138,8 @@ def find_weight_path(sub_path: str) -> Optional[str]:
 
 def get_bnb_config():
     """Builds 4-bit NF4 BitsAndBytes configuration."""
+    if torch is None:
+        return None
     try:
         from transformers import BitsAndBytesConfig
         return BitsAndBytesConfig(
@@ -170,17 +190,20 @@ def _checkpoint_sha256(directory: Path, *, adapter: bool = False) -> str | None:
         return None
 
 
-def _hub_revision(model_id: str) -> str | None:
+def _hub_revision(model_id: str, *, revision: str | None = None) -> str | None:
     from huggingface_hub import hf_hub_download
 
     try:
-        config = Path(hf_hub_download(model_id, "config.json", etag_timeout=5))
+        dl_kwargs: dict[str, Any] = {"etag_timeout": 5}
+        if revision:
+            dl_kwargs["revision"] = revision
+        config = Path(hf_hub_download(model_id, "config.json", **dl_kwargs))
         commit = config.parent.name
         if config.parent.parent.name == "snapshots" and re.fullmatch(r"[a-f0-9]{40}", commit):
             return commit
     except Exception as exc:
         print(f"[Worker WARNING] Base model revision unavailable ({type(exc).__name__})")
-    return None
+    return revision
 
 
 def _model_headers(
@@ -205,6 +228,37 @@ def _token_headers(response: Response | None, input_tokens: int, output_tokens: 
 # 1. GPU 0: Qwen2.5-7B with Multi-LoRA (Router, Generator, Critic, Writer)
 # =====================================================================
 
+def _resolve_pinned_base_revision(
+    model_id: str,
+    manifest_path: Path | None = None,
+) -> str | None:
+    """
+    Resolve pinned base-model revision with precedence:
+      1. Explicit `BASE_QWEN_REVISION` environment override.
+      2. Matching `base_models.*.revision` entry in `kaggle/weights_manifest.json`.
+      3. `None` (caller may query Hub revision when testing newer unpinned base models).
+    """
+    env_rev = os.getenv("BASE_QWEN_REVISION", "").strip()
+    if env_rev:
+        return env_rev
+    candidate_path = manifest_path or (Path(__file__).resolve().parent / "weights_manifest.json")
+    try:
+        if candidate_path.is_file():
+            manifest = json.loads(candidate_path.read_text(encoding="utf-8"))
+            base_models = manifest.get("base_models") if isinstance(manifest, dict) else None
+            if isinstance(base_models, dict):
+                for entry in base_models.values():
+                    if not isinstance(entry, dict):
+                        continue
+                    if str(entry.get("model_id") or "").strip() == str(model_id or "").strip():
+                        rev = str(entry.get("revision") or "").strip()
+                        if rev:
+                            return rev
+    except Exception as exc:
+        print(f"[Worker WARNING] Could not read pinned revision from {candidate_path}: {exc}")
+    return None
+
+
 def load_qwen_lora_cluster():
     global _qwen_model_name, _qwen_revision
     if "qwen_cluster" in _models:
@@ -213,14 +267,15 @@ def load_qwen_lora_cluster():
     model_id = os.getenv("BASE_QWEN_MODEL_ID", "Qwen/Qwen2.5-7B-Instruct")
     print(f"[Worker] Loading Base Model: {model_id} on cuda:0 (NF4 4-bit)...")
 
-    if not torch.cuda.is_available():
+    if not _cuda_available():
         print("[Worker WARNING] CUDA not available. Running mock.")
         return None, None
 
     from transformers import AutoModelForCausalLM, AutoTokenizer
     bnb_config = get_bnb_config()
     local_base = Path(model_id).is_dir()
-    hub_commit = None if local_base else _hub_revision(model_id)
+    pinned_rev = None if local_base else _resolve_pinned_base_revision(model_id)
+    hub_commit = None if local_base else (_hub_revision(model_id, revision=pinned_rev) or pinned_rev)
     revision_arg = {"revision": hub_commit} if hub_commit else {}
     tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True, **revision_arg)
     if tokenizer.pad_token is None:
@@ -229,7 +284,7 @@ def load_qwen_lora_cluster():
     model = AutoModelForCausalLM.from_pretrained(
         model_id,
         quantization_config=bnb_config,
-        device_map={"": 0} if torch.cuda.device_count() >= 1 else "auto",
+        device_map={"": 0} if _cuda_device_count() >= 1 else "auto",
         torch_dtype=torch.float16,
         trust_remote_code=True,
         **revision_arg,
@@ -276,12 +331,50 @@ def load_qwen_lora_cluster():
     return model, tokenizer
 
 
+def _qwen_max_queue_depth() -> int:
+    try:
+        return max(1, int(os.getenv("QWEN_MAX_QUEUE_DEPTH", "2")))
+    except (TypeError, ValueError):
+        return 2
+
+
+def _qwen_lock_wait_seconds() -> float:
+    try:
+        return max(0.05, float(os.getenv("QWEN_LOCK_WAIT_SECONDS", "15.0")))
+    except (TypeError, ValueError):
+        return 15.0
+
+
 def generate_with_qwen(
     prompt: str, adapter: str = "generator", max_new_tokens: int = 1536, temperature: float = 0.2,
     system_instruction: Optional[str] = None, response: Response | None = None,
     enable_thinking: bool = False,
 ) -> str:
-    with _qwen_generation_lock:
+    global _qwen_queue_depth, _qwen_inflight, _qwen_total_tokens, _qwen_total_gen_sec, _qwen_last_tok_per_sec
+
+    max_queue = _qwen_max_queue_depth()
+    wait_timeout = _qwen_lock_wait_seconds()
+    with _qwen_queue_state_lock:
+        if _qwen_queue_depth >= max_queue:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Qwen worker busy (queue_depth={_qwen_queue_depth}/{max_queue}). Retry later.",
+                headers={"Retry-After": str(max(2, int(wait_timeout // 2) or 2))},
+            )
+        _qwen_queue_depth += 1
+
+    acquired = False
+    try:
+        acquired = _qwen_generation_lock.acquire(timeout=wait_timeout)
+        if not acquired:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Qwen generation queue wait exceeded {wait_timeout:.1f}s.",
+                headers={"Retry-After": str(max(2, int(wait_timeout // 2) or 2))},
+            )
+        with _qwen_queue_state_lock:
+            _qwen_inflight += 1
+
         model, tokenizer = load_qwen_lora_cluster()
         if model is None or tokenizer is None:
             raise HTTPException(503, detail="Generator model unavailable")
@@ -314,7 +407,9 @@ def generate_with_qwen(
             text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         inputs = tokenizer([text], return_tensors="pt").to(model.device)
 
-        with adapter_context, torch.no_grad():
+        t0 = time.monotonic()
+        no_grad_ctx = torch.no_grad() if torch is not None else nullcontext()
+        with adapter_context, no_grad_ctx:
             outputs = model.generate(
                 **inputs,
                 max_new_tokens=max_new_tokens,
@@ -322,14 +417,27 @@ def generate_with_qwen(
                 do_sample=(temperature > 0),
                 pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id,
             )
+        gen_elapsed = max(1e-4, time.monotonic() - t0)
 
         prompt_tokens = len(inputs.input_ids[0])
         generated = outputs[0][prompt_tokens:]
+        out_tokens = len(generated)
+        with _qwen_queue_state_lock:
+            _qwen_total_tokens += out_tokens
+            _qwen_total_gen_sec += gen_elapsed
+            _qwen_last_tok_per_sec = round(out_tokens / gen_elapsed, 2)
         text = tokenizer.decode(generated, skip_special_tokens=True).strip()
-        _token_headers(response, prompt_tokens, len(generated))
+        _token_headers(response, prompt_tokens, out_tokens)
         if response is not None:
             _model_headers(response, _qwen_model_name, _qwen_revision, active_adapter)
         return text
+    finally:
+        if acquired:
+            with _qwen_queue_state_lock:
+                _qwen_inflight = max(0, _qwen_inflight - 1)
+            _qwen_generation_lock.release()
+        with _qwen_queue_state_lock:
+            _qwen_queue_depth = max(0, _qwen_queue_depth - 1)
 
 
 # =====================================================================
@@ -359,8 +467,10 @@ def load_factcheck_model():
             return None, None
 
         for source_id, is_local_dir in candidates:
-            has_cuda = bool(getattr(torch, "cuda", None) and torch.cuda.is_available())
-            gpu_cnt = torch.cuda.device_count() if has_cuda else 0
+            if torch is None:
+                return None, None
+            has_cuda = _cuda_available()
+            gpu_cnt = _cuda_device_count()
             # When GPU 1 hosts heavy 8B+8B Qwen3 Embedding & Reranker, place lightweight NLI on GPU 0 alongside Qwen3-14B
             heavy_gpu1_retrieval = _is_qwen3_embedding(_active_embedding_model()) and "8b" in _active_embedding_model().lower()
             default_fc_gpu = 0 if (gpu_cnt >= 2 and heavy_gpu1_retrieval) else (1 if gpu_cnt >= 2 else 0)
@@ -404,10 +514,19 @@ def load_factcheck_model():
 # Pydantic Schemas & Endpoints
 # =====================================================================
 
+ROLE_MAX_NEW_TOKENS: dict[str, int] = {
+    "router": 384,
+    "critic": 512,
+    "writer": 512,
+    "generator": 768,
+    "none": 1024,
+}
+
+
 class RouterRequest(BaseModel):
     query: str
     adapter: str = "router"
-    max_new_tokens: int = 512
+    max_new_tokens: int = 384
 
 class SummarizeRequest(BaseModel):
     query: str
@@ -422,6 +541,7 @@ class CriticRequest(BaseModel):
     context: str
     claims: list[str] = []
     adapter: str = "critic"
+    max_tokens: int = 512
 
 class FactCheckRequest(BaseModel):
     claims: list[str]
@@ -467,7 +587,7 @@ class GenerateRequest(BaseModel):
     prompt: str
     system_instruction: Optional[str] = None
     adapter: str = "generator"
-    max_tokens: int = 1536
+    max_tokens: int = 1024
     temperature: float = 0.2
 
 
@@ -481,6 +601,7 @@ def _canonical_worker_profile(profile: str) -> str:
         "qa_dual_gpu": "qa_dual_gpu",
         "gpu_finetune": "qa_dual_gpu",
         "hybrid_specialist": "qa_dual_gpu",
+        "hybrid_sota_base": "qa_dual_gpu",
         "32b_tp2": "32b_tp2",
         "gpu_max": "32b_tp2",
     }
@@ -502,7 +623,7 @@ def warmup_all_gpus():
     if load_qwen:
         print("[GPU 0] Nạp Base Qwen2.5-7B / Qwen3-8B (4-bit NF4)...")
         load_qwen_lora_cluster()
-        if torch.cuda.is_available() and torch.cuda.device_count() >= 1:
+        if _cuda_device_count() >= 1:
             vram0 = torch.cuda.memory_allocated(0) / (1024 ** 3)
             print(f"✅ GPU 0 SẴN SÀNG! VRAM chiếm dụng: {vram0:.2f} GB")
     else:
@@ -517,7 +638,7 @@ def warmup_all_gpus():
         load_embedding_model()
         if profile != "ingest":
             load_reranker_model()
-    if torch.cuda.is_available() and torch.cuda.device_count() >= 2:
+    if _cuda_device_count() >= 2:
         vram1 = torch.cuda.memory_allocated(1) / (1024 ** 3)
         print(f"✅ GPU 1 SẴN SÀNG! VRAM chiếm dụng: {vram1:.2f} GB")
 
@@ -532,8 +653,8 @@ def healthcheck():
     profile = _get_worker_profile()
     canonical_profile = _canonical_worker_profile(profile)
     gpu_info = {}
-    if torch.cuda.is_available():
-        for i in range(torch.cuda.device_count()):
+    if _cuda_available():
+        for i in range(_cuda_device_count()):
             peak_fn = getattr(torch.cuda, "max_memory_allocated", None)
             peak_gb = round(peak_fn(i) / (1024 ** 3), 2) if callable(peak_fn) else round(torch.cuda.memory_allocated(i) / (1024 ** 3), 2)
             gpu_info[f"gpu_{i}"] = {
@@ -565,6 +686,12 @@ def healthcheck():
     models_ok = len(missing_models) == 0
     mandatory_ready = bool(adapters_ok and models_ok)
 
+    with _qwen_queue_state_lock:
+        q_depth = _qwen_queue_depth
+        q_inflight = _qwen_inflight
+        avg_tps = round(_qwen_total_tokens / _qwen_total_gen_sec, 2) if _qwen_total_gen_sec > 0 else 0.0
+        last_tps = _qwen_last_tok_per_sec
+
     return {
         "status": "online" if mandatory_ready else "degraded",
         "ready": mandatory_ready,
@@ -573,7 +700,14 @@ def healthcheck():
         "canonical_profile": canonical_profile,
         "git_commit_sha": (os.getenv("ACTIVE_GIT_COMMIT_SHA") or os.getenv("GIT_COMMIT_SHA") or "unpinned").strip(),
         "pipeline": "gpu_finetune_7_models",
-        "gpus_available": torch.cuda.device_count() if torch.cuda.is_available() else 0,
+        "gpus_available": _cuda_device_count(),
+        "queue": {
+            "queue_depth": q_depth,
+            "inflight": q_inflight,
+            "max_queue_depth": _qwen_max_queue_depth(),
+            "avg_tokens_per_sec": avg_tps,
+            "last_tokens_per_sec": last_tps,
+        },
         "loaded_adapters": loaded_adapters,
         "active_models": active_models,
         "mandatory_adapters": mandatory_adapters,
@@ -667,7 +801,8 @@ def summarize_critic(req: CriticRequest, response: Response = None):
         "Set is_supported (JSON boolean) to true only if the context supports every claim. Output JSON with is_supported, critique, action ('accept' | 'rewrite' | 'request_more_context'), issues_found (list).\n\n"
         f"Question: {req.query}\nContext:\n{req.context}\nProposed Answer:\n{req.answer}\nClaims:\n{json.dumps(req.claims)}"
     )
-    raw = generate_with_qwen(prompt, adapter="critic", max_new_tokens=512, temperature=0.1, response=response)
+    critic_max_tok = max(64, min(int(getattr(req, "max_tokens", None) or ROLE_MAX_NEW_TOKENS["critic"]), 768))
+    raw = generate_with_qwen(prompt, adapter="critic", max_new_tokens=critic_max_tok, temperature=0.1, response=response)
     data = _parse_output_object(raw)
     # Bridge training_lab critic schema (Unsupported_claims / Missing_key_points) -> issues_found
     if "issues_found" not in data and (
@@ -917,8 +1052,10 @@ def load_reranker_model():
     if "reranker" in _models:
         return _models["reranker"], _tokenizers["reranker"], _reranker_revision
 
+    if torch is None:
+        raise RuntimeError("PyTorch is required to load the reranker model.")
     active_model = _active_reranker_model()
-    gpu_count = torch.cuda.device_count() if getattr(torch, "cuda", None) and torch.cuda.is_available() else 0
+    gpu_count = _cuda_device_count()
     target_gpu = int(os.getenv("RERANKER_GPU_INDEX", str(1 if gpu_count >= 2 else 0))) if gpu_count else 0
     device = f"cuda:{target_gpu}" if gpu_count else "cpu"
     dtype = torch.float16 if gpu_count else torch.float32
@@ -1076,10 +1213,12 @@ def load_embedding_model():
     if "embedding" in _models:
         return _models["embedding"], _tokenizers["embedding"], _embedding_revision
 
+    if torch is None:
+        raise RuntimeError("PyTorch is required to load the embedding model.")
     from transformers import AutoModel, AutoTokenizer
 
     active_model = _active_embedding_model()
-    gpu_count = torch.cuda.device_count() if getattr(torch, "cuda", None) and torch.cuda.is_available() else 0
+    gpu_count = _cuda_device_count()
     target_gpu = int(os.getenv("EMBEDDING_GPU_INDEX", str(1 if gpu_count >= 2 else 0))) if gpu_count else 0
     device = f"cuda:{target_gpu}" if gpu_count else "cpu"
     dtype = torch.float16 if gpu_count else torch.float32
@@ -1199,6 +1338,8 @@ def embed_endpoint(req: EmbedRequest, response: Response = None):
 @app.post("/generate")
 @app.post("/api/generate")
 def generic_generate(req: GenerateRequest, response: Response = None):
-    out = generate_with_qwen(req.prompt, adapter=req.adapter, max_new_tokens=req.max_tokens, temperature=req.temperature,
+    role_cap = ROLE_MAX_NEW_TOKENS.get(str(req.adapter or "generator").strip().lower(), 1024)
+    effective_max = max(32, min(int(req.max_tokens or role_cap), 1536))
+    out = generate_with_qwen(req.prompt, adapter=req.adapter, max_new_tokens=effective_max, temperature=req.temperature,
                              system_instruction=req.system_instruction, response=response)
     return {"text": out, "adapter": req.adapter}

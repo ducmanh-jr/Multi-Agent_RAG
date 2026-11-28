@@ -14,6 +14,7 @@ class CPUMinFactCheckerAgent(BaseAgent):
     def run(self, state: AgentState) -> dict[str, Any]:
         result = review_claims(state)
         result["verifier_model_family"] = "deterministic_guard"
+        result["tools_used"] = ["deterministic_numeric_math_guard", "verbatim_quote_verifier"]
         result.setdefault("reasoning_trace", []).append(
             self.log_action("cpu_min_fact_check_completed", {"label": result["fact_check_label"],
                             "verified_count": len(result["verified_claims"]), "rejected_count": len(result["rejected_claims"])}))

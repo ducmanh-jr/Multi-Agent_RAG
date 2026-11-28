@@ -2,6 +2,7 @@
 
 import asyncio
 import hashlib
+import inspect
 import time
 import uuid
 from contextlib import aclosing
@@ -56,6 +57,14 @@ CHECKPOINT_STATE_KEYS = (
     "top_k",
     "retry_count",
     "max_reflection_loops",
+    "handoff_budgets",
+    "handoff_budget_limits",
+    "dag_round_index",
+    "draft_revision_needed",
+    "supervisor_mode",
+    "pending_tasks",
+    "last_result",
+    "agent_messages",
     "retrieved_docs",
     "seen_chunks",
     "no_new_evidence",
@@ -157,6 +166,7 @@ class ResearchRequest:
     comparison_timeout_seconds: float = DEFAULT_COMPARISON_TIMEOUT_SECONDS
     token_budget: int | None = None
     answer_language: str | None = None
+    supervisor_mode: str | None = None
     resume_state: dict[str, Any] | None = None
     resumed_from_run_id: str | None = None
     resumed_from_step: int | None = None
@@ -292,10 +302,17 @@ class ResearchRunService:
         comparison_timeout_seconds = float(
             manifest_cfg.get("comparison_timeout_seconds") or DEFAULT_COMPARISON_TIMEOUT_SECONDS
         )
+        # Legacy checkpoints saved before Hub mode lack `supervisor_mode`; preserve `"pipeline"` for them.
+        saved_supervisor_mode = str(
+            ckpt_state.get("supervisor_mode")
+            or manifest_cfg.get("supervisor_mode")
+            or "pipeline"
+        )
         start_at_node = resolve_next_node_after_checkpoint(
             checkpoint.get("node_name"),
             ckpt_state,
             comparison_plan=comparison_plan,
+            supervisor_mode=saved_supervisor_mode,
         )
 
         request = ResearchRequest(
@@ -312,6 +329,7 @@ class ResearchRunService:
             comparison_timeout_seconds=comparison_timeout_seconds,
             token_budget=token_budget,
             answer_language=saved_answer_lang,
+            supervisor_mode=saved_supervisor_mode,
             session_id=record.get("session_id"),
             resume_state=ckpt_state,
             resumed_from_run_id=source_run_id,
@@ -337,11 +355,21 @@ class ResearchRunService:
         )
         scout_enabled = request.auto_scout and not sources and not has_checkpoint_evidence
         waiting = not sources and not scout_enabled and not has_checkpoint_evidence
+        effective_supervisor_mode = (
+            "pipeline"
+            if str(
+                request.supervisor_mode
+                if request.supervisor_mode is not None
+                else getattr(request.config, "SUPERVISOR_MODE", "hub")
+            ).strip().lower() == "pipeline"
+            else "hub"
+        )
         admission = manifest_event(
             request.config, mode=request.mode, auto_scout=request.auto_scout, scout_enabled=scout_enabled,
             reflection_loops=request.max_reflection_loops, parallel_retrieval=request.parallel_retrieval,
             comparison_plan=request.comparison_plan,
             token_budget=request.token_budget,
+            supervisor_mode=effective_supervisor_mode,
         )
         traces = [admission]
         if request.resumed_from_run_id:
@@ -438,6 +466,15 @@ class ResearchRunService:
             request.query,
             explicit_answer_language=request.answer_language,
         )
+        effective_supervisor_mode = (
+            "pipeline"
+            if str(
+                request.supervisor_mode
+                if request.supervisor_mode is not None
+                else getattr(request.config, "SUPERVISOR_MODE", "hub")
+            ).strip().lower() == "pipeline"
+            else "hub"
+        )
         state: dict[str, Any] = {
             "query": request.query,
             "query_language": lang_bundle["query_language"],
@@ -456,6 +493,7 @@ class ResearchRunService:
                 for s in sources
             ],
             "retry_count": 0,
+            "supervisor_mode": effective_supervisor_mode,
             "chat_history": request.chat_history,
         }
         if isinstance(request.resume_state, dict):
@@ -493,6 +531,15 @@ class ResearchRunService:
                         "parallel_retrieval": request.parallel_retrieval,
                         "comparison_plan": request.comparison_plan,
                     }
+                    try:
+                        _sig_params = inspect.signature(build_research_rag_graph).parameters
+                        _accepts_sup = "supervisor_mode" in _sig_params or any(
+                            p.kind == inspect.Parameter.VAR_KEYWORD for p in _sig_params.values()
+                        )
+                    except (TypeError, ValueError):
+                        _accepts_sup = False
+                    if _accepts_sup:
+                        graph_kwargs["supervisor_mode"] = state.get("supervisor_mode") or effective_supervisor_mode
                     if request.auto_scout and sources:
                         graph_kwargs["allow_scout_handoff"] = True
                     if request.resume_start_at_node:
@@ -506,7 +553,13 @@ class ResearchRunService:
                         if isinstance(entry, dict)
                         and entry.get("action") not in {RUN_MANIFEST_ACTION, "run_resumed_from_checkpoint"}
                     ]
+                    cumulative_agent_messages: list[dict[str, Any]] = [
+                        deepcopy(msg)
+                        for msg in (state.get("agent_messages") or [])
+                        if isinstance(msg, dict)
+                    ]
                     state["reasoning_trace"] = list(cumulative_graph_trace)
+                    state["agent_messages"] = list(cumulative_agent_messages)
                     async with aclosing(graph.astream(state.copy(), stream_mode="updates")) as updates:
                         while await asyncio.to_thread(db.run_is_processing, run_id):
                             chunk = await anext(updates, None)
@@ -549,8 +602,14 @@ class ResearchRunService:
                                     trace.update(duration=f"{elapsed}s", duration_sec=elapsed, timestamp=time.time())
                                 traces.extend(node_traces)
                                 cumulative_graph_trace.extend(raw_node_traces)
+                                raw_node_messages = [
+                                    deepcopy(msg) for msg in output.get("agent_messages") or []
+                                    if isinstance(msg, dict)
+                                ]
+                                cumulative_agent_messages.extend(raw_node_messages)
                                 state.update(output)
                                 state["reasoning_trace"] = list(cumulative_graph_trace)
+                                state["agent_messages"] = list(cumulative_agent_messages)
                                 step_counter += 1
                                 schema_snap = state.get("document_schema") or {}
                                 checkpoint_state = {

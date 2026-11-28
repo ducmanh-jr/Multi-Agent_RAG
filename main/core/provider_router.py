@@ -7,10 +7,12 @@ Cleanly separates:
 
 Guarantees:
   1. Single-mode isolation: cpu_min, cpu_max, gpu_finetune, gpu_max NEVER silently call Gemini.
-  2. Hybrid routing: supports Gemini 3.8 Flash as primary LLM reasoning provider for complex/multi-doc
-     tasks (or when HYBRID_PROVIDER_PROFILE=gemini_first), with Kaggle Qwen 7B as fast-path/fallback.
-  3. Grounding invariants: embedding (BGE-M3), reranker (Guarded MiniLM), fact_checker (Local BGE NLI),
-     and citation_audit remain strictly local/Kaggle primary (never replaced by Gemini).
+  2. Hybrid routing: supports Gemini Flash (configured via DEFAULT_LLM_MODEL, e.g. gemini-3.5-flash)
+     as primary LLM reasoning provider for complex/multi-doc tasks (or when HYBRID_PROVIDER_PROFILE=gemini_first),
+     with Kaggle Qwen as fast-path/fallback.
+  3. Grounding invariants: embedding (BGE-M3), reranker (Guarded MiniLM), fact_checker (Local/Kaggle BGE NLI),
+     and citation_audit remain strictly local/Kaggle primary (never replaced by Gemini, and verifier must be
+     cross-family from the generator).
 """
 
 from __future__ import annotations
@@ -76,15 +78,58 @@ def assert_provider_allowed(provider: str, execution_mode: Optional[str], *, rol
         )
 
 
+def normalize_model_family(family: Optional[str]) -> str:
+    """Normalize a model/backend identifier into a coarse family token for cross-family verification checks."""
+    low = _clean(family)
+    if not low or low == "unknown":
+        return "unknown"
+    if "gemini" in low or "google" in low:
+        return "gemini"
+    if "qwen" in low or "gpu_max" in low or "kaggle_max" in low:
+        return "qwen"
+    if "bge" in low or "nli" in low or "minicheck" in low or "deberta" in low:
+        return "nli"
+    if "deepseek" in low:
+        return "deepseek"
+    if "gpt" in low or "openai" in low:
+        return "openai"
+    if "cpu" in low or "local" in low or "extractive" in low or "ollama" in low:
+        return "local"
+    return low
+
+
+def is_cross_family_verifier(generator_family: Optional[str], verifier_backend: str) -> bool:
+    """
+    Ensures the fact-checker does not use the same LLM family that generated the draft.
+    Dedicated NLI / deterministic local verifiers (`gpu_finetune` BGE-reranker NLI, `cpu_max` MiniCheck/deterministic)
+    are always cross-family relative to generative LLMs (Gemini, Qwen, DeepSeek, OpenAI).
+    """
+    gen_fam = normalize_model_family(generator_family)
+    ver_key = _clean(verifier_backend)
+    if ver_key in {"gpu_finetune", "cpu_max", "local"}:
+        return True
+    ver_fam = normalize_model_family(ver_key)
+    if gen_fam == "unknown" or ver_fam == "unknown":
+        return ver_fam != "gemini"
+    return gen_fam != ver_fam
+
+
 def is_gemini_permitted(execution_mode: Optional[str], *, role: str = "") -> bool:
     """
     Single centralized policy check governing whether any Gemini API call is allowed.
-    Enforces both execution-mode isolation AND HYBRID_PROVIDER_PROFILE=local_only zero-Gemini mode.
+    Enforces:
+      1. Execution-mode isolation (single local/GPU modes never call Gemini).
+      2. HYBRID_PROVIDER_PROFILE=local_only zero-Gemini mode.
+      3. STRICT_LOCAL_ROLES invariant in hybrid mode (embedding, reranker, fact_checker, citation_audit
+         never route to Gemini).
     """
     mode = _clean(execution_mode) or "cpu_min"
+    role_key = _clean(role)
     if not is_provider_allowed("gemini", mode):
         return False
     if mode in {"hybrid", "auto", "optimal"}:
+        if role_key in STRICT_LOCAL_ROLES:
+            return False
         profile = _clean(getattr(get_run_settings(), "HYBRID_PROVIDER_PROFILE", "auto")) or "auto"
         if profile == "local_only":
             return False
@@ -94,7 +139,7 @@ def is_gemini_permitted(execution_mode: Optional[str], *, role: str = "") -> boo
 def load_hybrid_provider_policy(overrides: Optional[Mapping[str, str]] = None) -> dict[str, str]:
     """
     Loads the effective Hybrid role -> provider policy from defaults + settings + optional overrides.
-    Always protects citation_audit as 'local'.
+    Always protects STRICT_LOCAL_ROLES from routing to 'gemini' and keeps citation_audit strictly 'local'.
     """
     policy = dict(DEFAULT_HYBRID_PROVIDER_POLICY)
     settings = get_run_settings()
@@ -116,7 +161,10 @@ def load_hybrid_provider_policy(overrides: Optional[Mapping[str, str]] = None) -
             p_val = _clean(prov)
             if r_key in policy and p_val in VALID_PROVIDERS:
                 policy[r_key] = p_val
-    # Grounding invariant: CitationAudit always runs deterministically locally.
+    # Grounding invariants: STRICT_LOCAL_ROLES never route to Gemini; citation_audit stays strictly local.
+    for strict_role in STRICT_LOCAL_ROLES:
+        if policy.get(strict_role) == "gemini":
+            policy[strict_role] = DEFAULT_HYBRID_PROVIDER_POLICY.get(strict_role, "local")
     policy["citation_audit"] = "local"
     return policy
 
@@ -170,15 +218,16 @@ class HybridProviderRouter:
         gpu_max_online = bool(caps.get("kaggle_max", {}).get("online") and caps.get("kaggle_max", {}).get("has_vllm_32b"))
 
         if role_key == "fact_checker":
-            # Verification invariant: Local/Kaggle BGE NLI Head ALWAYS comes before Gemini!
+            # Verification invariants:
+            # 1. STRICT_LOCAL_ROLES: Gemini is NEVER placed in the Hybrid fact_checker chain.
+            # 2. Cross-family rule: verifier must not share the generator's model family.
+            gen_family = str(state.get("generator_model_family") or "unknown")
             chain: list[str] = []
             if gpu_ft_online:
                 chain.append("gpu_finetune")
             chain.append("cpu_max")
-            if gpu_max_online:
+            if gpu_max_online and is_cross_family_verifier(gen_family, "gpu_max"):
                 chain.append("gpu_max")
-            if gemini_online:
-                chain.append("gemini")
             return chain
 
         if role_key in {"embedding", "reranker"}:

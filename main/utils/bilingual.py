@@ -87,6 +87,7 @@ BILINGUAL_PHRASE_MAP: dict[str, list[str]] = {
     "khai trương": ["inaugurated", "opened"],
     # Experimental, Quantitative & Table Concepts
     "thử nghiệm": ["trial", "experiment", "experiments"],
+    "thí nghiệm": ["trial", "experiment", "experiments"],
     "kéo dài": ["lasted", "ran", "duration", "days", "hours"],
     "bao nhiêu ngày": ["days", "duration"],
     "bao nhiêu": ["how", "many", "count", "number", "total"],
@@ -225,6 +226,7 @@ BILINGUAL_PHRASE_MAP: dict[str, list[str]] = {
     "điểm phần trăm": ["percentage", "points", "pp", "percent"],
     "phần trăm": ["percent", "percentage", "%"],
     "nồng độ": ["concentration", "nitrate", "mg/l", "level"],
+    "nitrat": ["nitrate", "nitrates"],
     "đất": ["soil", "ground"],
     "hóa đơn": ["invoice", "invoices", "receipt"],
     "quét": ["scan", "scanned", "ocr"],

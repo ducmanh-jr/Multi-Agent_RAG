@@ -268,11 +268,12 @@ def _extract_page_table_chunks(
         return []
     table_chunks: list[dict[str, Any]] = []
     try:
-        tabs = page.find_tables()
-        tables = list(getattr(tabs, "tables", None) or [])
+        from core.pdf_ingest import _extract_page_table_entries_robust, _format_markdown_rows
+
+        table_entries = _extract_page_table_entries_robust(page)
     except Exception:
         return []
-    if not tables:
+    if not table_entries:
         return []
 
     # Collect nearby caption candidates (Table N / Bảng N)
@@ -286,9 +287,8 @@ def _extract_page_table_chunks(
     except Exception:
         caption_blocks = []
 
-    for idx, tab in enumerate(tables, start=1):
+    for idx, (bbox, extracted_rows) in enumerate(table_entries, start=1):
         try:
-            extracted_rows = tab.extract() or []
             if len(extracted_rows) < 2:
                 continue
             max_cols = max((len(r) for r in extracted_rows if isinstance(r, list)), default=0)
@@ -300,13 +300,11 @@ def _extract_page_table_chunks(
             )
             if non_empty_cells < 3:
                 continue
-            md = (tab.to_markdown() or "").strip()
+            md = _format_markdown_rows(extracted_rows[0], extracted_rows[1:]).strip()
             if not md:
                 continue
         except Exception:
             continue
-
-        bbox = list(getattr(tab, "bbox", (0.0, 0.0, 0.0, 0.0)))
         # Match closest Table caption within 65pt above or below the table
         matched_caption = ""
         best_dist = 65.0

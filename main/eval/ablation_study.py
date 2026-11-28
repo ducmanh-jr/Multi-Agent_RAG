@@ -245,6 +245,7 @@ def _invoke_compiled_graph(
     mode: str = "cpu_min",
     max_reflection_loops: int = 2,
     enable_reader_handoff: bool = True,
+    disabled_agent_handoffs: List[str] | None = None,
 ) -> Dict[str, Any]:
     """Invokes an ALREADY-COMPILED Research RAG graph and times ONLY execution (not graph build)."""
     state: Dict[str, Any] = {
@@ -258,6 +259,7 @@ def _invoke_compiled_graph(
         "critic_iterations": 0,
         "max_reflection_loops": max(0, int(max_reflection_loops)),
         "enable_reader_handoff": bool(enable_reader_handoff),
+        "disabled_agent_handoffs": list(disabled_agent_handoffs or []),
     }
     t0 = time.perf_counter()
     final_state = app.invoke(state)
@@ -324,6 +326,10 @@ def _run_paired_graph_ablation(
     loops_on: int = 2,
     reader_handoff_off: bool = True,
     reader_handoff_on: bool = True,
+    supervisor_mode_off: str = "pipeline",
+    supervisor_mode_on: str = "pipeline",
+    disabled_handoffs_off: List[str] | None = None,
+    disabled_handoffs_on: List[str] | None = None,
     warm_pdf_cache: bool = True,
     repeats: int = 1,
 ) -> Dict[str, Any]:
@@ -356,12 +362,16 @@ def _run_paired_graph_ablation(
         auto_scout=False,
         parallel_retrieval=parallel_retrieval,
         enable_reader_handoff=reader_handoff_off,
+        supervisor_mode=supervisor_mode_off,
+        disabled_agent_handoffs=disabled_handoffs_off,
     )
     app_on = build_research_rag_graph(
         mode=mode,
         auto_scout=False,
         parallel_retrieval=parallel_retrieval,
         enable_reader_handoff=reader_handoff_on,
+        supervisor_mode=supervisor_mode_on,
+        disabled_agent_handoffs=disabled_handoffs_on,
     )
 
     per_question: List[Dict[str, Any]] = []
@@ -404,19 +414,23 @@ def _run_paired_graph_ablation(
                 r_on = _invoke_compiled_graph(
                     app_on, prompt, pdf_paths, mode=mode,
                     max_reflection_loops=loops_on, enable_reader_handoff=reader_handoff_on,
+                    disabled_agent_handoffs=disabled_handoffs_on,
                 )
                 r_off = _invoke_compiled_graph(
                     app_off, prompt, pdf_paths, mode=mode,
                     max_reflection_loops=loops_off, enable_reader_handoff=reader_handoff_off,
+                    disabled_agent_handoffs=disabled_handoffs_off,
                 )
             else:
                 r_off = _invoke_compiled_graph(
                     app_off, prompt, pdf_paths, mode=mode,
                     max_reflection_loops=loops_off, enable_reader_handoff=reader_handoff_off,
+                    disabled_agent_handoffs=disabled_handoffs_off,
                 )
                 r_on = _invoke_compiled_graph(
                     app_on, prompt, pdf_paths, mode=mode,
                     max_reflection_loops=loops_on, enable_reader_handoff=reader_handoff_on,
+                    disabled_agent_handoffs=disabled_handoffs_on,
                 )
             off_lats.append(r_off["latency_sec"])
             on_lats.append(r_on["latency_sec"])
@@ -667,6 +681,89 @@ def run_isolated_reader_handoff_ablation(
         warm_pdf_cache=warm_pdf_cache,
         repeats=repeats,
     )
+
+
+def run_pipeline_vs_hub_ablation(
+    questions: List[Dict[str, Any]],
+    *,
+    mode: str = "cpu_min",
+    pdf_root: Path | None = None,
+    parallel_retrieval: bool = False,
+    max_reflection_loops: int = 2,
+    warm_pdf_cache: bool = True,
+    repeats: int = 3,
+) -> Dict[str, Any]:
+    """
+    Fair graph-level paired ablation comparing fixed `pipeline` vs Hub-and-Spoke `hub` orchestration
+    under identical questions, PDFs, mode, reflection budget, alternated order, and repeated timing.
+    """
+    return _run_paired_graph_ablation(
+        questions,
+        experiment_type="pipeline_vs_hub_ablation",
+        label_off="pipeline",
+        label_on="hub",
+        mode=mode,
+        pdf_root=pdf_root,
+        parallel_retrieval=parallel_retrieval,
+        loops_off=max_reflection_loops,
+        loops_on=max_reflection_loops,
+        reader_handoff_off=True,
+        reader_handoff_on=True,
+        supervisor_mode_off="pipeline",
+        supervisor_mode_on="hub",
+        warm_pdf_cache=warm_pdf_cache,
+        repeats=repeats,
+    )
+
+
+def run_per_agent_autonomy_ablation(
+    questions: List[Dict[str, Any]],
+    *,
+    roles: List[str] | None = None,
+    mode: str = "cpu_min",
+    supervisor_mode: str = "hub",
+    pdf_root: Path | None = None,
+    parallel_retrieval: bool = False,
+    max_reflection_loops: int = 2,
+    warm_pdf_cache: bool = True,
+    repeats: int = 1,
+) -> Dict[str, Any]:
+    """
+    Phase 4 per-agent autonomy ablation: isolates each specialist's individual contribution by
+    comparing `disabled_agent_handoffs=[role]` (off) vs full autonomy `disabled_agent_handoffs=[]` (on)
+    under identical questions, PDFs, mode, budget, and `supervisor_mode`.
+    """
+    target_roles = list(roles or ["reader", "retrieval", "summarizer", "fact_checker", "writer"])
+    per_role: Dict[str, Any] = {}
+    for role in target_roles:
+        clean_role = str(role).strip().lower()
+        per_role[clean_role] = _run_paired_graph_ablation(
+            questions,
+            experiment_type=f"per_agent_autonomy_ablation:{clean_role}",
+            label_off=f"{clean_role}_handoff_off",
+            label_on=f"{clean_role}_handoff_on",
+            mode=mode,
+            pdf_root=pdf_root,
+            parallel_retrieval=parallel_retrieval,
+            loops_off=max_reflection_loops,
+            loops_on=max_reflection_loops,
+            reader_handoff_off=(clean_role != "reader"),
+            reader_handoff_on=True,
+            supervisor_mode_off=supervisor_mode,
+            supervisor_mode_on=supervisor_mode,
+            disabled_handoffs_off=[clean_role],
+            disabled_handoffs_on=[],
+            warm_pdf_cache=warm_pdf_cache,
+            repeats=repeats,
+        )
+    return {
+        "experiment_type": "per_agent_autonomy_ablation",
+        "mode": mode,
+        "supervisor_mode": supervisor_mode,
+        "sample_count": len(questions),
+        "roles_evaluated": target_roles,
+        "per_role": per_role,
+    }
 
 
 def run_full_multi_agent(question: str, selected_doc: str, mode: str = "cpu_min") -> Dict[str, Any]:

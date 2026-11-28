@@ -1,0 +1,322 @@
+[
+  {
+    "id": "nli_en_sup_01",
+    "language": "en",
+    "category": "numeric_exact",
+    "premise": "The Transformer (big) achieves 28.4 BLEU on the WMT 2014 English-to-German translation task, improving over the previously best reported models by more than 2 BLEU.",
+    "claim": "The Transformer (big) achieved 28.4 BLEU on the WMT 2014 English-to-German translation task.",
+    "gold_label": "SUPPORT"
+  },
+  {
+    "id": "nli_en_sup_02",
+    "language": "en",
+    "category": "architecture_exact",
+    "premise": "In the base Transformer model, both the encoder and decoder are composed of a stack of N = 6 identical layers with d_model = 512 and 8 attention heads.",
+    "claim": "The base Transformer encoder uses 6 layers with model dimension 512 and 8 attention heads.",
+    "gold_label": "SUPPORT"
+  },
+  {
+    "id": "nli_en_sup_03",
+    "language": "en",
+    "category": "efficiency_exact",
+    "premise": "Compared to GPT-3 175B fine-tuned with Adam, LoRA can reduce the number of trainable parameters by 10,000 times and the GPU memory requirement by 3 times.",
+    "claim": "LoRA reduces the number of trainable parameters by 10,000 times and GPU memory requirement by 3 times compared to GPT-3 175B fine-tuned with Adam.",
+    "gold_label": "SUPPORT"
+  },
+  {
+    "id": "nli_en_sup_04",
+    "language": "en",
+    "category": "method_exact",
+    "premise": "RAG combines a pre-trained seq2seq generator (BART-large) with a dense vector index of Wikipedia accessed through a pre-trained neural retriever (DPR).",
+    "claim": "RAG pairs a BART-large generator with a DPR dense retriever over a Wikipedia index.",
+    "gold_label": "SUPPORT"
+  },
+  {
+    "id": "nli_en_sup_05",
+    "language": "en",
+    "category": "math_exact",
+    "premise": "Scaled dot-product attention computes softmax((Q K^T) / sqrt(d_k)) V where d_k = 64 in the base configuration.",
+    "claim": "Scaled dot-product attention scales Q K^T by 1/sqrt(d_k) with d_k = 64 in the base configuration.",
+    "gold_label": "SUPPORT"
+  },
+  {
+    "id": "nli_en_sup_06",
+    "language": "en",
+    "category": "inference_latency",
+    "premise": "LoRA introduces no additional inference latency when deployed because the trainable matrices A and B can be merged into the frozen weights W_0 before inference.",
+    "claim": "LoRA introduces no additional inference latency when matrices A and B are merged into W_0.",
+    "gold_label": "SUPPORT"
+  },
+  {
+    "id": "nli_en_sup_07",
+    "language": "en",
+    "category": "benchmark_exact",
+    "premise": "On Natural Questions, RAG-Sequence reaches 44.5 exact match accuracy, outperforming closed-book T5-11B+SSM.",
+    "claim": "RAG-Sequence achieves 44.5 exact match on Natural Questions.",
+    "gold_label": "SUPPORT"
+  },
+  {
+    "id": "nli_en_sup_08",
+    "language": "en",
+    "category": "training_cost",
+    "premise": "The Transformer base model was trained on 8 NVIDIA P100 GPUs for 100,000 steps taking approximately 12 hours.",
+    "claim": "The base Transformer trained for 100,000 steps in roughly 12 hours on 8 P100 GPUs.",
+    "gold_label": "SUPPORT"
+  },
+  {
+    "id": "nli_vi_sup_09",
+    "language": "vi",
+    "category": "vi_numeric",
+    "premise": "Mô hình RoBERTa tinh chỉnh trên tập dữ liệu 8,453 mẫu đạt điểm Macro-F1 là 89.4% và độ trễ trung bình 42 ms trên GPU T4.",
+    "claim": "Mô hình RoBERTa tinh chỉnh đạt Macro-F1 89.4% trên 8,453 mẫu với độ trễ trung bình 42 ms.",
+    "gold_label": "SUPPORT"
+  },
+  {
+    "id": "nli_vi_sup_10",
+    "language": "vi",
+    "category": "vi_method",
+    "premise": "Hệ thống sử dụng tìm kiếm lai giữa BM25 và embedding dày đặc BGE-M3 kết hợp xếp hạng lại bằng Cross-Encoder trước khi đọc bảng biểu.",
+    "claim": "Hệ thống kết hợp BM25 với embedding BGE-M3 và bộ xếp hạng lại Cross-Encoder.",
+    "gold_label": "SUPPORT"
+  },
+  {
+    "id": "nli_vi_sup_11",
+    "language": "vi",
+    "category": "vi_ablation",
+    "premise": "Trong bảng thực nghiệm loại bỏ thành phần, việc bỏ bộ kiểm chứng chéo làm tỷ lệ ảo giác tăng từ 4.2% lên 15.8%.",
+    "claim": "Khi loại bỏ bộ kiểm chứng chéo, tỷ lệ ảo giác tăng từ 4.2% lên 15.8%.",
+    "gold_label": "SUPPORT"
+  },
+  {
+    "id": "nli_vi_sup_12",
+    "language": "vi",
+    "category": "vi_paraphrase",
+    "premise": "Dữ liệu đánh giá được chia tách hoàn toàn theo từng tài liệu gốc nhằm tránh rò rỉ dữ liệu giữa tập huấn luyện và tập kiểm thử.",
+    "claim": "Tập huấn luyện và tập kiểm thử được tách theo tài liệu gốc để ngăn rò rỉ dữ liệu.",
+    "gold_label": "SUPPORT"
+  },
+  {
+    "id": "nli_bi_sup_13",
+    "language": "bilingual",
+    "category": "cross_lingual",
+    "premise": "LoRA freezes the pre-trained model weights and injects trainable rank decomposition matrices into each layer of the Transformer architecture.",
+    "claim": "LoRA đóng băng trọng số mô hình tiền huấn luyện và chèn ma trận phân rã hạng có thể huấn luyện vào từng tầng Transformer.",
+    "gold_label": "SUPPORT"
+  },
+  {
+    "id": "nli_bi_sup_14",
+    "language": "bilingual",
+    "category": "cross_lingual_num",
+    "premise": "Table 4 reports an end-to-end throughput of 14.6 samples per second using 4-bit NF4 quantization on a single Tesla T4 GPU.",
+    "claim": "Bảng 4 báo cáo thông lượng đầu cuối đạt 14.6 mẫu mỗi giây với lượng tử hóa 4-bit NF4 trên một GPU Tesla T4.",
+    "gold_label": "SUPPORT"
+  },
+  {
+    "id": "nli_en_con_15",
+    "language": "en",
+    "category": "numeric_swap",
+    "premise": "The Transformer (big) achieves 28.4 BLEU on the WMT 2014 English-to-German translation task.",
+    "claim": "The Transformer (big) achieves 34.8 BLEU on the WMT 2014 English-to-German translation task.",
+    "gold_label": "CONTRADICT"
+  },
+  {
+    "id": "nli_en_con_16",
+    "language": "en",
+    "category": "negation_flip",
+    "premise": "LoRA introduces no additional inference latency when deployed because the low-rank updates are merged into the base weights.",
+    "claim": "LoRA introduces substantial additional inference latency during deployment.",
+    "gold_label": "CONTRADICT"
+  },
+  {
+    "id": "nli_en_con_17",
+    "language": "en",
+    "category": "count_mismatch",
+    "premise": "The base Transformer encoder consists of a stack of 6 identical layers with 8 attention heads.",
+    "claim": "The base Transformer encoder consists of 12 identical layers with 16 attention heads.",
+    "gold_label": "CONTRADICT"
+  },
+  {
+    "id": "nli_en_con_18",
+    "language": "en",
+    "category": "direction_reversal",
+    "premise": "Removing the reranker decreased Recall@5 from 88.2% down to 74.5% across the multi-hop benchmark.",
+    "claim": "Removing the reranker increased Recall@5 from 74.5% up to 88.2% across the multi-hop benchmark.",
+    "gold_label": "CONTRADICT"
+  },
+  {
+    "id": "nli_en_con_19",
+    "language": "en",
+    "category": "year_mismatch",
+    "premise": "The Retrieval-Augmented Generation paper by Lewis et al. was published in 2020 and evaluated on Natural Questions and TriviaQA.",
+    "claim": "The Retrieval-Augmented Generation paper by Lewis et al. was published in 2017.",
+    "gold_label": "CONTRADICT"
+  },
+  {
+    "id": "nli_en_con_20",
+    "language": "en",
+    "category": "entity_swap",
+    "premise": "In Table 2, RAG-Sequence uses the same retrieved document to predict every token in the target sequence, whereas RAG-Token can pick a different passage per token.",
+    "claim": "In Table 2, RAG-Sequence selects a different retrieved passage for each individual output token, whereas RAG-Token uses one fixed document.",
+    "gold_label": "CONTRADICT"
+  },
+  {
+    "id": "nli_en_con_21",
+    "language": "en",
+    "category": "math_script_swap",
+    "premise": "The regularization term penalizes the squared norm x^2 of the adapter weights with coefficient lambda = 0.01.",
+    "claim": "The regularization term penalizes the second component x_2 of the adapter weights with coefficient lambda = 0.01.",
+    "gold_label": "CONTRADICT"
+  },
+  {
+    "id": "nli_en_con_22",
+    "language": "en",
+    "category": "hardware_mismatch",
+    "premise": "The Transformer base model was trained on 8 NVIDIA P100 GPUs for 12 hours.",
+    "claim": "The Transformer base model was trained on 64 TPU v4 chips for 7 days.",
+    "gold_label": "CONTRADICT"
+  },
+  {
+    "id": "nli_vi_con_23",
+    "language": "vi",
+    "category": "vi_numeric_swap",
+    "premise": "Kết quả kiểm định cho thấy tỷ lệ trích dẫn chính xác đạt 82.5% với độ trễ p50 là 1.4 giây.",
+    "claim": "Kết quả kiểm định cho thấy tỷ lệ trích dẫn chính xác đạt 98.5% với độ trễ p50 là 0.2 giây.",
+    "gold_label": "CONTRADICT"
+  },
+  {
+    "id": "nli_vi_con_24",
+    "language": "vi",
+    "category": "vi_negation_flip",
+    "premise": "Chế độ cpu_min chạy hoàn toàn ngoại tuyến và không bao giờ gọi Gemini API trong quá trình suy luận.",
+    "claim": "Chế độ cpu_min luôn gọi Gemini API cho bước tổng hợp và kiểm chứng.",
+    "gold_label": "CONTRADICT"
+  },
+  {
+    "id": "nli_vi_con_25",
+    "language": "vi",
+    "category": "vi_direction_flip",
+    "premise": "Việc tách ngân sách handoff theo từng loại giúp giảm 35% số lần cạn ngân sách kiểm chứng.",
+    "claim": "Việc tách ngân sách handoff làm tăng 35% số lần cạn ngân sách kiểm chứng.",
+    "gold_label": "CONTRADICT"
+  },
+  {
+    "id": "nli_vi_con_26",
+    "language": "vi",
+    "category": "vi_count_swap",
+    "premise": "Hệ thống thử nghiệm dùng 2 GPU Tesla T4, mỗi GPU có 16 GB VRAM.",
+    "claim": "Hệ thống thử nghiệm dùng 4 GPU A100, mỗi GPU có 80 GB VRAM.",
+    "gold_label": "CONTRADICT"
+  },
+  {
+    "id": "nli_bi_con_27",
+    "language": "bilingual",
+    "category": "cross_lingual_num_swap",
+    "premise": "LoRA reduces GPU memory requirements by 3 times compared to full Adam fine-tuning on GPT-3 175B.",
+    "claim": "LoRA giảm yêu cầu bộ nhớ GPU tới 30 lần so với fine-tuning đầy đủ trên GPT-3 175B.",
+    "gold_label": "CONTRADICT"
+  },
+  {
+    "id": "nli_en_con_28",
+    "language": "en",
+    "category": "percentage_mismatch",
+    "premise": "On the held-out adversarial trap split, abstention accuracy reached 70.0% without external hints.",
+    "claim": "On the held-out adversarial trap split, abstention accuracy reached 100.0% without external hints.",
+    "gold_label": "CONTRADICT"
+  },
+  {
+    "id": "nli_en_nei_29",
+    "language": "en",
+    "category": "missing_metric",
+    "premise": "The Transformer (big) achieves 28.4 BLEU on WMT 2014 English-to-German and 41.8 BLEU on English-to-French.",
+    "claim": "The Transformer (big) achieves 31.2 BLEU on WMT 2014 English-to-Japanese translation.",
+    "gold_label": "NOT_ENOUGH_INFO"
+  },
+  {
+    "id": "nli_en_nei_30",
+    "language": "en",
+    "category": "missing_cost",
+    "premise": "LoRA adapts only the query and value attention projection matrices with rank r = 4 on GPT-3 175B.",
+    "claim": "Training LoRA on GPT-3 175B cost exactly $14,200 in cloud electricity bills.",
+    "gold_label": "NOT_ENOUGH_INFO"
+  },
+  {
+    "id": "nli_en_nei_31",
+    "language": "en",
+    "category": "missing_dataset",
+    "premise": "RAG is evaluated on open-domain QA benchmarks including Natural Questions, TriviaQA, WebQuestions, and CuratedTrec.",
+    "claim": "RAG outperformed human experts on the Vietnamese Legal Bar Examination.",
+    "gold_label": "NOT_ENOUGH_INFO"
+  },
+  {
+    "id": "nli_en_nei_32",
+    "language": "en",
+    "category": "missing_hyperparam",
+    "premise": "We use the Adam optimizer with beta1 = 0.9, beta2 = 0.98, and epsilon = 1e-9 during Transformer training.",
+    "claim": "The learning rate warmup schedule used cosine annealing with restarts every 5 epochs.",
+    "gold_label": "NOT_ENOUGH_INFO"
+  },
+  {
+    "id": "nli_en_nei_33",
+    "language": "en",
+    "category": "unrelated_claim",
+    "premise": "The Reader agent extracts verbatim source units with SHA-256 context hashes and page bounding boxes from academic PDFs.",
+    "claim": "The deployment cluster uses Kubernetes autoscaling across three AWS European regions.",
+    "gold_label": "NOT_ENOUGH_INFO"
+  },
+  {
+    "id": "nli_en_nei_34",
+    "language": "en",
+    "category": "missing_ablation",
+    "premise": "Dense retrieval with BGE-M3 operates over 1024-dimensional normalized embeddings on GPU 1.",
+    "claim": "Quantizing BGE-M3 embeddings to INT8 reduced storage footprint by 72% with 0.3% recall drop.",
+    "gold_label": "NOT_ENOUGH_INFO"
+  },
+  {
+    "id": "nli_vi_nei_35",
+    "language": "vi",
+    "category": "vi_missing_metric",
+    "premise": "Bài báo đánh giá độ chính xác trích dẫn và độ trễ suy luận trên tập câu hỏi nghiên cứu khoa học.",
+    "claim": "Hệ thống tiêu thụ trung bình 185 Watt điện năng trong suốt 12 giờ chạy Kaggle.",
+    "gold_label": "NOT_ENOUGH_INFO"
+  },
+  {
+    "id": "nli_vi_nei_36",
+    "language": "vi",
+    "category": "vi_missing_entity",
+    "premise": "Supervisor Hub điều phối 6 agent chuyên biệt thông qua hợp đồng AgentTask và AgentResult.",
+    "claim": "Hệ thống hỗ trợ xuất báo cáo trực tiếp sang định dạng LaTeX IEEE hai cột tự động.",
+    "gold_label": "NOT_ENOUGH_INFO"
+  },
+  {
+    "id": "nli_vi_nei_37",
+    "language": "vi",
+    "category": "vi_missing_author",
+    "premise": "Mô hình mDeBERTa-v3-base-xnli được dùng để phân loại 3 nhãn SUPPORT, CONTRADICT và NOT_ENOUGH_INFO.",
+    "claim": "Tác giả huấn luyện lại mDeBERTa-v3 trên 500,000 cặp câu y khoa tiếng Việt tại Bệnh viện Bạch Mai.",
+    "gold_label": "NOT_ENOUGH_INFO"
+  },
+  {
+    "id": "nli_vi_nei_38",
+    "language": "vi",
+    "category": "vi_unrelated",
+    "premise": "Cơ chế ngắt mạch riêng theo từng endpoint giúp lỗi ở generator không khóa các truy vấn NLI trên GPU 1.",
+    "claim": "Cơ sở dữ liệu người dùng được sao lưu định kỳ sang Amazon S3 mỗi 6 giờ.",
+    "gold_label": "NOT_ENOUGH_INFO"
+  },
+  {
+    "id": "nli_en_nei_39",
+    "language": "en",
+    "category": "missing_comparison",
+    "premise": "Multi-head attention allows the model to jointly attend to information from different representation subspaces at different positions.",
+    "claim": "Multi-head attention achieves higher carbon efficiency than State Space Models like Mamba-2 on 128k context.",
+    "gold_label": "NOT_ENOUGH_INFO"
+  },
+  {
+    "id": "nli_bi_nei_40",
+    "language": "bilingual",
+    "category": "cross_lingual_unmentioned",
+    "premise": "The Fact-Checker verifies numerical consistency, date bounds, and math subscript/superscript alignment before publishing a report.",
+    "claim": "Tỷ lệ người dùng hài lòng trong khảo sát thực tế tại 5 trường đại học đạt 94%.",
+    "gold_label": "NOT_ENOUGH_INFO"
+  }
+]

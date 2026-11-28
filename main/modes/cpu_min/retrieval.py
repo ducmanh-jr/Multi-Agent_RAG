@@ -261,9 +261,17 @@ class CPUMinRetrievalAgent(BaseAgent):
                     return ranking
             return self._search_index(queries, active_fts, active_bm25, top_k=limit)
 
-        # 2. Retrieval Strategy:
-        # If this is a general summary/overview query: sample chunks distributed across ALL pages of ALL documents!
-        if is_summary_query and active_pool and not is_focused_retrieval(state):
+        # 2. Retrieval Strategy via Bounded Specialist Tool Loop (max 3 local tools, zero LLM calls)
+        tool_ctx: dict[str, Any] = {
+            "results": [],
+            "focused": is_focused_retrieval(state),
+            "effective_q": str(state.get("resolved_query") or clean_q).strip() or clean_q,
+            "primary_queries": [],
+            "boost_q": str(state.get("resolved_query") or clean_q).strip() or clean_q,
+            "coverage_ratio": 1.0,
+        }
+
+        def _tool_summary_sample() -> int:
             docs_by_id: dict[str, dict[int, list[dict[str, Any]]]] = {}
             for chunk in active_pool:
                 d_id = str(chunk.get("doc_id", "doc"))
@@ -274,15 +282,11 @@ class CPUMinRetrievalAgent(BaseAgent):
             for d_id, page_dict in docs_by_id.items():
                 sorted_pages = sorted(page_dict.keys())
                 max_page = sorted_pages[-1] if sorted_pages else 1
-
-                # If large document (e.g. textbook > 20 pages), skip frontmatter (pages 1-15) to avoid TOC & copyright
                 if max_page > 20:
                     body_pages = [p for p in sorted_pages if p >= 16]
                     pages_to_sample = body_pages if len(body_pages) >= 5 else sorted_pages
                 else:
                     pages_to_sample = sorted_pages
-
-                # Evenly sample 16-20 representative pages across the document body
                 sample_count = min(len(pages_to_sample), 20)
                 if sample_count > 0:
                     step = len(pages_to_sample) / float(sample_count)
@@ -291,55 +295,88 @@ class CPUMinRetrievalAgent(BaseAgent):
                         chunks_on_page = page_dict[p]
                         best_chunk = max(chunks_on_page, key=lambda c: len(str(c.get("text", "")).strip()))
                         sampled_summary.append(best_chunk)
+            tool_ctx["results"] = sampled_summary if sampled_summary else active_pool[: max(top_k, 20)]
+            return len(tool_ctx["results"])
 
-            results = sampled_summary if sampled_summary else active_pool[: max(top_k, 20)]
-        else:
-            # First-pass multi-query lexical search (always bridged VI<->EN + equation/table structure)
-            focused = is_focused_retrieval(state)
-            effective_q = str(state.get("resolved_query") or clean_q).strip() or clean_q
+        def _tool_fts5_bm25_search() -> int:
+            focused = tool_ctx["focused"]
+            effective_q = tool_ctx["effective_q"]
             boost_q = (
                 " ".join(dict.fromkeys([*sub_queries[:2], effective_q]))
                 if focused and sub_queries
                 else effective_q
             )
+            tool_ctx["boost_q"] = boost_q
             bridged_queries = build_cross_lingual_subqueries(boost_q, active_pool)
             primary_queries = list(dict.fromkeys([*sub_queries, *bridged_queries]))[:6]
-            results = search(primary_queries, max(top_k + 4, top_k), "primary")
-            if focused and active_pool:
-                seen_id_set = {c.get("id") for c in seen_chunks if isinstance(c, dict)}
-                targeted_tables = find_referenced_table_chunks(active_pool, primary_queries, seen_id_set)
-                if targeted_tables:
-                    existing_rids = {d.get("id") for d in results if isinstance(d, dict)}
-                    results = [*targeted_tables, *(d for d in results if d.get("id") not in {t.get("id") for t in targeted_tables})]
-                    if len(results) < len(existing_rids):
-                        results = results
-            if results:
-                results = boost_entities_tables_and_equations(boost_q, results, required_entities, top_k)
+            tool_ctx["primary_queries"] = primary_queries
+            found = search(primary_queries, max(top_k + 4, top_k), "primary")
+            if found:
+                found = boost_entities_tables_and_equations(boost_q, found, required_entities, top_k)
+            tool_ctx["results"] = found
+            return len(found)
 
-        # 3. Internal Coverage Gate: Check if required_entities are covered
-        if required_entities and results and not is_summary_query:
-            combined_text = " ".join(str(r.get("text", "")) for r in results).lower()
-            covered = sum(1 for ent in required_entities if ent.lower() in combined_text)
-            coverage_ratio = covered / max(len(required_entities), 1)
-        else:
-            coverage_ratio = 1.0 if results else 0.0
+        def _tool_referenced_table_lookup() -> int:
+            seen_id_set = {c.get("id") for c in seen_chunks if isinstance(c, dict)}
+            targeted_tables = find_referenced_table_chunks(active_pool, tool_ctx["primary_queries"], seen_id_set)
+            if targeted_tables:
+                target_ids = {t.get("id") for t in targeted_tables}
+                merged = [*targeted_tables, *(d for d in tool_ctx["results"] if d.get("id") not in target_ids)]
+                tool_ctx["results"] = boost_entities_tables_and_equations(
+                    tool_ctx["boost_q"], merged, required_entities, top_k
+                )
+            return len(targeted_tables)
 
-        if coverage_ratio < 0.5 or not results:
+        def _tool_bilingual_coverage_expansion() -> int:
             expanded_queries = list(sub_queries)
             try:
                 from utils.bilingual import expand_bilingual_tokens
                 base_tokens = set(re.findall(r"\w+", clean_q.lower()))
                 bilingual_tokens = expand_bilingual_tokens(clean_q, base_tokens)
-                expanded_queries.append(" ".join(list(bilingual_tokens)[:12]))
+                expanded_queries.append(" ".join(sorted(bilingual_tokens)[:24]))
             except Exception:
                 pass
             if required_entities:
                 expanded_queries.append(" ".join(required_entities))
             res_expanded = search(expanded_queries, top_k + 2, "coverage_expansion")
             if res_expanded:
-                results = boost_entities_tables_and_equations(
+                tool_ctx["results"] = boost_entities_tables_and_equations(
                     str(state.get("resolved_query") or clean_q), res_expanded, required_entities, top_k
                 )
+            return len(res_expanded)
+
+        def _retrieval_tool_planner(step_idx: int, history: list[dict[str, Any]]):
+            if step_idx == 0:
+                if is_summary_query and active_pool and not tool_ctx["focused"]:
+                    return ("distributed_page_sampler", {})
+                return ("fts5_bm25_search", {})
+            last_tool = history[-1]["tool"] if history else ""
+            if last_tool == "fts5_bm25_search" and tool_ctx["focused"] and active_pool:
+                return ("referenced_table_lookup", {})
+            if last_tool in {"fts5_bm25_search", "referenced_table_lookup"} and not is_summary_query:
+                res_now = tool_ctx["results"]
+                if required_entities and res_now:
+                    combined_text = " ".join(str(r.get("text", "")) for r in res_now).lower()
+                    covered = sum(1 for ent in required_entities if ent.lower() in combined_text)
+                    cov = covered / max(len(required_entities), 1)
+                else:
+                    cov = 1.0 if res_now else 0.0
+                tool_ctx["coverage_ratio"] = cov
+                if cov < 0.5 or not res_now:
+                    return ("bilingual_coverage_expansion", {})
+            return None
+
+        tool_loop = self.run_bounded_tool_loop(
+            {
+                "distributed_page_sampler": _tool_summary_sample,
+                "fts5_bm25_search": _tool_fts5_bm25_search,
+                "referenced_table_lookup": _tool_referenced_table_lookup,
+                "bilingual_coverage_expansion": _tool_bilingual_coverage_expansion,
+            },
+            _retrieval_tool_planner,
+            max_steps=3,
+        )
+        results = tool_ctx["results"]
 
         # Fallback to first chunks of selected PDF only if results is still empty
         if not results and active_pool and is_summary_query:
@@ -359,6 +396,7 @@ class CPUMinRetrievalAgent(BaseAgent):
             {
                 "engine": "Distributed_Sampling_FTS5_BM25",
                 "strategy_used": "sparse",
+                "tools_used": tool_loop["tools_used"],
                 "top_k": top_k,
                 "docs_scoped": len(pdf_paths),
                 "is_summary_query": is_summary_query,
@@ -376,5 +414,6 @@ class CPUMinRetrievalAgent(BaseAgent):
             "retrieved_docs": fresh_docs,
             "seen_chunks": all_seen,
             "no_new_evidence": no_new_evidence,
+            "tools_used": tool_loop["tools_used"],
             "reasoning_trace": [*schedules, trace],
         }
