@@ -366,7 +366,9 @@ def run_multidomain_benchmark(mode: str = "cpu_min"):
         )
 
         # 1. Strict Metrics
-        _, _, strict_f1 = compute_strict_citation_f1(answer, evidence, gold_keywords)
+        _, _, strict_f1 = compute_strict_citation_f1(
+            answer, evidence, gold_keywords, is_unanswerable=is_unanswerable
+        )
         strict_groundedness = compute_strict_groundedness(answer, evidence, is_unanswerable)
         strict_abstain = compute_strict_abstention_accuracy(answer, is_unanswerable)
 
@@ -382,7 +384,7 @@ def run_multidomain_benchmark(mode: str = "cpu_min"):
             "question": q_text,
             "is_unanswerable": is_unanswerable,
             "answer": answer,
-            "strict_f1": strict_f1,
+            "strict_f1": None if is_unanswerable else strict_f1,
             "strict_groundedness": strict_groundedness,
             "strict_abstain": strict_abstain,
             "tone_score": tone_eval["score"],
@@ -394,8 +396,9 @@ def run_multidomain_benchmark(mode: str = "cpu_min"):
         }
         results.append(record)
 
+        f1_disp = f"{strict_f1*100:.1f}%" if not is_unanswerable else "N/A (trap)"
         print(
-            f"    -> F1: {strict_f1*100:.1f}% | Grounded: {strict_groundedness*100:.1f}% | "
+            f"    -> F1: {f1_disp} | Grounded: {strict_groundedness*100:.1f}% | "
             f"Abstain: {strict_abstain*100:.1f}% | Văn phong: {tone_eval['rating']} | "
             f"Trình bày: {presentation_eval['rating']} ({latency:.2f}s)"
         )
@@ -411,11 +414,13 @@ def run_multidomain_benchmark(mode: str = "cpu_min"):
         d = r["domain"]
         if d not in domains_summary:
             domains_summary[d] = {
-                "count": 0, "f1": 0.0, "grounded": 0.0, "abstain": 0.0,
+                "count": 0, "f1": 0.0, "f1_count": 0, "grounded": 0.0, "abstain": 0.0,
                 "tone": 0.0, "pres": 0.0, "latency": 0.0, "traps": 0, "traps_passed": 0
             }
         domains_summary[d]["count"] += 1
-        domains_summary[d]["f1"] += r["strict_f1"]
+        if r.get("strict_f1") is not None:
+            domains_summary[d]["f1"] += r["strict_f1"]
+            domains_summary[d]["f1_count"] += 1
         domains_summary[d]["grounded"] += r["strict_groundedness"]
         domains_summary[d]["abstain"] += r["strict_abstain"]
         domains_summary[d]["tone"] += r["tone_score"]
@@ -432,13 +437,14 @@ def run_multidomain_benchmark(mode: str = "cpu_min"):
         f.write("# BÁO CÁO ĐÁNH GIÁ CHUYÊN SÂU ĐA LĨNH VỰC (MULTI-DOMAIN EVALUATION)\n")
         f.write("**Quy mô kiểm định**: 4 Lĩnh vực khoa học & đời sống với 20 câu hỏi biên.\n\n")
         f.write("## I. BẢNG TỔNG HỢP HIỆU NĂNG THEO TỪNG LĨNH VỰC\n\n")
-        f.write("| Lĩnh vực khảo sát | Số câu | Strict F1 | Groundedness | Kháng bẫy (Traps) | Văn phong | Trình bày | Độ trễ p50 |\n")
+        f.write("| Lĩnh vực khảo sát | Số câu | Strict F1 (trả lời được) | Groundedness | Kháng bẫy (Traps) | Văn phong | Trình bày | Độ trễ p50 |\n")
         f.write("| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |\n")
         for d, s in domains_summary.items():
             c = s["count"]
+            f1_avg = (s["f1"] / s["f1_count"] * 100) if s["f1_count"] > 0 else 0.0
             trap_pct = (s["traps_passed"] / s["traps"] * 100) if s["traps"] > 0 else 100.0
             f.write(
-                f"| **{d}** | {c} | **{s['f1']/c*100:.1f}%** | **{s['grounded']/c*100:.1f}%** | "
+                f"| **{d}** | {c} | **{f1_avg:.1f}% (n={s['f1_count']})** | **{s['grounded']/c*100:.1f}%** | "
                 f"**{trap_pct:.1f}%** | {s['tone']/c*100:.1f}% | {s['pres']/c*100:.1f}% | {s['latency']/c:.2f}s |\n"
             )
 
@@ -447,9 +453,10 @@ def run_multidomain_benchmark(mode: str = "cpu_min"):
         f.write("| :---: | :--- | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: |\n")
         for r in results:
             short_q = r["question"][:45] + "..." if len(r["question"]) > 45 else r["question"]
+            f1_cell = f"{r['strict_f1']*100:.0f}%" if r.get("strict_f1") is not None else "N/A"
             f.write(
                 f"| `{r['id']}` | {r['domain'][:20]} | {r['category']} | {short_q} | "
-                f"{r['strict_f1']*100:.0f}% | {r['strict_groundedness']*100:.0f}% | {r['strict_abstain']*100:.0f}% | "
+                f"{f1_cell} | {r['strict_groundedness']*100:.0f}% | {r['strict_abstain']*100:.0f}% | "
                 f"{r['tone_rating']} | {r['presentation_rating'][:15]}... | {r['latency_s']}s |\n"
             )
 

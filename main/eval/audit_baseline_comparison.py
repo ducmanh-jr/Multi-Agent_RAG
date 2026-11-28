@@ -104,13 +104,16 @@ def run_dual_audit(mode: str = "cpu_min", limit_questions: int = 4):
         legacy_res = eval_legacy(q, final_state, dt)
 
         # 2. Compute Strict Metrics
-        _, _, strict_f1 = compute_strict_citation_f1(answer, evidence, gold_keywords)
+        _, _, strict_f1 = compute_strict_citation_f1(
+            answer, evidence, gold_keywords, is_unanswerable=is_unanswerable
+        )
         strict_grounded = compute_strict_groundedness(answer, evidence, is_unanswerable)
         strict_abstain = compute_strict_abstention_accuracy(answer, is_unanswerable)
 
         comparison_results.append({
             "id": qid,
             "category": cat,
+            "is_unanswerable": is_unanswerable,
             "legacy": {
                 "groundedness": legacy_res["groundedness"],
                 "citation_f1": legacy_res["citation_f1"],
@@ -118,7 +121,7 @@ def run_dual_audit(mode: str = "cpu_min", limit_questions: int = 4):
             },
             "strict": {
                 "groundedness": strict_grounded,
-                "citation_f1": strict_f1,
+                "citation_f1": None if is_unanswerable else strict_f1,
                 "abstention_acc": strict_abstain,
             },
             "answer_preview": answer[:120].replace("\n", " "),
@@ -129,24 +132,29 @@ def run_dual_audit(mode: str = "cpu_min", limit_questions: int = 4):
     print(f"{'ID':<8} | {'Category':<16} | {'Legacy F1':<10} | {'Strict F1':<10} | {'Legacy Ground':<14} | {'Strict Ground':<14} | {'Strict Abstain'}")
     print("------------------------------------------------------------------------------------------------------")
     for r in comparison_results:
+        strict_f1_cell = f"{r['strict']['citation_f1']*100:>8.1f}%" if r["strict"]["citation_f1"] is not None else f"{'N/A':>9}"
         print(
             f"{r['id']:<8} | {r['category']:<16} | "
-            f"{r['legacy']['citation_f1']*100:>8.1f}% | {r['strict']['citation_f1']*100:>8.1f}% | "
+            f"{r['legacy']['citation_f1']*100:>8.1f}% | {strict_f1_cell} | "
             f"{r['legacy']['groundedness']*100:>12.1f}% | {r['strict']['groundedness']*100:>12.1f}% | "
             f"{r['strict']['abstention_acc']*100:>12.1f}%"
         )
     print("------------------------------------------------------------------------------------------------------")
 
-    # Averages
+    # Averages (exclude unanswerable queries from Citation F1 average; score them via Abstention Accuracy)
+    answerable_rows = [r for r in comparison_results if r["strict"]["citation_f1"] is not None]
     avg_leg_f1 = sum(r["legacy"]["citation_f1"] for r in comparison_results) / len(comparison_results)
-    avg_str_f1 = sum(r["strict"]["citation_f1"] for r in comparison_results) / len(comparison_results)
+    avg_str_f1 = (
+        sum(r["strict"]["citation_f1"] for r in answerable_rows) / len(answerable_rows)
+        if answerable_rows else 0.0
+    )
     avg_leg_gr = sum(r["legacy"]["groundedness"] for r in comparison_results) / len(comparison_results)
     avg_str_gr = sum(r["strict"]["groundedness"] for r in comparison_results) / len(comparison_results)
     avg_leg_ab = sum(r["legacy"]["abstention_acc"] for r in comparison_results) / len(comparison_results)
     avg_str_ab = sum(r["strict"]["abstention_acc"] for r in comparison_results) / len(comparison_results)
 
     print(
-        f"{'AVERAGE':<8} | {'ALL':<16} | "
+        f"{'AVERAGE':<8} | {f'ALL (F1 n={len(answerable_rows)})':<16} | "
         f"{avg_leg_f1*100:>8.1f}% | {avg_str_f1*100:>8.1f}% | "
         f"{avg_leg_gr*100:>12.1f}% | {avg_str_gr*100:>12.1f}% | "
         f"{avg_str_ab*100:>12.1f}%"

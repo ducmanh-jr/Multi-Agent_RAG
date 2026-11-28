@@ -113,7 +113,9 @@ def compute_strict_citation_f1(
     all_cited_set: Set[int] = set(cited_indices)
 
     if is_unanswerable:
-        return (1.0, 1.0, 1.0) if not all_cited_set else (0.0, 0.0, 0.0)
+        if all_cited_set:
+            return (0.0, 0.0, 0.0)
+        return (1.0, 1.0, 1.0) if is_strict_abstention(answer) else (0.0, 0.0, 0.0)
 
     if not evidence_list or not all_cited_set:
         return (0.0, 0.0, 0.0)

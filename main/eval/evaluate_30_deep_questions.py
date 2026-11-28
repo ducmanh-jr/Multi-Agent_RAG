@@ -422,7 +422,9 @@ def run_30_questions_deep_eval(mode: str = "cpu_min"):
         )
 
         # 1. Strict Metrics
-        _, _, strict_f1 = compute_strict_citation_f1(answer, evidence, gold_keywords)
+        _, _, strict_f1 = compute_strict_citation_f1(
+            answer, evidence, gold_keywords, is_unanswerable=is_unanswerable
+        )
         strict_groundedness = compute_strict_groundedness(answer, evidence, is_unanswerable)
         strict_abstain = compute_strict_abstention_accuracy(answer, is_unanswerable)
 
@@ -436,7 +438,7 @@ def run_30_questions_deep_eval(mode: str = "cpu_min"):
             "question": q_text,
             "is_unanswerable": is_unanswerable,
             "answer": answer,
-            "strict_f1": strict_f1,
+            "strict_f1": None if is_unanswerable else strict_f1,
             "strict_groundedness": strict_groundedness,
             "strict_abstain": strict_abstain,
             "tone_score": tone_eval["score"],
@@ -448,7 +450,8 @@ def run_30_questions_deep_eval(mode: str = "cpu_min"):
         }
         detailed_reports.append(record)
 
-        print(f"    -> F1: {strict_f1*100:.1f}% | Grounded: {strict_groundedness*100:.1f}% | Abstain: {strict_abstain*100:.1f}% | Văn phong: {tone_eval['rating']} | Trình bày: {presentation_eval['rating']} ({latency:.2f}s)")
+        f1_disp = f"{strict_f1*100:.1f}%" if not is_unanswerable else "N/A (trap)"
+        print(f"    -> F1: {f1_disp} | Grounded: {strict_groundedness*100:.1f}% | Abstain: {strict_abstain*100:.1f}% | Văn phong: {tone_eval['rating']} | Trình bày: {presentation_eval['rating']} ({latency:.2f}s)")
 
     # Save to JSON
     json_out_path = ROOT_DIR / "eval" / "deep_eval_30_results.json"
@@ -467,7 +470,8 @@ def run_30_questions_deep_eval(mode: str = "cpu_min"):
 
 def generate_markdown_report(records: List[Dict[str, Any]], out_path: Path):
     total = len(records)
-    avg_f1 = sum(r["strict_f1"] for r in records) / total
+    f1_scored = [r["strict_f1"] for r in records if r.get("strict_f1") is not None]
+    avg_f1 = (sum(f1_scored) / len(f1_scored)) if f1_scored else 0.0
     avg_ground = sum(r["strict_groundedness"] for r in records) / total
     avg_abstain = sum(r["strict_abstain"] for r in records) / total
     avg_tone = sum(r["tone_score"] for r in records) / total
@@ -478,13 +482,13 @@ def generate_markdown_report(records: List[Dict[str, Any]], out_path: Path):
         "# BÁO CÁO ĐÁNH GIÁ CHUYÊN SÂU 30 CÂU HỎI BIÊN",
         f"**Tài liệu kiểm định**: `{TARGET_PDF}`  ",
         f"**Chủ đề**: Y tế thông minh, Phẫu thuật nội soi AI, Mô hình Không gian Trạng thái (MICCAI).  ",
-        f"**Tổng số câu hỏi đánh giá**: 30 câu hỏi biên (phân bố đa tầng).  ",
+        f"**Tổng số câu hỏi đánh giá**: {total} câu hỏi biên (trong đó {len(f1_scored)} câu trả lời được chấm Citation F1; {total - len(f1_scored)} câu bẫy chấm riêng bằng Abstention Accuracy).  ",
         "",
         "## I. BẢNG TỔNG HỢP HIỆU NĂNG TOÀN DIỆN (EXECUTIVE SCORECARD)",
         "",
         "| Tiêu chí đánh giá | Điểm trung bình | Mức độ xếp hạng | Đánh giá tổng quan |",
         "| :--- | :---: | :---: | :--- |",
-        f"| **Tỷ lệ Trích dẫn Chuẩn (Strict Citation F1)** | **{avg_f1*100:.1f}%** | 🟢 Xuất sắc | Các trích dẫn `[n]` liên kết chính xác đoạn văn bản gốc trong PDF |",
+        f"| **Tỷ lệ Trích dẫn Chuẩn (Strict Citation F1, n={len(f1_scored)})** | **{avg_f1*100:.1f}%** | 🟢 Xuất sắc | Các trích dẫn `[n]` liên kết chính xác đoạn văn bản gốc trong PDF |",
         f"| **Tỷ lệ Căn cứ Thực tế (Strict Groundedness)** | **{avg_ground*100:.1f}%** | 🟢 Rất cao | Không bịa đặt số liệu hay tên tác giả |",
         f"| **Khả năng Từ chối Bẫy (Abstention Accuracy)** | **{avg_abstain*100:.1f}%** | 🟢 Tuyệt đối | Nhận diện 100% câu hỏi bẫy và từ chối dứt khoát |",
         f"| **Văn phong Khoa học (Academic Tone)** | **{avg_tone*100:.1f}%** | 🟢 Chuyên nghiệp | Giọng văn trung lập, khách quan, thuật ngữ y khoa chuẩn mực |",
@@ -501,9 +505,10 @@ def generate_markdown_report(records: List[Dict[str, Any]], out_path: Path):
 
     for idx, r in enumerate(records, 1):
         q_short = (r["question"][:45] + "...") if len(r["question"]) > 45 else r["question"]
+        f1_str = f"{r['strict_f1']*100:.0f}%" if r.get("strict_f1") is not None else "N/A"
         lines.append(
             f"| {idx} | `{r['id']}` | {r['category']} | {q_short} | "
-            f"{r['strict_f1']*100:.0f}% | {r['strict_groundedness']*100:.0f}% | {r['strict_abstain']*100:.0f}% | "
+            f"{f1_str} | {r['strict_groundedness']*100:.0f}% | {r['strict_abstain']*100:.0f}% | "
             f"{r['tone_rating']} | {r['presentation_rating']} | {r['latency_s']}s |"
         )
 
