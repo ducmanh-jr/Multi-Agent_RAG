@@ -340,6 +340,7 @@ class AgentState(TypedDict, total=False):
     # 7. Orchestration & Budget Controls
     retry_count: int
     max_reflection_loops: int
+    enable_reader_handoff: bool
     chat_history: list[dict[str, str]]
     query_with_context: Optional[str]
     resolved_query: Optional[str]

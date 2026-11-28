@@ -237,24 +237,16 @@ def _resolve_doc_paths(item: Dict[str, Any], pdf_root: Path | None = None) -> Li
     return [str(cand if cand.is_absolute() or cand.exists() else (base / selected_doc))]
 
 
-def run_graph_variant(
+def _invoke_compiled_graph(
+    app: Any,
     question: str,
     pdf_paths: List[str],
     *,
     mode: str = "cpu_min",
     max_reflection_loops: int = 2,
-    parallel_retrieval: bool = False,
-    auto_scout: bool = False,
+    enable_reader_handoff: bool = True,
 ) -> Dict[str, Any]:
-    """Run the real compiled Research RAG graph with explicit handoff/parallel toggles."""
-    from core.graph import build_research_rag_graph
-
-    t0 = time.perf_counter()
-    app = build_research_rag_graph(
-        mode=mode,
-        auto_scout=auto_scout,
-        parallel_retrieval=parallel_retrieval,
-    )
+    """Invokes an ALREADY-COMPILED Research RAG graph and times ONLY execution (not graph build)."""
     state: Dict[str, Any] = {
         "query": question,
         "question": question,
@@ -265,7 +257,9 @@ def run_graph_variant(
         "retry_count": 0,
         "critic_iterations": 0,
         "max_reflection_loops": max(0, int(max_reflection_loops)),
+        "enable_reader_handoff": bool(enable_reader_handoff),
     }
+    t0 = time.perf_counter()
     final_state = app.invoke(state)
     latency = time.perf_counter() - t0
 
@@ -288,25 +282,64 @@ def run_graph_variant(
     }
 
 
-def run_paired_handoff_ablation(
+def run_graph_variant(
+    question: str,
+    pdf_paths: List[str],
+    *,
+    mode: str = "cpu_min",
+    max_reflection_loops: int = 2,
+    parallel_retrieval: bool = False,
+    auto_scout: bool = False,
+    enable_reader_handoff: bool = True,
+) -> Dict[str, Any]:
+    """Run the real compiled Research RAG graph with explicit handoff/parallel/Reader toggles."""
+    from core.graph import build_research_rag_graph
+
+    app = build_research_rag_graph(
+        mode=mode,
+        auto_scout=auto_scout,
+        parallel_retrieval=parallel_retrieval,
+        enable_reader_handoff=enable_reader_handoff,
+    )
+    return _invoke_compiled_graph(
+        app,
+        question,
+        pdf_paths,
+        mode=mode,
+        max_reflection_loops=max_reflection_loops,
+        enable_reader_handoff=enable_reader_handoff,
+    )
+
+
+def _run_paired_graph_ablation(
     questions: List[Dict[str, Any]],
     *,
+    experiment_type: str,
+    label_off: str,
+    label_on: str,
     mode: str = "cpu_min",
     pdf_root: Path | None = None,
     parallel_retrieval: bool = False,
-    max_reflection_loops_on: int = 2,
+    loops_off: int = 0,
+    loops_on: int = 2,
+    reader_handoff_off: bool = True,
+    reader_handoff_on: bool = True,
     warm_pdf_cache: bool = True,
+    repeats: int = 1,
 ) -> Dict[str, Any]:
     """
-    Fair graph-level paired ablation toggling ONLY supervised handoff budget:
-      - handoff_off: `max_reflection_loops = 0`
-      - handoff_on:  `max_reflection_loops = max_reflection_loops_on`
-    Runs on identical pinned questions, documents, mode, and graph code.
-    Pre-warms PDF parse cache (when `warm_pdf_cache=True`) so `off` vs `on` latencies
-    are strictly comparable without cold-parse bias on the first variant.
-    Reports per-question deltas (improved/degraded/unchanged), handoff yield,
-    and separate p50/p95 latencies for sufficient-evidence vs handoff-triggered queries.
+    Core fair paired ablation runner:
+      - Pre-compiles both graphs BEFORE starting any latency timers.
+      - Optionally pre-warms PDF parse cache once.
+      - Alternates execution order `(off->on)` vs `(on->off)` per question and per repeat
+        to eliminate ordering and cache-warmup bias.
+      - Excludes `is_unanswerable=True` questions from average Strict Citation F1 (scoring them
+        strictly via Abstention Accuracy & Groundedness) and reports `citation_f1_scored_count`.
+      - Reports both overall `question_handoff_yield` and `reader_handoff_yield`.
     """
+    from core.graph import build_research_rag_graph
+
+    rep_count = max(1, int(repeats))
     if warm_pdf_cache:
         warmed_paths: set[str] = set()
         for q in questions:
@@ -318,13 +351,27 @@ def run_paired_handoff_ablation(
                     except Exception:
                         pass
 
+    app_off = build_research_rag_graph(
+        mode=mode,
+        auto_scout=False,
+        parallel_retrieval=parallel_retrieval,
+        enable_reader_handoff=reader_handoff_off,
+    )
+    app_on = build_research_rag_graph(
+        mode=mode,
+        auto_scout=False,
+        parallel_retrieval=parallel_retrieval,
+        enable_reader_handoff=reader_handoff_on,
+    )
+
     per_question: List[Dict[str, Any]] = []
-    off_metrics: List[Dict[str, float]] = []
-    on_metrics: List[Dict[str, float]] = []
+    off_metrics: List[Dict[str, Any]] = []
+    on_metrics: List[Dict[str, Any]] = []
     lat_off_all: List[float] = []
     lat_on_all: List[float] = []
     lat_on_no_handoff: List[float] = []
     lat_on_with_handoff: List[float] = []
+    lat_on_with_reader_handoff: List[float] = []
 
     improved = 0
     degraded = 0
@@ -332,6 +379,9 @@ def run_paired_handoff_ablation(
     handoff_triggered = 0
     handoff_improved = 0
     handoff_degraded = 0
+    reader_handoff_triggered = 0
+    reader_handoff_improved = 0
+    reader_handoff_degraded = 0
 
     for idx, q in enumerate(questions, 1):
         qid = str(q.get("id") or f"q_{idx}")
@@ -341,37 +391,69 @@ def run_paired_handoff_ablation(
         gold_keywords = list(q.get("gold_keywords") or [])
         gold_sources = q.get("gold_sources")
 
-        res_off = run_graph_variant(
-            prompt,
-            pdf_paths,
-            mode=mode,
-            max_reflection_loops=0,
-            parallel_retrieval=parallel_retrieval,
-        )
-        res_on = run_graph_variant(
-            prompt,
-            pdf_paths,
-            mode=mode,
-            max_reflection_loops=max_reflection_loops_on,
-            parallel_retrieval=parallel_retrieval,
-        )
+        off_lats: List[float] = []
+        on_lats: List[float] = []
+        res_off: Dict[str, Any] = {}
+        res_on: Dict[str, Any] = {}
+        orders_used: List[str] = []
 
-        def _score(res: Dict[str, Any]) -> Dict[str, float]:
+        for rep in range(rep_count):
+            run_on_first = ((idx + rep) % 2 == 0)
+            orders_used.append("on_first" if run_on_first else "off_first")
+            if run_on_first:
+                r_on = _invoke_compiled_graph(
+                    app_on, prompt, pdf_paths, mode=mode,
+                    max_reflection_loops=loops_on, enable_reader_handoff=reader_handoff_on,
+                )
+                r_off = _invoke_compiled_graph(
+                    app_off, prompt, pdf_paths, mode=mode,
+                    max_reflection_loops=loops_off, enable_reader_handoff=reader_handoff_off,
+                )
+            else:
+                r_off = _invoke_compiled_graph(
+                    app_off, prompt, pdf_paths, mode=mode,
+                    max_reflection_loops=loops_off, enable_reader_handoff=reader_handoff_off,
+                )
+                r_on = _invoke_compiled_graph(
+                    app_on, prompt, pdf_paths, mode=mode,
+                    max_reflection_loops=loops_on, enable_reader_handoff=reader_handoff_on,
+                )
+            off_lats.append(r_off["latency_sec"])
+            on_lats.append(r_on["latency_sec"])
+            res_off = r_off
+            res_on = r_on
+
+        med_off_lat = _percentile(off_lats, 50)
+        med_on_lat = _percentile(on_lats, 50)
+
+        def _score(res: Dict[str, Any]) -> Dict[str, Any]:
             ans = res["answer"]
             ev = res["retrieved_docs"]
+            ground = compute_strict_groundedness(ans, ev, is_unanswerable=is_unanswerable)
+            abstain = compute_strict_abstention_accuracy(ans, is_unanswerable)
+            if is_unanswerable:
+                # Unanswerable traps are excluded from Citation F1 averages and scored via abstention + groundedness
+                composite = round((ground + abstain) / 2.0, 4)
+                return {
+                    "citation_precision": None,
+                    "citation_recall": None,
+                    "citation_f1": None,
+                    "groundedness": ground,
+                    "abstention": abstain,
+                    "keyword_recall": None,
+                    "composite": composite,
+                }
             p, r, f1 = compute_strict_citation_f1(
                 ans,
                 ev,
                 gold_keywords,
-                is_unanswerable=is_unanswerable,
+                is_unanswerable=False,
                 gold_sources=gold_sources,
             )
-            ground = compute_strict_groundedness(ans, ev, is_unanswerable=is_unanswerable)
-            abstain = compute_strict_abstention_accuracy(ans, is_unanswerable)
             kw_hits = (
                 sum(1 for kw in gold_keywords if kw and kw.lower() in ans.lower()) / len(gold_keywords)
-                if gold_keywords and not is_unanswerable
-                else (1.0 if (is_unanswerable and abstain >= 1.0) else 0.0)
+                if gold_keywords
+                else 0.0
             )
             composite = round((f1 + ground + abstain + kw_hits) / 4.0, 4)
             return {
@@ -388,8 +470,8 @@ def run_paired_handoff_ablation(
         m_on = _score(res_on)
         off_metrics.append(m_off)
         on_metrics.append(m_on)
-        lat_off_all.append(res_off["latency_sec"])
-        lat_on_all.append(res_on["latency_sec"])
+        lat_off_all.append(med_off_lat)
+        lat_on_all.append(med_on_lat)
 
         delta = round(m_on["composite"] - m_off["composite"], 4)
         if delta > 1e-4:
@@ -403,58 +485,101 @@ def run_paired_handoff_ablation(
             unchanged += 1
 
         triggered = res_on["handoff_count"] > 0
+        reader_triggered = res_on["reader_handoff_count"] > 0
         if triggered:
             handoff_triggered += 1
-            lat_on_with_handoff.append(res_on["latency_sec"])
+            lat_on_with_handoff.append(med_on_lat)
             if outcome == "improved":
                 handoff_improved += 1
             elif outcome == "degraded":
                 handoff_degraded += 1
         else:
-            lat_on_no_handoff.append(res_on["latency_sec"])
+            lat_on_no_handoff.append(med_on_lat)
+
+        if reader_triggered:
+            reader_handoff_triggered += 1
+            lat_on_with_reader_handoff.append(med_on_lat)
+            if outcome == "improved":
+                reader_handoff_improved += 1
+            elif outcome == "degraded":
+                reader_handoff_degraded += 1
 
         per_question.append(
             {
                 "id": qid,
                 "category": q.get("category", "unspecified"),
+                "is_unanswerable": is_unanswerable,
+                "order": orders_used[0] if len(orders_used) == 1 else orders_used,
                 "outcome": outcome,
                 "composite_delta": delta,
                 "handoff_triggered": triggered,
+                "reader_handoff_triggered": reader_triggered,
                 "handoff_count": res_on["handoff_count"],
+                "reader_handoff_count": res_on["reader_handoff_count"],
                 "handoff_pairs": res_on["handoff_pairs"],
-                "off": {**m_off, "latency_sec": round(res_off["latency_sec"], 4)},
-                "on": {**m_on, "latency_sec": round(res_on["latency_sec"], 4)},
+                "off": {**m_off, "latency_sec": med_off_lat},
+                "on": {**m_on, "latency_sec": med_on_lat},
             }
         )
 
-    def _avg(rows: List[Dict[str, float]], key: str) -> float:
-        return round(sum(row[key] for row in rows) / len(rows), 4) if rows else 0.0
+    def _avg_non_null(rows: List[Dict[str, Any]], key: str) -> tuple[float, int]:
+        vals = [float(row[key]) for row in rows if row.get(key) is not None]
+        return (round(sum(vals) / len(vals), 4), len(vals)) if vals else (0.0, 0)
+
+    off_f1, f1_n = _avg_non_null(off_metrics, "citation_f1")
+    on_f1, _ = _avg_non_null(on_metrics, "citation_f1")
+    off_kw, kw_n = _avg_non_null(off_metrics, "keyword_recall")
+    on_kw, _ = _avg_non_null(on_metrics, "keyword_recall")
+    off_gr, _ = _avg_non_null(off_metrics, "groundedness")
+    on_gr, _ = _avg_non_null(on_metrics, "groundedness")
+    off_ab, _ = _avg_non_null(off_metrics, "abstention")
+    on_ab, _ = _avg_non_null(on_metrics, "abstention")
+    off_comp, _ = _avg_non_null(off_metrics, "composite")
+    on_comp, _ = _avg_non_null(on_metrics, "composite")
 
     return {
+        "experiment_type": experiment_type,
         "mode": mode,
         "parallel_retrieval": parallel_retrieval,
         "total_questions": len(questions),
-        "handoff_off": {
-            "citation_f1": _avg(off_metrics, "citation_f1"),
-            "groundedness": _avg(off_metrics, "groundedness"),
-            "abstention": _avg(off_metrics, "abstention"),
-            "keyword_recall": _avg(off_metrics, "keyword_recall"),
-            "composite": _avg(off_metrics, "composite"),
+        "citation_f1_scored_count": f1_n,
+        "keyword_recall_scored_count": kw_n,
+        "unanswerable_count": len(questions) - f1_n,
+        "repeats": rep_count,
+        "order_alternated": True,
+        "graph_precompiled": True,
+        label_off: {
+            "citation_f1": off_f1,
+            "citation_f1_scored_count": f1_n,
+            "groundedness": off_gr,
+            "abstention": off_ab,
+            "keyword_recall": off_kw,
+            "composite": off_comp,
             "latency_p50_s": _percentile(lat_off_all, 50),
             "latency_p95_s": _percentile(lat_off_all, 95),
         },
-        "handoff_on": {
-            "citation_f1": _avg(on_metrics, "citation_f1"),
-            "groundedness": _avg(on_metrics, "groundedness"),
-            "abstention": _avg(on_metrics, "abstention"),
-            "keyword_recall": _avg(on_metrics, "keyword_recall"),
-            "composite": _avg(on_metrics, "composite"),
+        label_on: {
+            "citation_f1": on_f1,
+            "citation_f1_scored_count": f1_n,
+            "groundedness": on_gr,
+            "abstention": on_ab,
+            "keyword_recall": on_kw,
+            "composite": on_comp,
             "latency_p50_s": _percentile(lat_on_all, 50),
             "latency_p95_s": _percentile(lat_on_all, 95),
             "latency_no_handoff_p50_s": _percentile(lat_on_no_handoff, 50),
             "latency_no_handoff_p95_s": _percentile(lat_on_no_handoff, 95),
             "latency_with_handoff_p50_s": _percentile(lat_on_with_handoff, 50),
             "latency_with_handoff_p95_s": _percentile(lat_on_with_handoff, 95),
+            "latency_with_reader_handoff_p50_s": _percentile(lat_on_with_reader_handoff, 50),
+            "latency_with_reader_handoff_p95_s": _percentile(lat_on_with_reader_handoff, 95),
+        },
+        "deltas_pp": {
+            "citation_f1_pp": round((on_f1 - off_f1) * 100.0, 2),
+            "groundedness_pp": round((on_gr - off_gr) * 100.0, 2),
+            "abstention_pp": round((on_ab - off_ab) * 100.0, 2),
+            "keyword_recall_pp": round((on_kw - off_kw) * 100.0, 2),
+            "composite_delta": round(on_comp - off_comp, 4),
         },
         "outcomes": {
             "improved": improved,
@@ -464,9 +589,84 @@ def run_paired_handoff_ablation(
             "handoff_improved": handoff_improved,
             "handoff_degraded": handoff_degraded,
             "handoff_yield": round(handoff_improved / handoff_triggered, 4) if handoff_triggered else 0.0,
+            "reader_handoff_triggered": reader_handoff_triggered,
+            "reader_handoff_improved": reader_handoff_improved,
+            "reader_handoff_degraded": reader_handoff_degraded,
+            "reader_handoff_yield": (
+                round(reader_handoff_improved / reader_handoff_triggered, 4)
+                if reader_handoff_triggered else 0.0
+            ),
         },
         "per_question": per_question,
     }
+
+
+def run_paired_handoff_ablation(
+    questions: List[Dict[str, Any]],
+    *,
+    mode: str = "cpu_min",
+    pdf_root: Path | None = None,
+    parallel_retrieval: bool = False,
+    max_reflection_loops_on: int = 2,
+    warm_pdf_cache: bool = True,
+    repeats: int = 1,
+) -> Dict[str, Any]:
+    """
+    Fair graph-level paired ablation toggling ONLY supervised reflection budget:
+      - handoff_off: `max_reflection_loops = 0`
+      - handoff_on:  `max_reflection_loops = max_reflection_loops_on`
+    Measures the combined effect of all allowed handoffs under identical graph/docs/mode.
+    """
+    return _run_paired_graph_ablation(
+        questions,
+        experiment_type="handoff_budget_ablation",
+        label_off="handoff_off",
+        label_on="handoff_on",
+        mode=mode,
+        pdf_root=pdf_root,
+        parallel_retrieval=parallel_retrieval,
+        loops_off=0,
+        loops_on=max_reflection_loops_on,
+        reader_handoff_off=True,
+        reader_handoff_on=True,
+        warm_pdf_cache=warm_pdf_cache,
+        repeats=repeats,
+    )
+
+
+def run_isolated_reader_handoff_ablation(
+    questions: List[Dict[str, Any]],
+    *,
+    mode: str = "cpu_min",
+    pdf_root: Path | None = None,
+    parallel_retrieval: bool = False,
+    max_reflection_loops: int = 2,
+    warm_pdf_cache: bool = True,
+    repeats: int = 2,
+) -> Dict[str, Any]:
+    """
+    Strictly isolates the causal contribution of Reader's autonomous table-handoff proposal:
+      - reader_handoff_off: `max_reflection_loops = 2`, `enable_reader_handoff = False`
+                            (Summarizer & Fact-Checker handoffs remain identical!)
+      - reader_handoff_on:  `max_reflection_loops = 2`, `enable_reader_handoff = True`
+    Pre-compiles graphs, alternates order per question/repeat, and excludes unanswerable
+    traps from the Citation F1 average.
+    """
+    return _run_paired_graph_ablation(
+        questions,
+        experiment_type="isolated_reader_handoff_ablation",
+        label_off="reader_handoff_off",
+        label_on="reader_handoff_on",
+        mode=mode,
+        pdf_root=pdf_root,
+        parallel_retrieval=parallel_retrieval,
+        loops_off=max_reflection_loops,
+        loops_on=max_reflection_loops,
+        reader_handoff_off=False,
+        reader_handoff_on=True,
+        warm_pdf_cache=warm_pdf_cache,
+        repeats=repeats,
+    )
 
 
 def run_full_multi_agent(question: str, selected_doc: str, mode: str = "cpu_min") -> Dict[str, Any]:
@@ -516,17 +716,18 @@ def execute_ablation_matrix(mode: str = "cpu_min", num_samples: int = 8):
             ans = res["answer"]
             ev = res["retrieved_docs"]
 
-            _, _, f1 = compute_strict_citation_f1(
-                ans,
-                ev,
-                gold_keywords,
-                is_unanswerable=is_unanswerable,
-                gold_sources=gold_sources,
-            )
+            if not is_unanswerable:
+                _, _, f1 = compute_strict_citation_f1(
+                    ans,
+                    ev,
+                    gold_keywords,
+                    is_unanswerable=False,
+                    gold_sources=gold_sources,
+                )
+                f1_list.append(f1)
             ground = compute_strict_groundedness(ans, ev, is_unanswerable)
             abstain = compute_strict_abstention_accuracy(ans, is_unanswerable)
 
-            f1_list.append(f1)
             ground_list.append(ground)
             abstain_list.append(abstain)
             lat_list.append(res["latency_sec"])

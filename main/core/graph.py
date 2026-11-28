@@ -401,6 +401,7 @@ def build_research_rag_graph(
     parallel_retrieval: bool = False, comparison_plan: bool = False,
     planner_llm_fn: Optional[Callable[[str], Any]] = None,
     start_at_node: Optional[str] = None,
+    enable_reader_handoff: bool = True,
 ):
     """Build a run-local team with unified 6-role supervised handoff dispatch."""
     run_config = run_config or RunConfig.capture()
@@ -600,6 +601,8 @@ def build_research_rag_graph(
     def run_specialist(role: str, state: AgentState) -> dict[str, Any]:
         request = _handoff_for(state, role, "recipient")
         inputs = prepare_handoff_input(state, request) if request else state
+        if role == "reader" and (not enable_reader_handoff or state.get("enable_reader_handoff") is False):
+            inputs = {**inputs, "enable_reader_handoff": False}
         existing_schema = dict(inputs.get("document_schema") or state.get("document_schema") or {})
         dag_manifest = existing_schema.get("research_dag") if isinstance(existing_schema.get("research_dag"), dict) else None
         gap_queries = (
