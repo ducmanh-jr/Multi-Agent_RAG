@@ -194,13 +194,17 @@ def extract_clean_sentences(text: str) -> list[str]:
             s_clean = s_clean.strip()
         is_eq_line = any(op in s_clean for op in ("=", "≈", "≤", "≥", "∑", "∫", "√", "softmax("))
         is_table_row = s_clean.startswith("|") and s_clean.endswith("|") and s_clean.count("|") >= 3
+        is_table_block = (
+            bool(re.search(r"\b(?:Table|Tab\.?|Bảng|Bang)\s*[A-Z]?\d+(?:[.-]\d+)*\s*[:.\-–]", s_clean, re.I))
+            and len(re.findall(r"\b\d+(?:[.,]\d+)?%?\b", s_clean)) >= 2
+        )
 
-        if len(s_clean) < 20 and not (is_eq_line and len(s_clean) >= 5) and not is_table_row:
+        if len(s_clean) < 20 and not (is_eq_line and len(s_clean) >= 5) and not is_table_row and not is_table_block:
             continue
         if s_clean.startswith("#") or s_clean.startswith("---"):
             continue
         # Filter table artifacts and metadata banners (preserve numbered data table captions like 'Bảng 1: ...')
-        if not is_table_row and re.match(
+        if not is_table_row and not is_table_block and re.match(
             r"^\*{0,2}(?:Task|Người thực hiện|Ước lượng|Point|STT|Tác giả|Năm xuất bản|Nguồn công bố|Liên kết|Quyền riêng tư|Ảnh:|Theo tư liệu)\b",
             s_clean,
             re.I,
@@ -219,11 +223,12 @@ def extract_clean_sentences(text: str) -> list[str]:
             continue
         if re.search(r"\b(?:Journal of|Trường Đại học|Khoa Công nghệ|Tác giả liên hệ|Corresponding author|ISSN|ISBN)\b", s_clean, re.I):
             continue
-        # Allow technical lines, code blocks, mathematical equations, Markdown table rows, and standard punctuation
+        # Allow technical lines, code blocks, mathematical equations, Markdown table rows, plain-text tables, and standard punctuation
         valid_endings = ('.', '!', '?', ':', ';', '}', '{', ')', ']', '"', '”', '`', '$', '|')
         if (
             not is_eq_line
             and not is_table_row
+            and not is_table_block
             and s_clean[-1] not in valid_endings
             and not re.search(
                 r"\b(?:nginx|systemctl|curl|docker|openssl|certbot|server|upstream|proxy_pass)\b",
@@ -1066,13 +1071,39 @@ class CPUMinSummarizerAgent(BaseAgent):
 
         # 7. SPECIFIC QUESTION EVALUATION, CONTEXTUAL PASSAGE EXPANSION & SCORING
         quotes_in_q = [q.strip() for q in re.findall(r'[\"\'\`\“](.*?)[\"\'\`\”]', clean_q) if len(q.strip()) >= 2]
+        unresolved_tables = [
+            str(lbl).strip()
+            for lbl in ((state.get("document_schema") or {}).get("unresolved_table_references") or [])
+            if str(lbl).strip()
+        ]
+        _cross_ref_only_re = re.compile(
+            r"(?:see|shown\s+in|reported\s+in|presented\s+in|listed\s+in|summarized\s+in|"
+            r"detailed\s+in|refer\s+to|xem(?:\s+chi\s+tiết)?(?:\s+(?:ở|trong|tại))?|"
+            r"trình\s+bày\s+(?:ở|trong|tại)|nêu\s+(?:ở|trong|tại))\s+(?:table|tab\.?|bảng|bang)\s*[A-Z]?\d+(?:[.-]\d+)*\b",
+            re.IGNORECASE,
+        )
         all_candidates: list[dict[str, Any]] = []
 
         for u_idx, u in enumerate(source_units):
             u_text = str(u.get("text", ""))
             sents = extract_clean_sentences(u_text)
+            u_caption = str((u.get("table_metadata") or {}).get("caption") or "").strip()
+            u_pipe_header = next(
+                (
+                    ln.strip() for ln in sents
+                    if ln.startswith("|") and ln.endswith("|") and ln.count("|") >= 3 and not re.search(r"\d+(?:[.,]\d+)?", ln)
+                ),
+                "",
+            )
+            if not u_caption:
+                u_caption = next(
+                    (ln.strip() for ln in sents if re.match(r"^(?:Table|Tab\.?|Bảng|Bang)\s*[A-Z]?\d+", ln, re.IGNORECASE)),
+                    "",
+                )
             for idx_s, s in enumerate(sents):
-                s_lower = s.lower()
+                is_pipe_row = s.startswith("|") and s.endswith("|") and s.count("|") >= 3
+                eval_text = f"{u_caption} {u_pipe_header} {s}".strip() if is_pipe_row else s
+                s_lower = eval_text.lower()
                 s_lower_unaccent = strip_accents(s_lower)
                 token_hits = sum(
                     1 for t in q_tokens if _has_phrase(t, s_lower, s_lower_unaccent, has_vietnamese_diacritics(t))
@@ -1098,6 +1129,15 @@ class CPUMinSummarizerAgent(BaseAgent):
                     ";" in s or any(w in s_lower for w in ["thứ nhất", "nhóm vấn đề", "nội dung:", "gồm:", "bao gồm:"])
                 )
                 has_num = bool(re.search(r"\b\d+(?:[.,]\d+)?%?\b", s))
+                is_pure_table_cross_ref = (
+                    not is_pipe_row
+                    and bool(_cross_ref_only_re.search(s))
+                    and not re.search(
+                        r"\b\d+(?:[.,]\d+)?\s*(?:%|ms|s|sec|mb|gb|kb|hz|bleu|f1|x)\b|\b\d+\.\d+\b",
+                        re.sub(r"\b(?:table|tab\.?|bảng|bang)\s*[A-Z]?\d+(?:[.-]\d+)*\b", " ", s, flags=re.IGNORECASE),
+                        re.IGNORECASE,
+                    )
+                )
 
                 quote_hits = sum(
                     1 for qt in quotes_in_q if _has_phrase(qt, s_lower, s_lower_unaccent, has_vietnamese_diacritics(qt))
@@ -1109,7 +1149,7 @@ class CPUMinSummarizerAgent(BaseAgent):
                     + tech_hits * 8
                     + req_ent_hits * 3
                     + quote_hits * 25
-                    + min(12, 3 * focus_matches(s, focus_terms))
+                    + min(12, 3 * focus_matches(eval_text, focus_terms))
                 )
 
                 # Direct Definition / Section Heading Bonus:
@@ -1139,9 +1179,27 @@ class CPUMinSummarizerAgent(BaseAgent):
 
                 richness = 4 if 70 <= len(s) <= 450 else 1
                 score += richness
-                is_pipe_row = s.startswith("|") and s.endswith("|") and s.count("|") >= 3
+                is_metric_or_table_q = bool(
+                    re.search(
+                        r"\b(?:table|tab\.?|bảng|bang|latency|p99|p50|p95|accuracy|precision|recall|f1|bleu|rouge|ndcg|mrr|"
+                        r"score|throughput|rate|ratio|percent|percentage|value|metric|measurement|benchmark|ms|error|loss|"
+                        r"bao nhiêu|tỷ lệ|số liệu|giá trị|độ trễ|độ chính xác)\b",
+                        clean_q,
+                        re.IGNORECASE,
+                    )
+                )
+                is_table_data_block = (
+                    bool(re.search(r"\b(?:Table|Tab\.?|Bảng|Bang)\s*[A-Z]?\d+(?:[.-]\d+)*\s*[:.\-–]", s, re.I))
+                    and len(re.findall(r"\b\d+(?:[.,]\d+)?%?\b", s)) >= 2
+                )
                 if is_pipe_row and not has_num:
                     score -= 10
+                elif (is_pipe_row and has_num) or is_table_data_block:
+                    score += 55 if (is_metric_or_table_q and (ent_hits >= 1 or tech_hits >= 1 or token_hits >= 2)) else 24
+                if is_metric_or_table_q and not has_num and not is_pipe_row and not is_table_data_block:
+                    score -= 14
+                if is_pure_table_cross_ref:
+                    score -= 18
 
                 # Negative filtering of noise / meta / syllabus items (Đúng và Đủ - không thừa thãi)
                 is_meta_noise = False
@@ -1160,14 +1218,19 @@ class CPUMinSummarizerAgent(BaseAgent):
 
                 if score >= 3 and (bigram_hits >= 1 or token_hits >= 1 or ent_hits >= 1 or tech_hits >= 1 or is_general_summary):
                     if is_pipe_row:
-                        passage, consumed_indices = s, [idx_s]
+                        table_ctx_parts = [part for part in (u_caption, u_pipe_header, s) if part]
+                        passage = " | ".join(table_ctx_parts) if len(table_ctx_parts) > 1 else s
+                        verbatim_quote = "\n".join(part for part in (u_pipe_header, s) if part)
+                        consumed_indices = [idx_s]
                     else:
                         passage, consumed_indices = build_contextual_passage(sents, idx_s, max_chars=620, max_extra_sents=3)
+                        verbatim_quote = passage or s
                     all_candidates.append(
                         {
                             "sentence": s,
                             "core_sentence": s,
                             "passage": passage or s,
+                            "verbatim_quote": verbatim_quote,
                             "consumed_indices": consumed_indices,
                             "unit_idx": u_idx,
                             "sent_idx": idx_s,
@@ -1178,18 +1241,92 @@ class CPUMinSummarizerAgent(BaseAgent):
                             "has_date": has_date,
                             "has_year": has_year,
                             "has_list": has_list,
+                            "has_num": has_num,
+                            "is_pipe_row": is_pipe_row,
+                            "is_pure_table_cross_ref": is_pure_table_cross_ref,
                             "score": score,
                         }
                     )
 
         all_candidates.sort(key=lambda x: x["score"], reverse=True)
 
+        # If a referenced table could NOT be found anywhere in the corpus and NO candidate
+        # contains concrete numeric data outside bare cross-references ('see Table 4'), abstain honestly!
+        if unresolved_tables:
+            concrete_non_ref = [
+                c for c in all_candidates
+                if not c.get("is_pure_table_cross_ref")
+                and (
+                    c.get("is_pipe_row")
+                    or bool(
+                        re.search(
+                            r"\b\d+(?:[.,]\d+)?\s*(?:%|ms|s|sec|mb|gb|kb|hz|bleu|f1|x)\b|\b\d+\.\d+\b",
+                            re.sub(r"\b(?:table|tab\.?|bảng|bang)\s*[A-Z]?\d+(?:[.-]\d+)*\b", " ", c["sentence"], flags=re.IGNORECASE),
+                            re.IGNORECASE,
+                        )
+                    )
+                )
+            ]
+            if not concrete_non_ref:
+                missing_str = ", ".join(unresolved_tables)
+                if ans_lang == "en":
+                    unverified_msg = (
+                        f"Insufficient evidence: the provided document references **{missing_str}**, "
+                        f"but {missing_str} is missing from the document pages, so the requested value is unverified."
+                    )
+                else:
+                    unverified_msg = (
+                        f"Chưa đủ bằng chứng xác thực: tài liệu có dẫn chiếu tới **{missing_str}**, "
+                        f"nhưng {missing_str} không có trong các trang tài liệu được cung cấp nên không thể kiểm chứng giá trị được hỏi."
+                    )
+                return {
+                    "answer": unverified_msg,
+                    "short_answer": unverified_msg,
+                    "answer_status": "NOT_FOUND_IN_DOCUMENT",
+                    "claims": [],
+                    "evidence_spans": [],
+                    "critic_action": "approve",
+                    "critic_feedback": {"action": "approve", "confidence": 0.0, "is_supported": True},
+                    "generator_model_family": "cpu_min_extractive",
+                    "answer_language": ans_lang,
+                    "reasoning_trace": [
+                        self.log_action(
+                            "cpu_min_summarization_completed",
+                            {"status": "missing_referenced_table", "unresolved_table_references": unresolved_tables},
+                        )
+                    ],
+                }
+
         selected_candidates: list[dict[str, Any]] = []
         seen_norms: set[str] = set()
         used_unit_sents: set[tuple[int, int]] = set()
 
         max_select = 4 if is_specific_fact_q else 7
+        # When >= 2 documents match the query, preserve the top relevant candidate from each document
+        # so multi-document answers never silently drop or conflate conflicting sources.
+        if len(docs_map) > 1 and all_candidates:
+            top_score = all_candidates[0]["score"]
+            seen_doc_ids: set[str] = set()
+            for c in all_candidates:
+                doc_k = str(c["unit"].get("doc_id") or "")
+                if doc_k in seen_doc_ids:
+                    continue
+                if c["score"] < max(3, top_score * 0.45):
+                    continue
+                u_idx = c["unit_idx"]
+                s_idx = c["sent_idx"]
+                norm = c["core_sentence"].lower()[:65]
+                seen_doc_ids.add(doc_k)
+                seen_norms.add(norm)
+                for c_i in c.get("consumed_indices", [s_idx]):
+                    used_unit_sents.add((u_idx, c_i))
+                selected_candidates.append(c)
+                if len(selected_candidates) >= min(4, max_select):
+                    break
+
         for c in all_candidates:
+            if len(selected_candidates) >= max_select:
+                break
             u_idx = c["unit_idx"]
             s_idx = c["sent_idx"]
             norm = c["core_sentence"].lower()[:65]
@@ -1199,8 +1336,6 @@ class CPUMinSummarizerAgent(BaseAgent):
             for c_i in c.get("consumed_indices", [s_idx]):
                 used_unit_sents.add((u_idx, c_i))
             selected_candidates.append(c)
-            if len(selected_candidates) >= max_select:
-                break
 
         is_strict_group_q = bool(re.search(r"\b(\d+\s+nhóm|mấy\s+nhóm|các\s+nhóm)\b", clean_q, re.I))
         if not selected_candidates or (is_strict_group_q and not any(c.get("has_list") for c in selected_candidates)):
@@ -1376,97 +1511,153 @@ class CPUMinSummarizerAgent(BaseAgent):
 
         # CASE C: COMPREHENSIVE MULTI-ASPECT FACTUAL & TECHNICAL SYNTHESIS
         else:
-            # Check if there is an additional explanation note in the same unit not yet captured in top_passage
-            u_full_text = str(top_u.get("text", ""))
-            u_norm = re.sub(r"\s+", " ", u_full_text)
-            top_norm = re.sub(r"\s+", " ", top_sent)
-            explanation_context = ""
-            if top_norm in u_norm:
-                after_idx = u_norm.find(top_norm) + len(top_norm)
-                subsequent = u_norm[after_idx : after_idx + 650].strip()
-                for prefix in ["Giải thích:", "Lưu ý:", "Nguyên nhân:", "Mục đích:", "Tác dụng:", "Cụ thể:"]:
-                    if prefix.lower() in subsequent.lower() and prefix.lower() not in top_passage.lower():
-                        p_pos = subsequent.lower().find(prefix.lower())
-                        para = subsequent[p_pos:]
-                        para_clean = re.split(r"(?:\s|^)\d+\.\d+\.\s+[A-ZĐ]", para)[0].strip()
-                        m_end = re.search(r"(?<=[a-zà-ỹ\)])\.(?:\s+|$)", para_clean)
-                        if m_end:
-                            explanation_context = para_clean[: m_end.end()].strip()
-                        else:
-                            explanation_context = para_clean[:380].strip()
-                        break
-
-            claims.append(
-                AtomicClaim(
-                    id="claim_1",
-                    text=top_sent,
-                    evidence_ids=[top_u.get("id", "doc_1")],
-                ).to_dict()
+            distinct_selected_docs = list(
+                dict.fromkeys(str(c["unit"].get("doc_id") or "") for c in selected_candidates if c["unit"].get("doc_id"))
             )
-
-            top_heading, top_body = extract_topic_heading(top_passage, 1)
-            top_body_formatted = format_nginx_blocks(top_body)
-            if top_body != top_passage:
-                intro_body = f"**{top_heading}**: {top_body_formatted} [1] *(Trang {top_page})*"
-            else:
-                intro_body = f"{top_body_formatted} [1] *(Trang {top_page})*"
-                if not intro_body.rstrip().endswith("."):
-                    intro_body += "."
-
-            if explanation_context:
-                intro_body += f"\n\n- **Giải thích & Làm rõ nguyên lý:** {explanation_context} [1] *(Trang {top_page})*"
-
-            details = []
-            max_details = 2 if is_specific_fact_q else 6
-            detail_ref_idx = 2
-
-            for cand in selected_candidates[1:]:
-                if len(details) >= max_details:
-                    break
-                pno = cand.get("page_no", 1)
-                c_passage = cand.get("passage") or cand["sentence"]
-
-                # Strict negative check: never allow meta noise, reading lists, or syllabus items into details
-                if re.match(r"^\s*(?:\d+[\.\)]\s*|[-*•]\s*)?(?:Bài viết|Video|Tài liệu|Task|Mục tiêu|Nội dung cần|Nội dung được)\b", c_passage, re.I):
-                    continue
-
-                # For specific / definition queries, only select candidates that strictly mention the queried topic/entity
-                if is_specific_fact_q:
-                    cand_lower = c_passage.lower()
-                    has_topic = any(
-                        t.lower() in cand_lower
-                        for t in (entities + tech_identifiers + q_bigrams)
-                        if len(t) >= 3 and t.lower() not in {"nginx", "linux", "windows", "docker"}
+            if len(distinct_selected_docs) >= 2:
+                # Per-document source attribution + cross-document numeric discrepancy detection
+                doc_bullets: list[str] = []
+                doc_numeric_sets: list[tuple[str, set[str]]] = []
+                for ref_i, cand in enumerate(selected_candidates, 1):
+                    u_obj = cand["unit"]
+                    d_label = format_doc_title(str(u_obj.get("doc_id") or u_obj.get("title") or f"Document {ref_i}"))
+                    pno = cand.get("page_no", 1)
+                    c_passage = cand.get("passage") or cand["sentence"]
+                    nums = {
+                        m.replace(",", ".")
+                        for m in re.findall(r"\b\d+(?:[.,]\d+)?%?\b", cand["sentence"])
+                        if len(m) >= 2 or "%" in m
+                    }
+                    doc_numeric_sets.append((str(u_obj.get("doc_id") or d_label), nums))
+                    page_tag = f"Page {pno}" if ans_lang == "en" else f"Trang {pno}"
+                    doc_bullets.append(f"- **{d_label}** *({page_tag})*: {c_passage} [{ref_i}]")
+                    claims.append(
+                        AtomicClaim(
+                            id=f"claim_{ref_i}",
+                            text=cand["sentence"],
+                            evidence_ids=[u_obj.get("id", f"doc_{ref_i}")],
+                        ).to_dict()
                     )
-                    if not has_topic or cand.get("score", 0) < 12:
-                        continue
-                    if c_passage[:60].lower() in top_passage.lower():
-                        continue
 
-                heading, body = extract_topic_heading(c_passage, len(details) + 1)
-                body_formatted = format_nginx_blocks(body)
-                details.append(f"{len(details) + 1}. **{heading}**: {body_formatted} [{detail_ref_idx}] *(Trang {pno})*")
+                by_doc_nums: dict[str, set[str]] = {}
+                for d_key, nset in doc_numeric_sets:
+                    if nset:
+                        by_doc_nums.setdefault(d_key, set()).update(nset)
+                has_cross_doc_conflict = False
+                num_lists = [vals for vals in by_doc_nums.values() if vals]
+                if len(num_lists) >= 2:
+                    # Two documents report non-identical measurements for the queried metric
+                    for i_n in range(len(num_lists)):
+                        for j_n in range(i_n + 1, len(num_lists)):
+                            if num_lists[i_n] != num_lists[j_n]:
+                                has_cross_doc_conflict = True
+                                break
+
+                if has_cross_doc_conflict:
+                    header_line = (
+                        "Conflicting values are reported across the selected documents for this metric (discrepancy noted; each source is attributed separately):"
+                        if ans_lang == "en"
+                        else "Lưu ý: Các tài liệu được chọn ghi nhận các giá trị khác nhau (có sự sai khác/mâu thuẫn số liệu) cho chỉ số này; kết quả của từng tài liệu được tách riêng như sau:"
+                    )
+                else:
+                    header_line = (
+                        "Findings attributed separately across the selected documents:"
+                        if ans_lang == "en"
+                        else "Tổng hợp kết quả theo từng tài liệu nguồn:"
+                    )
+                answer = f"{header_line}\n\n" + "\n".join(doc_bullets) + "\n"
+            else:
+                # Check if there is an additional explanation note in the same unit not yet captured in top_passage
+                u_full_text = str(top_u.get("text", ""))
+                u_norm = re.sub(r"\s+", " ", u_full_text)
+                top_norm = re.sub(r"\s+", " ", top_sent)
+                explanation_context = ""
+                if top_norm in u_norm:
+                    after_idx = u_norm.find(top_norm) + len(top_norm)
+                    subsequent = u_norm[after_idx : after_idx + 650].strip()
+                    for prefix in ["Giải thích:", "Lưu ý:", "Nguyên nhân:", "Mục đích:", "Tác dụng:", "Cụ thể:"]:
+                        if prefix.lower() in subsequent.lower() and prefix.lower() not in top_passage.lower():
+                            p_pos = subsequent.lower().find(prefix.lower())
+                            para = subsequent[p_pos:]
+                            para_clean = re.split(r"(?:\s|^)\d+\.\d+\.\s+[A-ZĐ]", para)[0].strip()
+                            m_end = re.search(r"(?<=[a-zà-ỹ\)])\.(?:\s+|$)", para_clean)
+                            if m_end:
+                                explanation_context = para_clean[: m_end.end()].strip()
+                            else:
+                                explanation_context = para_clean[:380].strip()
+                            break
+
                 claims.append(
                     AtomicClaim(
-                        id=f"claim_{detail_ref_idx}",
-                        text=cand["sentence"],
-                        evidence_ids=[cand["unit"].get("id", "doc_1")],
+                        id="claim_1",
+                        text=top_sent,
+                        evidence_ids=[top_u.get("id", "doc_1")],
                     ).to_dict()
                 )
-                detail_ref_idx += 1
 
-            details_str = "\n".join(details)
+                top_heading, top_body = extract_topic_heading(top_passage, 1)
+                top_body_formatted = format_nginx_blocks(top_body)
+                if top_body != top_passage:
+                    intro_body = f"**{top_heading}**: {top_body_formatted} [1] *(Trang {top_page})*"
+                else:
+                    intro_body = f"{top_body_formatted} [1] *(Trang {top_page})*"
+                    if not intro_body.rstrip().endswith("."):
+                        intro_body += "."
 
-            answer = f"Dựa trên tài liệu nghiên cứu (**{doc_name}**), {intro_body}\n"
-            if details_str:
-                section_title = (
-                    "### Các cơ chế & Cấu hình liên quan trực tiếp trong tài liệu:"
-                    if is_specific_fact_q
-                    else "### Phân tích chi tiết & Các khía cạnh liên quan trong tài liệu:"
-                )
-                answer += f"\n{section_title}\n{details_str}\n"
+                if explanation_context:
+                    intro_body += f"\n\n- **Giải thích & Làm rõ nguyên lý:** {explanation_context} [1] *(Trang {top_page})*"
 
-        # Build evidence spans for all selected candidates (using full contextual passage for richer evidence preview)
+                details = []
+                max_details = 2 if is_specific_fact_q else 6
+                detail_ref_idx = 2
+
+                for cand in selected_candidates[1:]:
+                    if len(details) >= max_details:
+                        break
+                    pno = cand.get("page_no", 1)
+                    c_passage = cand.get("passage") or cand["sentence"]
+
+                    # Strict negative check: never allow meta noise, reading lists, or syllabus items into details
+                    if re.match(r"^\s*(?:\d+[\.\)]\s*|[-*•]\s*)?(?:Bài viết|Video|Tài liệu|Task|Mục tiêu|Nội dung cần|Nội dung được)\b", c_passage, re.I):
+                        continue
+
+                    # For specific / definition queries, only select candidates that strictly mention the queried topic/entity
+                    if is_specific_fact_q:
+                        cand_lower = c_passage.lower()
+                        has_topic = any(
+                            t.lower() in cand_lower
+                            for t in (entities + tech_identifiers + q_bigrams)
+                            if len(t) >= 3 and t.lower() not in {"nginx", "linux", "windows", "docker"}
+                        )
+                        if not has_topic or cand.get("score", 0) < 12:
+                            continue
+                        if c_passage[:60].lower() in top_passage.lower():
+                            continue
+
+                    heading, body = extract_topic_heading(c_passage, len(details) + 1)
+                    body_formatted = format_nginx_blocks(body)
+                    details.append(f"{len(details) + 1}. **{heading}**: {body_formatted} [{detail_ref_idx}] *(Trang {pno})*")
+                    claims.append(
+                        AtomicClaim(
+                            id=f"claim_{detail_ref_idx}",
+                            text=cand["sentence"],
+                            evidence_ids=[cand["unit"].get("id", "doc_1")],
+                        ).to_dict()
+                    )
+                    detail_ref_idx += 1
+
+                details_str = "\n".join(details)
+
+                answer = f"Dựa trên tài liệu nghiên cứu (**{doc_name}**), {intro_body}\n"
+                if details_str:
+                    section_title = (
+                        "### Các cơ chế & Cấu hình liên quan trực tiếp trong tài liệu:"
+                        if is_specific_fact_q
+                        else "### Phân tích chi tiết & Các khía cạnh liên quan trong tài liệu:"
+                    )
+                    answer += f"\n{section_title}\n{details_str}\n"
+
+        # Build evidence spans for all selected candidates (using verbatim quote for table rows & passages)
         used_unit_ids = set()
         for cl in claims:
             for eid in cl.get("evidence_ids", []):
@@ -1478,7 +1669,7 @@ class CPUMinSummarizerAgent(BaseAgent):
                 evidence_spans.append(
                     EvidenceSpan(
                         id=f"ev_{len(evidence_spans)+1}",
-                        quote=c.get("passage") or c["sentence"],
+                        quote=c.get("verbatim_quote") or c.get("passage") or c["sentence"],
                         source_unit_id=u.get("id", "doc_1"),
                         doc_id=u.get("doc_id", "doc"),
                         page_no=u.get("page_no", 1),

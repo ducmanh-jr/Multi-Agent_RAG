@@ -233,6 +233,9 @@ def build_academic_report(
     unlinked = []
     findings_lines = []
     summary_lines = []
+    claim_doc_nums: dict[str, set[str]] = {}
+    claim_entries: list[tuple[str, list[int], list[str]]] = []
+    ref_doc_lookup = {r["ref_id"]: r["doc_id"] for r in references}
     for claim in verified_claims:
         text = get_claim_text(claim).strip()
         claim_ref_ids: set[int] = set()
@@ -250,22 +253,61 @@ def build_academic_report(
             unlinked.append(claim)
             continue
         supported.append(claim)
+        doc_ids_for_claim = list(dict.fromkeys(ref_doc_lookup[r] for r in refs if r in ref_doc_lookup))
+        nums = {
+            m.replace(",", ".")
+            for m in re.findall(r"\b\d+(?:[.,]\d+)?%?\b", text)
+            if "%" in m or "." in m or "," in m or len(m) >= 2
+        }
+        for did in doc_ids_for_claim:
+            if nums:
+                claim_doc_nums.setdefault(did, set()).update(nums)
+        claim_entries.append((text, refs, doc_ids_for_claim))
+
+    has_cross_doc_conflict = False
+    if len(claim_doc_nums) >= 2:
+        doc_num_sets = [vals for vals in claim_doc_nums.values() if vals]
+        for i_d in range(len(doc_num_sets)):
+            for j_d in range(i_d + 1, len(doc_num_sets)):
+                if doc_num_sets[i_d] != doc_num_sets[j_d]:
+                    has_cross_doc_conflict = True
+                    break
+
+    for text, refs, doc_ids_for_claim in claim_entries:
         marks = " ".join(f"[{ref}]" for ref in refs)
-        line = f"{_escape_raw_citations(text)} {marks}"
+        escaped = _escape_raw_citations(text)
+        if has_cross_doc_conflict and len(doc_ids_for_claim) == 1:
+            d_label = doc_title_lookup.get(doc_ids_for_claim[0], doc_ids_for_claim[0])
+            line = f"**{_escape_raw_citations(d_label)}:** {escaped} {marks}"
+        else:
+            line = f"{escaped} {marks}"
         summary_lines.append(line)
         finding_prefix = "Finding" if lang == "en" else "Nhận định"
         findings_lines.append(f"- **{finding_prefix} {len(findings_lines)+1}:** {line}")
+
     verified_claims = supported
     if summary_lines:
         status_label = "ANSWERED_DIRECT_QUOTE"
-        summary_narrative = "\n\n".join(dict.fromkeys(summary_lines))
+        dedup_summary = list(dict.fromkeys(summary_lines))
+        if has_cross_doc_conflict:
+            conflict_banner = (
+                "> **Cross-Document Discrepancy Notice:** Conflicting numeric values are reported across the selected documents; each source is attributed separately below."
+                if lang == "en"
+                else "> **Lưu ý Sai khác Số liệu Giữa các Tài liệu:** Các tài liệu ghi nhận các giá trị khác nhau (có sự mâu thuẫn số liệu); kết quả từng tài liệu được tách riêng bên dưới."
+            )
+            summary_narrative = conflict_banner + "\n\n" + "\n\n".join(dedup_summary)
+        else:
+            summary_narrative = "\n\n".join(dedup_summary)
     elif is_ood:
         status_label = "NOT_FOUND_IN_DOCUMENT"
-        summary_narrative = localized_status_message(
-            "NOT_FOUND_IN_DOCUMENT",
-            language=lang,
-            query=_escape_raw_citations(query),
-        )
+        if answer and any(tok in answer.lower() for tok in ("table ", "bảng ", "unverified", "kiểm chứng")):
+            summary_narrative = _escape_raw_citations(answer)
+        else:
+            summary_narrative = localized_status_message(
+                "NOT_FOUND_IN_DOCUMENT",
+                language=lang,
+                query=_escape_raw_citations(query),
+            )
     elif is_ambiguous:
         status_label = "CLARIFICATION_NEEDED"
         if answer and detect_language(answer, default=lang) == lang:
