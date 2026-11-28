@@ -16,6 +16,7 @@ from agents.agent5_writer.components.gap_analyzer import (
 )
 from core.citation_audit import citation_location, evidence_quote
 from core.citation_audit import claim_text as get_claim_text
+from core.claim_semantics import detect_cross_document_metric_conflicts
 from utils.language import detect_language, localized_status_message, normalize_language_code
 
 
@@ -233,7 +234,7 @@ def build_academic_report(
     unlinked = []
     findings_lines = []
     summary_lines = []
-    claim_doc_nums: dict[str, set[str]] = {}
+    doc_claim_pairs: list[tuple[str, str]] = []
     claim_entries: list[tuple[str, list[int], list[str]]] = []
     ref_doc_lookup = {r["ref_id"]: r["doc_id"] for r in references}
     for claim in verified_claims:
@@ -254,24 +255,12 @@ def build_academic_report(
             continue
         supported.append(claim)
         doc_ids_for_claim = list(dict.fromkeys(ref_doc_lookup[r] for r in refs if r in ref_doc_lookup))
-        nums = {
-            m.replace(",", ".")
-            for m in re.findall(r"\b\d+(?:[.,]\d+)?%?\b", text)
-            if "%" in m or "." in m or "," in m or len(m) >= 2
-        }
-        for did in doc_ids_for_claim:
-            if nums:
-                claim_doc_nums.setdefault(did, set()).update(nums)
+        if len(doc_ids_for_claim) == 1:
+            doc_claim_pairs.append((doc_ids_for_claim[0], text))
         claim_entries.append((text, refs, doc_ids_for_claim))
 
-    has_cross_doc_conflict = False
-    if len(claim_doc_nums) >= 2:
-        doc_num_sets = [vals for vals in claim_doc_nums.values() if vals]
-        for i_d in range(len(doc_num_sets)):
-            for j_d in range(i_d + 1, len(doc_num_sets)):
-                if doc_num_sets[i_d] != doc_num_sets[j_d]:
-                    has_cross_doc_conflict = True
-                    break
+    detected_conflicts = detect_cross_document_metric_conflicts(doc_claim_pairs)
+    has_cross_doc_conflict = bool(detected_conflicts)
 
     for text, refs, doc_ids_for_claim in claim_entries:
         marks = " ".join(f"[{ref}]" for ref in refs)

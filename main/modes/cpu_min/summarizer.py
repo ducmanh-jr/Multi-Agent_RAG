@@ -22,6 +22,7 @@ from typing import Any
 from agents.agent1_retrieval.tools.bm25 import SimpleBM25
 from core.base_agent import BaseAgent
 from core.claim_semantics import (
+    detect_cross_document_metric_conflicts,
     extract_entity_quantity_bindings,
     has_clause_negation,
     strip_html_tags_preserve_math,
@@ -1250,34 +1251,44 @@ class CPUMinSummarizerAgent(BaseAgent):
 
         all_candidates.sort(key=lambda x: x["score"], reverse=True)
 
-        # If a referenced table could NOT be found anywhere in the corpus and NO candidate
-        # contains concrete numeric data outside bare cross-references ('see Table 4'), abstain honestly!
+        # If a referenced table could NOT be found (or lacked the requested row/column/metric/unit)
+        # anywhere in the corpus, abstain honestly instead of returning unrelated rows or wrong columns!
         if unresolved_tables:
-            concrete_non_ref = [
-                c for c in all_candidates
-                if not c.get("is_pure_table_cross_ref")
-                and (
-                    c.get("is_pipe_row")
-                    or bool(
-                        re.search(
-                            r"\b\d+(?:[.,]\d+)?\s*(?:%|ms|s|sec|mb|gb|kb|hz|bleu|f1|x)\b|\b\d+\.\d+\b",
-                            re.sub(r"\b(?:table|tab\.?|bảng|bang)\s*[A-Z]?\d+(?:[.-]\d+)*\b", " ", c["sentence"], flags=re.IGNORECASE),
-                            re.IGNORECASE,
-                        )
+            required_missing_tokens: list[str] = []
+            for lbl in unresolved_tables:
+                m_miss = re.search(r"\(missing:\s*([^)]+)\)", lbl, re.IGNORECASE)
+                if m_miss:
+                    required_missing_tokens.extend(
+                        tok.strip().lower() for tok in m_miss.group(1).split(",") if tok.strip()
+                    )
+            concrete_non_ref = []
+            for c in all_candidates:
+                if c.get("is_pure_table_cross_ref"):
+                    continue
+                sent_l = c["sentence"].lower()
+                has_concrete_num = c.get("is_pipe_row") or bool(
+                    re.search(
+                        r"\b\d+(?:[.,]\d+)?\s*(?:%|ms|s|sec|mb|gb|kb|hz|bleu|f1|x)\b|\b\d+\.\d+\b",
+                        re.sub(r"\b(?:table|tab\.?|bảng|bang)\s*[A-Z]?\d+(?:[.-]\d+)*\b", " ", c["sentence"], flags=re.IGNORECASE),
+                        re.IGNORECASE,
                     )
                 )
-            ]
+                if not has_concrete_num:
+                    continue
+                if required_missing_tokens and not all(tok in sent_l for tok in required_missing_tokens):
+                    continue
+                concrete_non_ref.append(c)
             if not concrete_non_ref:
                 missing_str = ", ".join(unresolved_tables)
                 if ans_lang == "en":
                     unverified_msg = (
                         f"Insufficient evidence: the provided document references **{missing_str}**, "
-                        f"but {missing_str} is missing from the document pages, so the requested value is unverified."
+                        f"but the required table or target cells are missing from the document pages, so the requested value is unverified."
                     )
                 else:
                     unverified_msg = (
                         f"Chưa đủ bằng chứng xác thực: tài liệu có dẫn chiếu tới **{missing_str}**, "
-                        f"nhưng {missing_str} không có trong các trang tài liệu được cung cấp nên không thể kiểm chứng giá trị được hỏi."
+                        f"nhưng bảng hoặc các ô dữ liệu được hỏi không có trong các trang tài liệu được cung cấp nên không thể kiểm chứng giá trị được hỏi."
                     )
                 return {
                     "answer": unverified_msg,
@@ -1515,20 +1526,16 @@ class CPUMinSummarizerAgent(BaseAgent):
                 dict.fromkeys(str(c["unit"].get("doc_id") or "") for c in selected_candidates if c["unit"].get("doc_id"))
             )
             if len(distinct_selected_docs) >= 2:
-                # Per-document source attribution + cross-document numeric discrepancy detection
+                # Per-document source attribution + structured cross-document metric discrepancy detection
                 doc_bullets: list[str] = []
-                doc_numeric_sets: list[tuple[str, set[str]]] = []
+                doc_claim_pairs: list[tuple[str, str]] = []
                 for ref_i, cand in enumerate(selected_candidates, 1):
                     u_obj = cand["unit"]
-                    d_label = format_doc_title(str(u_obj.get("doc_id") or u_obj.get("title") or f"Document {ref_i}"))
+                    d_raw = str(u_obj.get("doc_id") or u_obj.get("title") or f"Document {ref_i}")
+                    d_label = format_doc_title(d_raw)
                     pno = cand.get("page_no", 1)
                     c_passage = cand.get("passage") or cand["sentence"]
-                    nums = {
-                        m.replace(",", ".")
-                        for m in re.findall(r"\b\d+(?:[.,]\d+)?%?\b", cand["sentence"])
-                        if len(m) >= 2 or "%" in m
-                    }
-                    doc_numeric_sets.append((str(u_obj.get("doc_id") or d_label), nums))
+                    doc_claim_pairs.append((d_raw, cand["sentence"]))
                     page_tag = f"Page {pno}" if ans_lang == "en" else f"Trang {pno}"
                     doc_bullets.append(f"- **{d_label}** *({page_tag})*: {c_passage} [{ref_i}]")
                     claims.append(
@@ -1539,19 +1546,7 @@ class CPUMinSummarizerAgent(BaseAgent):
                         ).to_dict()
                     )
 
-                by_doc_nums: dict[str, set[str]] = {}
-                for d_key, nset in doc_numeric_sets:
-                    if nset:
-                        by_doc_nums.setdefault(d_key, set()).update(nset)
-                has_cross_doc_conflict = False
-                num_lists = [vals for vals in by_doc_nums.values() if vals]
-                if len(num_lists) >= 2:
-                    # Two documents report non-identical measurements for the queried metric
-                    for i_n in range(len(num_lists)):
-                        for j_n in range(i_n + 1, len(num_lists)):
-                            if num_lists[i_n] != num_lists[j_n]:
-                                has_cross_doc_conflict = True
-                                break
+                has_cross_doc_conflict = bool(detect_cross_document_metric_conflicts(doc_claim_pairs))
 
                 if has_cross_doc_conflict:
                     header_line = (

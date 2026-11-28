@@ -1145,3 +1145,278 @@ def check_diagram_graph_consistency(
             return True, "SUPPORT", "verified_diagram_graph", dict(unit_obj)
 
     return True, "NOT_APPLICABLE", "diagram_nodes_not_matched", None
+
+
+# =====================================================================
+# 6. Structured Cross-Document Metric Conflict Detection
+# =====================================================================
+
+_CROSS_DOC_METRIC_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("latency_p99", re.compile(r"\bp99(?:\s+latency)?\b", re.IGNORECASE)),
+    ("latency_p95", re.compile(r"\bp95(?:\s+latency)?\b", re.IGNORECASE)),
+    ("latency_p50", re.compile(r"\b(?:p50|median\s+latency)\b", re.IGNORECASE)),
+    ("latency", re.compile(r"\b(?:latency|response\s+time|inference\s+time|runtime|độ\s+trễ)\b", re.IGNORECASE)),
+    ("accuracy", re.compile(r"\b(?:accuracy|acc\.?|độ\s+chính\s+xác)\b", re.IGNORECASE)),
+    ("precision", re.compile(r"\b(?:precision|độ\s+chính\s+xác\s+dương)\b", re.IGNORECASE)),
+    ("recall", re.compile(r"\b(?:recall|recall@\d+|độ\s+phủ)\b", re.IGNORECASE)),
+    ("f1", re.compile(r"\b(?:f1(?:[- ]?score)?|macro[- ]?f1|micro[- ]?f1)\b", re.IGNORECASE)),
+    ("wer", re.compile(r"\b(?:wer|word\s+error\s+rate|cer)\b", re.IGNORECASE)),
+    ("bleu", re.compile(r"\b(?:bleu(?:-\d+)?)\b", re.IGNORECASE)),
+    ("rouge", re.compile(r"\b(?:rouge(?:-[12l])?)\b", re.IGNORECASE)),
+    ("ndcg", re.compile(r"\b(?:ndcg(?:@\d+)?|mrr(?:@\d+)?)\b", re.IGNORECASE)),
+    ("vram", re.compile(r"\b(?:vram|gpu\s+memory|memory|ram|bộ\s+nhớ)\b", re.IGNORECASE)),
+    ("throughput", re.compile(r"\b(?:throughput|qps|tps|tokens?/s|tok/s|thông\s+lượng)\b", re.IGNORECASE)),
+    ("error_rate", re.compile(r"\b(?:error\s+rate|mse|rmse|mae|loss|perplexity|tỷ\s+lệ\s+lỗi)\b", re.IGNORECASE)),
+    ("yield", re.compile(r"\b(?:yield|năng\s+suất)\b", re.IGNORECASE)),
+    ("energy", re.compile(r"\b(?:energy|power|co2|carbon|điện\s+năng)\b", re.IGNORECASE)),
+)
+
+_CROSS_DOC_UNIT_MAP: dict[str, str] = {
+    "%": "%",
+    "percent": "%",
+    "percentage": "%",
+    "pp": "pp",
+    "ms": "ms",
+    "msec": "ms",
+    "millisecond": "ms",
+    "milliseconds": "ms",
+    "s": "s",
+    "sec": "s",
+    "second": "s",
+    "seconds": "s",
+    "us": "us",
+    "µs": "us",
+    "ns": "ns",
+    "kb": "kb",
+    "mb": "mb",
+    "gb": "gb",
+    "tb": "tb",
+    "qps": "qps",
+    "tps": "qps",
+    "tok/s": "tok/s",
+    "tokens/s": "tok/s",
+    "hz": "hz",
+    "mhz": "mhz",
+    "ghz": "ghz",
+    "w": "w",
+    "mw": "mw",
+    "kw": "kw",
+    "kwh": "kwh",
+    "kg": "kg",
+    "g": "g",
+    "mg": "mg",
+    "mg/l": "mg/l",
+    "tons/ha": "tons/ha",
+    "x": "x",
+    "times": "x",
+}
+
+_CROSS_DOC_MEASUREMENT_RE = re.compile(
+    r"(?<![A-Za-z0-9_])"
+    r"(-?\d+(?:[.,]\d+)?)"
+    r"\s*"
+    r"(%|percent|percentage|pp|ms|msec|milliseconds?|sec|seconds?|us|µs|ns|"
+    r"kb|mb|gb|tb|qps|tps|tokens?/s|tok/s|mhz|ghz|hz|kwh|kw|mw|w|mg/l|mg|kg|tons/ha|times|x(?=\b)|s(?=\b))?",
+    re.IGNORECASE,
+)
+
+_CROSS_DOC_CONDITION_GROUPS: tuple[dict[str, re.Pattern[str]], ...] = (
+    {
+        "train": re.compile(r"\b(?:train(?:ing)?\s+(?:set|split)|tập\s+huấn\s+luyện)\b", re.IGNORECASE),
+        "validation": re.compile(r"\b(?:val(?:idation)?\s+(?:set|split)|dev\s+(?:set|split)|tập\s+validation)\b", re.IGNORECASE),
+        "test": re.compile(r"\b(?:test\s+(?:set|splits?)|tập\s+(?:test|kiểm\s+tra))\b", re.IGNORECASE),
+    },
+    {
+        "clean": re.compile(r"\b(?:clean\s+(?:recordings?|audio|data|set|split))\b", re.IGNORECASE),
+        "noisy": re.compile(r"\b(?:noisy\s+(?:recordings?|audio|data|set|split))\b", re.IGNORECASE),
+    },
+    {
+        "zero_shot": re.compile(r"\bzero[- ]shot\b", re.IGNORECASE),
+        "few_shot": re.compile(r"\bfew[- ]shot\b", re.IGNORECASE),
+        "fine_tuned": re.compile(r"\bfine[- ]?tuned\b", re.IGNORECASE),
+    },
+    {
+        "int4": re.compile(r"\b(?:4[- ]?bit|int4|nf4)\b", re.IGNORECASE),
+        "int8": re.compile(r"\b(?:8[- ]?bit|int8)\b", re.IGNORECASE),
+        "fp16": re.compile(r"\b(?:fp16|bf16|16[- ]?bit)\b", re.IGNORECASE),
+        "fp32": re.compile(r"\b(?:fp32|32[- ]?bit)\b", re.IGNORECASE),
+    },
+)
+
+_CROSS_DOC_REF_PREFIX_RE = re.compile(
+    r"(?:table|tab\.?|bảng|figure|fig\.?|hình|page|trang|section|mục|study|paper|version|v)\s*$",
+    re.IGNORECASE,
+)
+
+_CROSS_DOC_GENERIC_TOKENS = frozenset(
+    {
+        "the", "and", "for", "with", "from", "that", "this", "these", "those", "into", "over", "under",
+        "our", "their", "its", "all", "across", "during", "using", "based", "standard", "controlled",
+        "independent", "evaluation", "replication", "experiment", "experiments", "benchmark", "study",
+        "paper", "report", "reports", "reported", "achieved", "achieves", "reached", "reaches",
+        "consumed", "consumes", "measured", "measures", "shows", "showed", "recorded", "observed",
+        "result", "results", "value", "values", "score", "scores", "rate", "splits", "split", "set",
+        "system", "model", "method", "engine", "encoder", "dataset", "prompting", "recordings",
+        "accuracy", "precision", "recall", "latency", "throughput", "memory", "vram", "bleu",
+        "rouge", "wer", "cer", "f1", "p99", "p95", "p50", "qps", "tps", "error", "loss", "yield",
+        "energy", "power", "carbon", "co2", "test", "train", "validation", "dev", "clean", "noisy",
+        "alpha", "beta", "study_alpha", "study_beta", "doc", "document", "trong", "của", "cho",
+        "với", "đạt", "được", "các", "những", "trên", "tại", "khi", "sau", "trước", "bằng",
+    }
+)
+
+
+def _extract_claim_metric_records(doc_id: str, text: str) -> list[dict[str, Any]]:
+    raw = str(text or "").strip()
+    if not raw:
+        return []
+    # Strip citation markers [1] and identify measurement conditions
+    cleaned = re.sub(r"\[\d+(?:\s*,\s*\d+)*\]", " ", raw)
+    conditions: dict[int, set[str]] = {}
+    for g_idx, group in enumerate(_CROSS_DOC_CONDITION_GROUPS):
+        matched = {tag for tag, pat in group.items() if pat.search(cleaned)}
+        if matched:
+            conditions[g_idx] = matched
+
+    # Identify entity/subject tokens (prioritize proper nouns, hyphenated identifiers, and non-generic tokens)
+    raw_tokens = re.findall(r"[A-Za-zÀ-ỹ][A-Za-zÀ-ỹ0-9_-]{2,}", cleaned)
+    doc_stem_tokens = {
+        tok.lower()
+        for tok in re.findall(r"[A-Za-zÀ-ỹ0-9]+", str(doc_id or ""))
+        if len(tok) >= 3
+    }
+    entity_tokens = {
+        tok.lower()
+        for tok in raw_tokens
+        if tok.lower() not in _CROSS_DOC_GENERIC_TOKENS
+        and tok.lower() not in doc_stem_tokens
+    }
+
+    records: list[dict[str, Any]] = []
+    for m in _CROSS_DOC_MEASUREMENT_RE.finditer(cleaned):
+        num_str = m.group(1).replace(",", ".")
+        try:
+            val = float(num_str)
+        except ValueError:
+            continue
+        raw_unit = (m.group(2) or "").strip().lower()
+        norm_unit = _CROSS_DOC_UNIT_MAP.get(raw_unit, raw_unit)
+
+        # Skip section/table/page/figure numbers and calendar years
+        prefix = cleaned[max(0, m.start() - 18) : m.start()]
+        if _CROSS_DOC_REF_PREFIX_RE.search(prefix):
+            continue
+        if not norm_unit and 1900.0 <= val <= 2099.0 and float(int(val)) == val:
+            continue
+
+        # Infer metric family from local window first, then full claim sentence
+        win_start = max(0, m.start() - 48)
+        win_end = min(len(cleaned), m.end() + 48)
+        local_window = cleaned[win_start:win_end]
+
+        metric_family = ""
+        for fam, pat in _CROSS_DOC_METRIC_PATTERNS:
+            if pat.search(local_window):
+                metric_family = fam
+                break
+        if not metric_family:
+            for fam, pat in _CROSS_DOC_METRIC_PATTERNS:
+                if pat.search(cleaned):
+                    metric_family = fam
+                    break
+        # Fallback metric inference purely from unambiguous physical units
+        if not metric_family:
+            if norm_unit in {"ms", "us", "ns", "s"}:
+                metric_family = "latency"
+            elif norm_unit in {"gb", "mb", "kb", "tb"}:
+                metric_family = "vram"
+            elif norm_unit in {"qps", "tok/s"}:
+                metric_family = "throughput"
+            elif norm_unit in {"kwh", "kw", "mw", "w"}:
+                metric_family = "energy"
+        if not metric_family:
+            continue
+
+        records.append(
+            {
+                "doc_id": doc_id,
+                "value": val,
+                "unit": norm_unit,
+                "metric_family": metric_family,
+                "entities": entity_tokens,
+                "conditions": conditions,
+                "text": raw,
+            }
+        )
+    return records
+
+
+def detect_cross_document_metric_conflicts(
+    doc_claims: Sequence[tuple[str, str]],
+) -> list[dict[str, Any]]:
+    """
+    Detects genuine numeric discrepancies across distinct documents ONLY when two documents
+    report differing numeric values for the SAME entity/subject, SAME metric family,
+    SAME unit, and COMPATIBLE measurement condition/split.
+
+    Prevents false positives such as comparing `92.4% accuracy` vs `14.6 ms latency`,
+    `p50` vs `p99`, different entities (`Model Alpha` vs `Model Beta`), or different splits
+    (`validation` vs `test`).
+    """
+    all_records: list[dict[str, Any]] = []
+    for doc_id, text in doc_claims:
+        if doc_id and text:
+            all_records.extend(_extract_claim_metric_records(str(doc_id), str(text)))
+
+    conflicts: list[dict[str, Any]] = []
+    seen_pairs: set[tuple[str, str, str, str]] = set()
+
+    for i in range(len(all_records)):
+        r1 = all_records[i]
+        for j in range(i + 1, len(all_records)):
+            r2 = all_records[j]
+            if r1["doc_id"] == r2["doc_id"]:
+                continue
+            if r1["metric_family"] != r2["metric_family"]:
+                continue
+            if r1["unit"] != r2["unit"]:
+                continue
+            if math.isclose(r1["value"], r2["value"], rel_tol=1e-3, abs_tol=1e-4):
+                continue
+
+            # Reject if measurement conditions/splits explicitly disagree (e.g. validation vs test, clean vs noisy)
+            cond_mismatch = False
+            for g_idx, tags1 in r1["conditions"].items():
+                tags2 = r2["conditions"].get(g_idx)
+                if tags2 and not (tags1 & tags2):
+                    cond_mismatch = True
+                    break
+            if cond_mismatch:
+                continue
+
+            # Require shared subject/entity tokens when both claims name concrete entities
+            shared_entities = r1["entities"] & r2["entities"]
+            if (r1["entities"] or r2["entities"]) and not shared_entities:
+                continue
+
+            pair_key = (
+                min(r1["doc_id"], r2["doc_id"]),
+                max(r1["doc_id"], r2["doc_id"]),
+                r1["metric_family"],
+                r1["unit"],
+            )
+            if pair_key in seen_pairs:
+                continue
+            seen_pairs.add(pair_key)
+            conflicts.append(
+                {
+                    "doc_a": r1["doc_id"],
+                    "doc_b": r2["doc_id"],
+                    "metric_family": r1["metric_family"],
+                    "unit": r1["unit"],
+                    "value_a": r1["value"],
+                    "value_b": r2["value"],
+                    "shared_entities": sorted(shared_entities),
+                }
+            )
+    return conflicts
