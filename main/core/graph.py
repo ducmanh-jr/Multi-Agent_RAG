@@ -1,6 +1,9 @@
 import asyncio
 from functools import partial
+import hashlib
 import inspect
+import os
+from pathlib import Path
 from typing import Any, Callable, Optional
 from langgraph.graph import END, START, StateGraph
 
@@ -487,6 +490,23 @@ def build_research_rag_graph(
             update = add_figure_evidence(inputs, update, reader_mode)
         return update
 
+    def _path_identity(raw_path: str) -> tuple[str, str | None]:
+        try:
+            resolved = os.path.normcase(str(Path(raw_path).resolve()))
+        except Exception:
+            resolved = os.path.normcase(os.path.abspath(str(raw_path)))
+        digest: str | None = None
+        try:
+            if os.path.isfile(raw_path):
+                h = hashlib.sha256()
+                with open(raw_path, "rb") as fh:
+                    for block in iter(lambda: fh.read(65536), b""):
+                        h.update(block)
+                digest = h.hexdigest()
+        except OSError:
+            digest = None
+        return resolved, digest
+
     def _run_scout(state: AgentState) -> dict[str, Any]:
         request = _handoff_for(state, "scout", "recipient")
         if not request:
@@ -512,10 +532,28 @@ def build_research_rag_graph(
             receipt["decision_id"] = request["decision_id"]
         if request.get("task_id"):
             receipt["task_id"] = request["task_id"]
-        new_paths = list(dict.fromkeys(
-            update.get("pdf_paths") or ([update["pdf_path"]] if update.get("pdf_path") else [])
+        candidate_paths = list(dict.fromkeys(
+            p for p in (update.get("pdf_paths") or ([update["pdf_path"]] if update.get("pdf_path") else []))
+            if isinstance(p, str) and p.strip()
         ))
-        merged_paths = list(dict.fromkeys([*existing_paths, *new_paths]))
+        seen_resolved: set[str] = set()
+        seen_hashes: set[str] = set()
+        for existing in existing_paths:
+            res_path, file_hash = _path_identity(existing)
+            seen_resolved.add(res_path)
+            if file_hash:
+                seen_hashes.add(file_hash)
+        truly_new_paths: list[str] = []
+        for candidate in candidate_paths:
+            res_path, file_hash = _path_identity(candidate)
+            if res_path in seen_resolved or (file_hash and file_hash in seen_hashes):
+                continue
+            seen_resolved.add(res_path)
+            if file_hash:
+                seen_hashes.add(file_hash)
+            truly_new_paths.append(candidate)
+
+        merged_paths = [*existing_paths, *truly_new_paths]
         outcome_event = {
             "action": "handoff_outcome_recorded",
             "agent": "scout",
@@ -524,20 +562,21 @@ def build_research_rag_graph(
             "signature": request["signature"],
             "decision_id": request.get("decision_id"),
             "task_id": request.get("task_id"),
-            "outcome_status": "discovered_new_documents" if new_paths else "no_new_documents",
-            "new_documents_count": len([p for p in new_paths if p not in existing_paths]),
+            "outcome_status": "discovered_new_documents" if truly_new_paths else "no_new_documents",
+            "new_documents_count": len(truly_new_paths),
         }
         trace = [
             receipt,
             *(update.get("reasoning_trace") or []),
             outcome_event,
         ]
-        if new_paths and merged_paths:
+        if truly_new_paths and merged_paths:
             return {
                 **update,
                 "pdf_path": merged_paths[0],
                 "pdf_paths": merged_paths,
                 "no_new_evidence": False,
+                "agent_decision": None,
                 "reasoning_trace": trace,
             }
         if not existing_paths and update.get("answer_status"):
@@ -546,13 +585,15 @@ def build_research_rag_graph(
                 "pdf_path": None,
                 "pdf_paths": [],
                 "no_new_evidence": True,
+                "agent_decision": None,
                 "reasoning_trace": [receipt, *(update.get("reasoning_trace") or [])],
             }
-        # If discovery found no new PDF, preserve existing paths and let retrieval/escalation close cleanly
+        # If discovery found no genuinely new PDF, preserve existing paths and mark no_new_evidence=True
         return {
             "pdf_path": existing_paths[0] if existing_paths else None,
             "pdf_paths": existing_paths,
             "no_new_evidence": True,
+            "agent_decision": None,
             "reasoning_trace": trace,
         }
 
@@ -768,7 +809,10 @@ def build_research_rag_graph(
             })
 
         if role == "reader":
-            schema = dict(update.get("document_schema") or state.get("document_schema") or {})
+            schema = {
+                **(state.get("document_schema") or {}),
+                **(update.get("document_schema") or {}),
+            }
             schema["evidence_store"] = EvidenceStore.from_state({**state, **update}).to_dict()
             src_lang = detect_corpus_language(
                 update.get("source_units") or state.get("source_units") or state.get("retrieved_docs"),
@@ -809,6 +853,7 @@ def build_research_rag_graph(
             reviewed = {
                 **state,
                 **update,
+                "agent_decision": update.get("agent_decision"),
                 "allow_scout_handoff": scout_handoff_allowed,
                 "reasoning_trace": [*(state.get("reasoning_trace") or []), *trace],
             }
@@ -862,6 +907,7 @@ def build_research_rag_graph(
                     handoff_event["decision_id"] = audit_event["decision_id"]
                 trace.append(handoff_event)
                 update["retry_count"] = attempt
+        update["agent_decision"] = None
         update["reasoning_trace"] = trace
         return update
 
@@ -896,6 +942,7 @@ def build_research_rag_graph(
             reviewed_w = {
                 **state,
                 **result,
+                "agent_decision": result.get("agent_decision"),
                 "allow_scout_handoff": scout_handoff_allowed,
                 "reasoning_trace": [*(state.get("reasoning_trace") or []), *w_trace],
             }
@@ -908,9 +955,11 @@ def build_research_rag_graph(
                 if w_audit and w_audit.get("decision_id"):
                     w_handoff["decision_id"] = w_audit["decision_id"]
                 w_trace.append(w_handoff)
-                result = {**result, "retry_count": attempt, "reasoning_trace": w_trace}
+                result = {**result, "retry_count": attempt, "agent_decision": None, "reasoning_trace": w_trace}
             else:
-                result = {**result, "reasoning_trace": w_trace}
+                result = {**result, "agent_decision": None, "reasoning_trace": w_trace}
+        else:
+            result = {**result, "agent_decision": None}
         return _mark_write_stage(state, attach_answer_figures(state, result))
 
     def _escalation(state: AgentState) -> dict[str, Any]:

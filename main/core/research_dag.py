@@ -53,6 +53,44 @@ class ResearchDAGBudget:
     run_timeout_seconds: float = 180.0
     max_task_retries: int = 0
 
+    def __post_init__(self) -> None:
+        if self.max_tasks < 1:
+            raise ValueError("ResearchDAGBudget.max_tasks must be >= 1")
+        if self.max_parallel_subqueries < 1:
+            raise ValueError("ResearchDAGBudget.max_parallel_subqueries must be >= 1")
+        if self.max_concurrency < 1:
+            raise ValueError("ResearchDAGBudget.max_concurrency must be >= 1")
+        if self.task_timeout_seconds <= 0:
+            raise ValueError("ResearchDAGBudget.task_timeout_seconds must be > 0")
+        if self.run_timeout_seconds <= 0:
+            raise ValueError("ResearchDAGBudget.run_timeout_seconds must be > 0")
+        if self.max_task_retries < 0:
+            raise ValueError("ResearchDAGBudget.max_task_retries must be >= 0")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "max_tasks": self.max_tasks,
+            "max_parallel_subqueries": self.max_parallel_subqueries,
+            "max_concurrency": self.max_concurrency,
+            "task_timeout_seconds": self.task_timeout_seconds,
+            "run_timeout_seconds": self.run_timeout_seconds,
+            "max_task_retries": self.max_task_retries,
+        }
+
+
+def _budget_from_manifest(raw: Any) -> ResearchDAGBudget:
+    if not isinstance(raw, Mapping):
+        return ResearchDAGBudget()
+    defaults = ResearchDAGBudget()
+    return ResearchDAGBudget(
+        max_tasks=max(1, int(raw.get("max_tasks", defaults.max_tasks))),
+        max_parallel_subqueries=max(1, int(raw.get("max_parallel_subqueries", defaults.max_parallel_subqueries))),
+        max_concurrency=max(1, int(raw.get("max_concurrency", defaults.max_concurrency))),
+        task_timeout_seconds=max(0.1, float(raw.get("task_timeout_seconds", defaults.task_timeout_seconds))),
+        run_timeout_seconds=max(0.1, float(raw.get("run_timeout_seconds", defaults.run_timeout_seconds))),
+        max_task_retries=max(0, int(raw.get("max_task_retries", defaults.max_task_retries))),
+    )
+
 
 @dataclass(frozen=True)
 class ResearchDAGNode:
@@ -107,12 +145,7 @@ class DynamicResearchDAG:
             "control_plane": "langgraph_supervisor",
             "round_index": self.round_index,
             "total_tasks": len(self.nodes),
-            "budget": {
-                "max_tasks": self.budget.max_tasks,
-                "max_concurrency": self.budget.max_concurrency,
-                "task_timeout_seconds": self.budget.task_timeout_seconds,
-                "run_timeout_seconds": self.budget.run_timeout_seconds,
-            },
+            "budget": self.budget.to_dict(),
             "nodes": [
                 {
                     **node.to_dict(),
@@ -128,6 +161,9 @@ def _query_signature(text: str) -> str:
     return hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:12]
 
 
+_CORE_PIPELINE_DOWNSTREAM_TASKS = 4  # merge, synthesize, verify, write
+
+
 def build_research_dag_plan(
     router_plan: RouterPlanOutput,
     *,
@@ -138,8 +174,15 @@ def build_research_dag_plan(
     """
     Constructs a validated ResearchPlan DAG from a Supervisor RouterPlanOutput:
       investigate_1..k (parallel) -> merge_evidence -> synthesize -> verify -> write
+    Enforces `budget.max_tasks` strictly by reserving slots for the 4 downstream stages.
     """
     cfg = budget or ResearchDAGBudget()
+    min_required = _CORE_PIPELINE_DOWNSTREAM_TASKS + 1
+    if cfg.max_tasks < min_required:
+        raise ValueError(
+            f"ResearchDAGBudget.max_tasks={cfg.max_tasks} is too small; "
+            f"at least {min_required} tasks are required (1 investigate + merge + synthesize + verify + write)."
+        )
     raw_queries = [q.strip() for q in (router_plan.sub_queries or []) if isinstance(q, str) and q.strip()]
     if evidence_gaps:
         for gap in evidence_gaps:
@@ -149,7 +192,8 @@ def build_research_dag_plan(
     if not raw_queries:
         raw_queries = ["primary_research_query"]
 
-    selected_queries = list(dict.fromkeys(raw_queries))[: max(1, cfg.max_parallel_subqueries)]
+    max_investigate_slots = max(1, min(cfg.max_parallel_subqueries, cfg.max_tasks - _CORE_PIPELINE_DOWNSTREAM_TASKS))
+    selected_queries = list(dict.fromkeys(raw_queries))[:max_investigate_slots]
     nodes: dict[str, ResearchDAGNode] = {}
     seen_sigs: set[str] = set()
     investigate_ids: list[str] = []
@@ -230,8 +274,8 @@ def replan_research_dag_for_gaps(
     prior round nodes intact (creating round-scoped merge -> synthesize -> verify nodes
     and re-pointing the pending write node to the new round's verify node).
     """
-    cfg = budget or ResearchDAGBudget()
     manifest = dict(existing_manifest or {})
+    cfg = budget if budget is not None else _budget_from_manifest(manifest.get("budget"))
     existing_nodes = [dict(n) for n in (manifest.get("nodes") or []) if isinstance(n, Mapping)]
     for n in existing_nodes:
         n.setdefault("round_index", int(n.get("metadata", {}).get("round_index", 0)))
@@ -352,13 +396,7 @@ def replan_research_dag_for_gaps(
         "added_gap_tasks": added_gap_tasks,
         "added_round_tasks": len(new_round_nodes),
         "budget_exhausted": remaining_slots < 2 or (bool(evidence_gaps) and added_gap_tasks == 0 and remaining_slots < 4),
-        "budget": manifest.get("budget")
-        or {
-            "max_tasks": cfg.max_tasks,
-            "max_concurrency": cfg.max_concurrency,
-            "task_timeout_seconds": cfg.task_timeout_seconds,
-            "run_timeout_seconds": cfg.run_timeout_seconds,
-        },
+        "budget": cfg.to_dict(),
         "nodes": all_nodes,
     }
 

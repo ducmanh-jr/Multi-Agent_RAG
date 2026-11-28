@@ -28,6 +28,24 @@ DecisionAction = Literal[
     "proceed",
 ]
 
+VALID_SENDERS: frozenset[str] = frozenset(
+    {"supervisor", "scout", "retrieval", "reader", "summarizer", "fact_checker", "writer"}
+)
+VALID_DECISION_ACTIONS: frozenset[str] = frozenset(
+    {
+        "request_more_evidence",
+        "request_unread_chunks",
+        "revise_draft",
+        "revise_rejected_claims",
+        "discover_additional_literature",
+        "escalate_or_finalize",
+        "proceed",
+    }
+)
+VALID_DECISION_STATUSES: frozenset[str] = frozenset(
+    {"completed", "proposed", "needs_followup", "partial", "insufficient_evidence", "blocked"}
+)
+
 # Policy matrix: which target agents each of the 6 specialist roles (+ supervisor) may propose
 ALLOWED_HANDOFF_TARGETS: dict[str, set[str]] = {
     "supervisor": {"scout", "retrieval"},
@@ -145,14 +163,14 @@ class AgentDecision:
             params["target_agent"] = str(target_agent).strip()
 
         resolved_target = str(target_agent or params.get("target_agent") or "").strip() or None
-        if resolved_target is None and resolved_action != "proceed":
+        if resolved_target is None and resolved_action not in {"proceed", "escalate_or_finalize"}:
             if resolved_action == "request_unread_chunks":
                 resolved_target = "reader"
             elif resolved_action in {"revise_draft", "revise_rejected_claims"}:
                 resolved_target = "summarizer"
             elif resolved_action == "discover_additional_literature":
                 resolved_target = "scout"
-            else:
+            elif resolved_action == "request_more_evidence":
                 resolved_target = "retrieval"
         self.target_agent: str | None = resolved_target
         if resolved_target:
@@ -166,15 +184,27 @@ class AgentDecision:
         handoff_reason = ACTION_TO_HANDOFF_REASON.get(resolved_action, self.reason or resolved_action)
         source_ids = self.evidence_refs if resolved_target == "reader" else ()
         self.handoff_reason = handoff_reason
-        self.signature = signature or _compute_handoff_signature(
+        self.canonical_signature = _compute_handoff_signature(
             self.source_agent,
             self.target_agent or "none",
             handoff_reason,
             self.focus,
             source_ids,
         )
-        self.decision_id = decision_id or f"dec_{self.signature[:12]}"
+        self.signature = signature or self.canonical_signature
+        self.decision_id = decision_id or f"dec_{self.canonical_signature[:12]}"
         self.task_id: str | None = str(task_id or params.get("task_id") or "").strip() or None
+
+    def compute_canonical_signature(self) -> str:
+        """Recompute the canonical Supervisor anti-loop signature from immutable decision fields."""
+        source_ids = self.evidence_refs if self.target_agent == "reader" else ()
+        return _compute_handoff_signature(
+            self.source_agent,
+            self.target_agent or "none",
+            self.handoff_reason,
+            self.focus,
+            source_ids,
+        )
 
     def to_handoff(self) -> Handoff | None:
         if self.action == "proceed" or not self.target_agent:
@@ -307,8 +337,12 @@ def _coerce_explicit_decision(sender: Sender, raw: Any, state: AgentState) -> Ag
     if isinstance(raw, AgentDecision):
         return raw
     if isinstance(raw, Mapping):
+        raw_source = raw.get("source_agent")
+        declared_source = str(raw_source).strip() if raw_source is not None and str(raw_source).strip() else sender
+        raw_round = raw.get("round_index")
+        round_idx = int(state.get("retry_count") or 0) if raw_round is None else int(raw_round)
         return AgentDecision(
-            source_agent=sender,
+            source_agent=declared_source,  # type: ignore[arg-type]
             action=raw.get("action") or raw.get("next_action") or "proceed",
             target_agent=raw.get("target_agent") or raw.get("recipient"),
             reason=str(raw.get("reason") or ""),
@@ -316,7 +350,7 @@ def _coerce_explicit_decision(sender: Sender, raw: Any, state: AgentState) -> Ag
             parameters=raw.get("parameters") if isinstance(raw.get("parameters"), Mapping) else {},
             suggested_queries=raw.get("suggested_queries"),
             focus=raw.get("focus"),
-            round_index=int(raw.get("round_index", state.get("retry_count") or 0)),
+            round_index=round_idx,
             status=str(raw.get("status") or "completed"),
             decision_id=raw.get("decision_id"),
             task_id=raw.get("task_id"),
@@ -366,25 +400,51 @@ def propose_agent_decision(sender: Sender, state: AgentState) -> AgentDecision |
 
 
 def supervisor_evaluate_decision(
-    decision: AgentDecision | None,
+    decision: AgentDecision | Mapping[str, Any] | None,
     state: AgentState,
+    *,
+    expected_sender: Sender | None = None,
 ) -> tuple[Handoff | None, dict[str, Any] | None]:
     """
     Research Supervisor gatekeeper for Supervised Agent Autonomy:
-    Validates policy permissions, reflection budget, DAG task budget, and anti-loop signatures
+    Validates sender identity, decision schema (action, status, round_index), policy permissions,
+    reflection budget, DAG task budget, and Supervisor-computed canonical anti-loop signatures
     before approving an `AgentDecision` into an executable `Handoff`.
     """
-    if decision is None or decision.action == "proceed":
+    if decision is None:
+        return None, None
+    if not isinstance(decision, AgentDecision):
+        if isinstance(decision, Mapping):
+            fallback_sender: Sender = expected_sender or str(decision.get("source_agent") or "fact_checker")  # type: ignore[assignment]
+            decision = _coerce_explicit_decision(fallback_sender, decision, state)
+            if decision is None:
+                return None, None
+        else:
+            return None, None
+    if decision.action == "proceed":
         return None, None
 
     current_round = int(state.get("retry_count") or 0)
     limit = reflection_limit(state)
     allowed_targets = ALLOWED_HANDOFF_TARGETS.get(decision.source_agent, set())
     target = decision.target_agent or ""
+    canonical_signature = decision.compute_canonical_signature()
 
     rejection_reason: str | None = None
-    if current_round >= limit:
+    if expected_sender is not None and decision.source_agent != expected_sender:
+        rejection_reason = f"source_agent_mismatch:{decision.source_agent}!={expected_sender}"
+    elif decision.source_agent not in VALID_SENDERS:
+        rejection_reason = f"invalid_source_agent:{decision.source_agent}"
+    elif decision.action not in VALID_DECISION_ACTIONS:
+        rejection_reason = f"invalid_decision_action:{decision.action}"
+    elif decision.status not in VALID_DECISION_STATUSES:
+        rejection_reason = f"invalid_decision_status:{decision.status}"
+    elif decision.action == "escalate_or_finalize":
+        rejection_reason = None
+    elif current_round >= limit:
         rejection_reason = "reflection_budget_exhausted"
+    elif decision.round_index != current_round:
+        rejection_reason = f"round_index_mismatch:{decision.round_index}!={current_round}"
     elif target not in allowed_targets:
         rejection_reason = f"policy_target_not_permitted:{decision.source_agent}->{target}"
     elif target == "scout" and not state.get("allow_scout_handoff"):
@@ -397,16 +457,17 @@ def supervisor_evaluate_decision(
         if isinstance(dag_info, Mapping) and dag_info.get("budget_exhausted") and target in {"retrieval", "scout"}:
             rejection_reason = "dag_task_budget_exhausted"
 
-    if rejection_reason is None:
+    if rejection_reason is None and decision.action != "escalate_or_finalize":
         repeated = any(
             isinstance(event, dict)
             and event.get("action") == "agent_handoff"
-            and event.get("signature") == decision.signature
+            and event.get("signature") == canonical_signature
             for event in state.get("reasoning_trace") or []
         )
         if repeated:
             rejection_reason = "duplicate_handoff_signature"
 
+    approved = rejection_reason is None
     audit_event = {
         "action": "supervisor_decision_evaluated",
         "node": "SupervisorGatekeeper",
@@ -414,14 +475,17 @@ def supervisor_evaluate_decision(
         "task_id": decision.task_id,
         "source_agent": decision.source_agent,
         "proposed_action": decision.action,
+        "proposed_status": decision.status,
+        "proposed_round_index": decision.round_index,
         "target_agent": decision.target_agent,
         "reason": decision.reason or decision.handoff_reason,
         "round_index": current_round,
-        "approved": rejection_reason is None,
+        "approved": approved,
+        "decision_state": "APPROVED" if approved else "REJECTED",
         "rejection_reason": rejection_reason,
-        "signature": decision.signature,
+        "signature": canonical_signature,
     }
-    if rejection_reason is not None:
+    if not approved or decision.action == "escalate_or_finalize":
         return None, audit_event
     return decision.to_handoff(), audit_event
 
@@ -429,7 +493,7 @@ def supervisor_evaluate_decision(
 def evaluate_agent_handoff(sender: Sender, state: AgentState) -> tuple[Handoff | None, dict[str, Any] | None]:
     """Propose and evaluate a handoff for `sender`, returning both approved Handoff and Supervisor audit trace."""
     decision = propose_agent_decision(sender, state)
-    return supervisor_evaluate_decision(decision, state)
+    return supervisor_evaluate_decision(decision, state, expected_sender=sender)
 
 
 def decide_handoff(sender: Sender, state: AgentState) -> Handoff | None:
