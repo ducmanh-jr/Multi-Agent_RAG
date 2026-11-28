@@ -1748,6 +1748,14 @@ document.addEventListener("DOMContentLoaded", () => {
         }
       }
 
+      // Format multi-claim flat walls of text into a crisp lead paragraph + clean bullet list
+      if (mainAnswer && !/^(?:\s*[-\*•]|\s*\d+\.\s|\s*#|\s*>|\s*```|\s*\|)/m.test(mainAnswer)) {
+        const blocks = mainAnswer.split(/\n{2,}/).map(b => b.trim()).filter(Boolean);
+        if (blocks.length >= 3) {
+          mainAnswer = blocks[0] + "\n\n" + blocks.slice(1).map(b => `- ${b}`).join("\n");
+        }
+      }
+
       const citationBadgesHtml = Array.from(citations.values()).filter(Boolean).slice(0, 4)
         .map(citation => renderCitationButton(citation)).join(" ");
 
@@ -3661,7 +3669,20 @@ document.addEventListener("DOMContentLoaded", () => {
       mathBlocks.push(rendered);
       return `__MATH_BLOCK_${idx}__`;
     };
-    text = text.replace(/\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]/g, (_m, d1, d2) => stashMath(d1 || d2, true));
+    text = text.replace(/\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]/g, (m, d1, d2) => {
+      if (d2 !== undefined) {
+        const inner = d2.trim();
+        // Never treat escaped citation brackets like \[149\] or \[2, 3\] as LaTeX display math!
+        if (/^[uU]?\d+(?:\s*[,–-]\s*[uU]?\d+)*$/.test(inner)) {
+          return `\\[${inner}]`;
+        }
+        // Reject accidental capture between two separate escaped citations across prose
+        if (inner.length > 180 && !/[\\=^_{}+<>∑∏∫√]/.test(inner)) {
+          return m;
+        }
+      }
+      return stashMath(d1 || d2, true);
+    });
     text = text.replace(/(?<!\\)\$([^\$\n]+?)\$|\\\(([\s\S]+?)\\\)/g, (_m, i1, i2) => stashMath(i1 || i2, false));
 
     // 2. Escape HTML
@@ -3700,8 +3721,8 @@ document.addEventListener("DOMContentLoaded", () => {
       return `\n<div class="chat-table-wrapper"><table class="chat-table">${thead}${tbody}</table></div>\n`;
     });
 
-    // 5.6 Ensure numbered list items (e.g. 1. , 2. ) and bullet points (- , * ) start on fresh lines (never breaking headers like <h2>2. ...</h2>)
-    html = html.replace(/([a-z0-9à-ỹ\.\)\]])[ \t]*([0-9]+\.\s+(?:\*\*|<strong>|[A-ZÀ-ỸĐ]))/gi, '$1\n\n$2');
+    // 5.6 Ensure inline numbered items glued after ':' or ';' start on fresh lines without breaking 'Figure 3.' or 'Table 2.'
+    html = html.replace(/([:\;])[ \t]+([0-9]+\.\s+(?:\*\*|<strong>|[A-ZÀ-ỸĐ]))/gi, '$1\n\n$2');
     html = html.replace(/([a-z0-9à-ỹ\.\)\]])[ \t]+([-\*•]\s+)/gi, '$1\n$2');
 
     // 6. Clean up extra whitespace before punctuation without destroying newlines
@@ -3788,8 +3809,8 @@ document.addEventListener("DOMContentLoaded", () => {
       finalHtml = finalHtml.replace(`__MATH_BLOCK_${idx}__`, mb);
     });
 
-    // Replace markers after Markdown rendering so citation metadata stays intact.
-    return finalHtml.replace(
+    // Replace markers after Markdown rendering so citation metadata stays intact, then unescape Markdown punctuation outside code blocks.
+    const withCitations = finalHtml.replace(
       /<code\b[^>]*>[\s\S]*?<\/code>|(\\?)\[(u?\d+(?:[ \t]*,[ \t]*u?\d+)*)\](?:[ \t]*(?:<em>)?\([ \t]*Trang[ \t]*(\d+)[ \t]*\)(?:<\/em>)?)?/gi,
       (match, escaped, markers, statedPage) => {
         if (!markers) return match;
@@ -3804,6 +3825,10 @@ document.addEventListener("DOMContentLoaded", () => {
           return citation ? renderCitationButton(citation, `[${id}] `) : renderUnverifiedCitation(`[${id}]`);
         }).join(" ");
       }
+    );
+    return withCitations.replace(
+      /(<(?:code|pre)\b[^>]*>[\s\S]*?<\/(?:code|pre)>)|\\([_*#|<>!~[\]\\`])/gi,
+      (m, codeSpan, ch) => codeSpan ? codeSpan : ch
     );
   }
 
