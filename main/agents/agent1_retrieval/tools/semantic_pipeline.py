@@ -460,6 +460,13 @@ def find_referenced_table_chunks(
             score += 1.5
         if re.search(r"\d+(?:[.,]\d+)?", txt):
             score += 0.5
+        # Prefer table chunks that also contain the focused query's entity/column tokens (e.g. 'p99', 'hybrid-x')
+        focus_tokens = [
+            tok for tok in re.findall(r"[a-zA-ZÀ-ỹ0-9_-]{3,}", combined_q.lower())
+            if tok not in {"table", "bảng", "bang", "tab"}
+        ]
+        if focus_tokens:
+            score += 0.75 * sum(1 for tok in dict.fromkeys(focus_tokens) if tok in txt_l)
         if score > 0:
             scored.append((score, -idx, chunk))
 

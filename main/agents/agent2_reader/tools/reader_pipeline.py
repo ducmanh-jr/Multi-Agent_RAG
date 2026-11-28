@@ -257,16 +257,146 @@ def _content_tokens(text: str) -> set[str]:
     }
 
 
-def has_structured_table(units: Iterable[dict[str, Any]], table_id: str) -> bool:
+_TABLE_SPECIFIC_COLUMNS = frozenset(
+    {
+        "p99", "p95", "p90", "p50", "wer", "cer", "bleu", "rouge", "f1",
+        "ndcg", "mrr", "qps", "tps", "vram", "co2", "rmse", "mae", "mse", "fps",
+    }
+)
+_TABLE_METRIC_ALIASES: dict[str, set[str]] = {
+    "latency": {"latency", "độ trễ", "ms", "msec", "p99", "p95", "p50"},
+    "độ trễ": {"latency", "độ trễ", "ms", "msec", "p99", "p95", "p50"},
+    "accuracy": {"accuracy", "acc", "độ chính xác", "%"},
+    "độ chính xác": {"accuracy", "acc", "độ chính xác", "%"},
+    "precision": {"precision", "độ chính xác dương"},
+    "recall": {"recall", "độ phủ"},
+    "throughput": {"throughput", "qps", "tps", "tok/s", "tokens/s", "thông lượng"},
+    "memory": {"memory", "vram", "ram", "gb", "mb", "bộ nhớ"},
+    "vram": {"vram", "gpu memory", "memory", "gb", "mb"},
+    "carbon": {"carbon", "co2", "kg"},
+    "energy": {"energy", "power", "kwh", "kw", "watt", "điện năng"},
+    "error": {"error", "wer", "cer", "loss", "mse", "rmse", "mae", "tỷ lệ lỗi"},
+}
+_TABLE_PHYSICAL_UNITS = frozenset({"ms", "gb", "mb", "kb", "kg", "kwh", "mg/l", "qps", "tps", "km/h", "%"})
+_TABLE_ENTITY_STOPWORDS = frozenset(
+    {
+        "what", "which", "where", "when", "who", "how", "does", "did", "was", "were", "are", "is",
+        "the", "for", "with", "from", "under", "over", "into", "about", "exact", "empirical",
+        "table", "tab", "bảng", "bang", "page", "trang", "section", "figure", "fig", "hình",
+        "production", "traffic", "load", "benchmark", "benchmarks", "evaluation", "experiment",
+        "study", "paper", "report", "result", "results", "value", "values", "score", "scores",
+        "rate", "ratio", "metric", "metrics", "measurement", "measurements", "system", "model",
+        "method", "engine", "dataset", "split", "splits", "test", "train", "validation",
+        "latency", "accuracy", "precision", "recall", "throughput", "memory", "vram", "carbon",
+        "footprint", "energy", "error", "loss", "cost", "time", "speed", "flow", "drip",
+        "irrigation", "cho", "biết", "giá", "trị", "trong", "của", "báo", "cáo", "tài", "liệu",
+        "p99", "p95", "p90", "p50", "wer", "cer", "bleu", "rouge", "f1", "ndcg", "mrr", "qps",
+        "tps", "co2", "rmse", "mae", "mse", "fps", "ms", "gb", "mb", "kg", "kwh",
+    }
+)
+
+
+def _extract_table_query_requirements(query: str) -> dict[str, Any]:
+    q = str(query or "").strip()
+    if not q:
+        return {"specific_columns": set(), "metric_groups": {}, "entities": set(), "units": set()}
+    q_l = q.lower()
+    words = re.findall(r"[a-zA-ZÀ-ỹ0-9_/-]+", q_l)
+    word_set = set(words)
+
+    specific_columns = {w for w in word_set if w in _TABLE_SPECIFIC_COLUMNS}
+    metric_groups: dict[str, set[str]] = {}
+    for key, aliases in _TABLE_METRIC_ALIASES.items():
+        if re.search(rf"\b{re.escape(key)}\b", q_l):
+            metric_groups[key] = aliases
+
+    units: set[str] = set()
+    if "%" in q:
+        units.add("%")
+    for u in _TABLE_PHYSICAL_UNITS:
+        if u != "%" and re.search(rf"\b{re.escape(u)}\b", q_l):
+            units.add(u)
+
+    # Extract distinctive target row/entity identifiers (e.g. Hybrid-X, Vector-Q, Sparse-K, Model Orion)
+    entities: set[str] = set()
+    # 1. Hyphenated / versioned technical identifiers anywhere in query (e.g. Hybrid-X, GPT-3, Baseline-V1)
+    for m in re.finditer(r"\b[A-Za-z][A-Za-z0-9]*-[A-Za-z0-9]+\b", q):
+        tok = m.group(0).lower()
+        if tok not in _TABLE_ENTITY_STOPWORDS:
+            entities.add(tok)
+    # 2. Capitalized proper nouns not at position 0 (ignoring Table/Bảng/Section headers)
+    for m in re.finditer(r"\b[A-ZĐ][A-Za-zÀ-ỹ0-9_-]{2,}\b", q):
+        if m.start() == 0:
+            continue
+        tok = m.group(0).lower()
+        if tok in _TABLE_ENTITY_STOPWORDS or tok in _TABLE_SPECIFIC_COLUMNS:
+            continue
+        # Skip single word right before table/section number (e.g. 'Table 4')
+        entities.add(tok)
+
+    return {
+        "specific_columns": specific_columns,
+        "metric_groups": metric_groups,
+        "entities": entities,
+        "units": units,
+    }
+
+
+def _table_region_matches_query(table_text: str, query: str) -> tuple[bool, list[str]]:
+    reqs = _extract_table_query_requirements(query)
+    if not any(reqs.values()):
+        return True, []
+
+    txt_l = (table_text or "").lower()
+    missing: list[str] = []
+
+    for col in sorted(reqs["specific_columns"]):
+        if not re.search(rf"\b{re.escape(col)}\b", txt_l):
+            missing.append(col)
+
+    for m_name, aliases in sorted(reqs["metric_groups"].items()):
+        if not any(
+            (alias == "%" and "%" in txt_l)
+            or (alias != "%" and re.search(rf"\b{re.escape(alias)}\b", txt_l))
+            for alias in aliases
+        ):
+            missing.append(m_name)
+
+    for ent in sorted(reqs["entities"]):
+        if ent not in txt_l:
+            missing.append(ent)
+
+    for u in sorted(reqs["units"]):
+        if u == "%":
+            if "%" not in txt_l:
+                missing.append("%")
+        elif not re.search(rf"\b{re.escape(u)}\b", txt_l):
+            missing.append(u)
+
+    return len(missing) == 0, list(dict.fromkeys(missing))
+
+
+def inspect_table_completeness(
+    units: Iterable[dict[str, Any]],
+    table_id: str,
+    *,
+    query: str = "",
+) -> tuple[bool, list[str]]:
     """
-    Returns True if `units` already contains structured tabular content (or an inline numeric
-    result directly answering) for `table_id` (e.g. '4' for Table 4 / Bảng 4).
+    Checks whether `units` contains structured tabular data for `table_id` AND (when `query`
+    specifies target rows/entities, columns/metrics, or units) whether that table actually
+    covers the requested cells rather than being a same-numbered table with unrelated content
+    or missing columns (e.g. `p50` present but `p99` absent).
+
+    Returns `(is_complete, missing_cell_requirements)`.
     """
     tid = str(table_id or "").strip()
     if not tid:
-        return False
+        return False, []
     ref_pat = re.compile(rf"\b(?:table|tab\.?|bảng|bang)\s*{re.escape(tid)}\b", re.IGNORECASE)
     caption_pat = re.compile(rf"\b(?:table|tab\.?|bảng|bang)\s*{re.escape(tid)}\s*[:.\-–]", re.IGNORECASE)
+
+    best_missing: list[str] | None = None
 
     for unit in units:
         if not isinstance(unit, dict):
@@ -282,35 +412,53 @@ def has_structured_table(units: Iterable[dict[str, Any]], table_id: str) -> bool
         if not mentions_table:
             continue
 
+        candidate_table_text: str | None = None
         pipe_lines = [ln for ln in txt.splitlines() if ln.count("|") >= 2]
         if u_type == "table" and (pipe_lines or re.search(r"\d+(?:[.,]\d+)?", txt)):
-            return True
-        if len(pipe_lines) >= 2:
-            return True
-        cap_match = caption_pat.search(txt)
-        if cap_match is not None:
-            # Caption followed by structured rows or >= 2 numeric cell values (handles PyMuPDF plain-text tables)
-            after_caption = txt[cap_match.end():]
-            numeric_cells = re.findall(r"\b\d+(?:[.,]\d+)?%?\b", after_caption)
-            if len(numeric_cells) >= 2:
-                return True
-            non_caption_lines = [
-                ln.strip() for ln in after_caption.splitlines()
-                if ln.strip()
-            ]
-            if non_caption_lines and any(("\t" in ln or "  " in ln or "|" in ln) for ln in non_caption_lines) and numeric_cells:
-                return True
-        # Inline direct numeric measurement alongside Table N (NOT a 'see Table N' pointer!)
-        for sent in re.split(r"(?<=[.!?])\s+|\n+", txt):
-            if not ref_pat.search(sent):
-                continue
-            if _CROSS_REF_TABLE_RE.search(sent):
-                continue
-            cleaned_no_tid = ref_pat.sub(" ", sent)
-            if re.search(r"\b\d+(?:[.,]\d+)?\s*(?:%|ms|s|sec|mb|gb|kb|hz|mhz|ghz|bleu|f1|acc|tokens|params|x)?\b", cleaned_no_tid, re.IGNORECASE):
+            candidate_table_text = f"{caption}\n{txt}".strip()
+        elif len(pipe_lines) >= 2:
+            candidate_table_text = f"{caption}\n{txt}".strip()
+        else:
+            cap_match = caption_pat.search(txt)
+            if cap_match is not None:
+                after_caption = txt[cap_match.end():]
+                numeric_cells = re.findall(r"\b\d+(?:[.,]\d+)?%?\b", after_caption)
+                non_caption_lines = [ln.strip() for ln in after_caption.splitlines() if ln.strip()]
+                if len(numeric_cells) >= 2 or (
+                    non_caption_lines and any(("\t" in ln or "  " in ln or "|" in ln) for ln in non_caption_lines) and numeric_cells
+                ):
+                    candidate_table_text = f"{caption}\n{txt[cap_match.start():]}".strip()
+
+        if candidate_table_text is None:
+            # Inline direct numeric measurement alongside Table N (NOT a 'see Table N' pointer!)
+            for sent in re.split(r"(?<=[.!?])\s+|\n+", txt):
+                if not ref_pat.search(sent) or _CROSS_REF_TABLE_RE.search(sent):
+                    continue
+                cleaned_no_tid = ref_pat.sub(" ", sent)
                 if re.search(r"\b\d+(?:[.,]\d+)?\s*(?:%|ms|s|sec|mb|gb|kb|hz|mhz|ghz|bleu|f1|x)\b|\b\d+\.\d+\b", cleaned_no_tid, re.IGNORECASE):
-                    return True
-    return False
+                    candidate_table_text = sent
+                    break
+
+        if candidate_table_text is None:
+            continue
+
+        ok, missing_parts = _table_region_matches_query(candidate_table_text, query)
+        if ok:
+            return True, []
+        if best_missing is None or len(missing_parts) < len(best_missing):
+            best_missing = missing_parts
+
+    return False, (best_missing or [])
+
+
+def has_structured_table(units: Iterable[dict[str, Any]], table_id: str, *, query: str = "") -> bool:
+    """
+    Returns True if `units` already contains structured tabular content (or an inline numeric
+    result directly answering) for `table_id` AND covers the row/column/metric/unit requested
+    in `query` (when `query` is provided).
+    """
+    ok, _ = inspect_table_completeness(units, table_id, query=query)
+    return ok
 
 
 def extract_referenced_table_ids(query: str, units: Iterable[dict[str, Any]]) -> list[str]:
@@ -362,7 +510,7 @@ def evaluate_reader_table_completeness(
       - When a referenced table is STILL missing after retrieval returned `no_new_evidence=True`
         -> `(None, ["Table <N>", ...])` so Summarizer/Fact-Checker can report unverified evidence cleanly.
     """
-    if not allow_handoff:
+    if not allow_handoff or state.get("enable_reader_handoff") is False:
         return None, []
 
     query = str(state.get("resolved_query") or state.get("query") or "").strip()
@@ -378,27 +526,40 @@ def evaluate_reader_table_completeness(
     if not referenced:
         return None, []
 
-    missing_ids = [tid for tid in referenced if not has_structured_table(combined_units, tid)]
-    if not missing_ids:
+    missing_entries: list[tuple[str, list[str]]] = []
+    for tid in referenced:
+        complete, missing_parts = inspect_table_completeness(combined_units, tid, query=query)
+        if not complete:
+            missing_entries.append((tid, missing_parts))
+    if not missing_entries:
         return None, []
 
-    unresolved_labels = [f"Table {tid}" for tid in missing_ids]
+    unresolved_labels = [
+        f"Table {tid} (missing: {', '.join(parts)})" if parts else f"Table {tid}"
+        for tid, parts in missing_entries
+    ]
     if state.get("no_new_evidence"):
         return None, unresolved_labels
 
-    primary_tid = missing_ids[0]
+    primary_tid, primary_missing = missing_entries[0]
     retry_count = int(state.get("retry_count") or 0)
-    query_hint = " ".join(sorted(_content_tokens(query))[:5]).strip()
+    hint_terms = list(dict.fromkeys([*primary_missing, *sorted(_content_tokens(query))[:5]]))[:6]
+    query_hint = " ".join(hint_terms).strip()
     focused_queries = [f"Table {primary_tid} Bảng {primary_tid}"]
     if query_hint:
         focused_queries.append(f"Table {primary_tid} {query_hint}")
 
+    reason = (
+        f"Referenced Table {primary_tid} lacks required cells ({', '.join(primary_missing)}) in currently read evidence"
+        if primary_missing
+        else f"Referenced Table {primary_tid} is not present in currently read evidence"
+    )
     decision = AgentDecision(
         source_agent="reader",
         status="needs_followup",
         action="request_more_evidence",
         target_agent="retrieval",
-        reason=f"Referenced Table {primary_tid} is not present in currently read evidence",
+        reason=reason,
         suggested_queries=focused_queries,
         focus=[f"Table {primary_tid}", *(focused_queries[1:2])],
         round_index=retry_count,
